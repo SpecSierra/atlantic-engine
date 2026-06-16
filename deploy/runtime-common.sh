@@ -84,6 +84,12 @@ atlantic_default_helper_library_path() {
 }
 
 atlantic_export_helper_env() {
+    # Apply the ATLANTIC_PROFILE preset (if any) FIRST, so its values feed the
+    # ${VAR:-default} exports below and reach BOTH the browser and the WebProcess
+    # — the WebProcess helper wrappers also call this function, and GStreamer (the
+    # media buffers) lives in the WebProcess.
+    atlantic_apply_profile
+
     if [ -n "${ATLANTIC_LD_PRELOAD:-}" ]; then
         export LD_PRELOAD="${ATLANTIC_LD_PRELOAD}"
     else
@@ -142,10 +148,13 @@ atlantic_export_helper_env() {
 #   lean      ATLANTIC_CACHE_MODEL=viewer   (no bfcache, drop dead/decoded caches)
 #   moderate  ATLANTIC_CACHE_MODEL=document (keep bfcache, trim dead cache)
 #   min       lean + purge earlier (base 900 MB, 2 s poll) — the never-OOM arm
+#   media     trim GStreamer read-ahead buffers (less discretionary video memory)
 #   baseline  ATLANTIC_CACHE_MODEL=web      (explicit ship default, for clean A/B)
 #
-# NOTE: cache-model profiles need the browser build that reads ATLANTIC_CACHE_MODEL
-# (WPEWebContainer); the WEBKIT_MEMORY_* knobs already apply on older builds.
+# Profiles isolate one lever at a time; to combine, set ATLANTIC_PROFILE plus the
+# individual vars (explicit values always win). Cache-model profiles need the
+# browser build that reads ATLANTIC_CACHE_MODEL (WPEWebContainer); the
+# WEBKIT_MEMORY_* / WEBKIT_GST_* knobs already apply on older builds.
 atlantic_apply_profile() {
     profile="${ATLANTIC_PROFILE:-}"
     [ -z "${profile}" ] && return 0
@@ -162,26 +171,43 @@ atlantic_apply_profile() {
             : "${WEBKIT_MEMORY_BASE_THRESHOLD_MB:=900}"
             : "${WEBKIT_MEMORY_POLL_INTERVAL_MS:=2000}"
             ;;
+        media)
+            # Trim discretionary GStreamer read-ahead. The deep defaults (16/8 MB
+            # vs upstream 2 MB) were tuned for fewer rebuffer pauses; on a 3.5 GB
+            # device they are resident memory that competes with the feed.
+            # NOTE: this bounds the GStreamer / progressive + native-HLS path only.
+            # JS-driven MSE buffering (hls.js prebuffering a paused feed video, the
+            # 53 s case) is a separate browser-side fix, not reachable from env.
+            : "${WEBKIT_GST_RING_BUFFER_MAX_SIZE:=4194304}"        # 16 MB -> 4 MB
+            : "${WEBKIT_GST_URIDECODEBIN_BUFFER_SIZE:=2097152}"    # 8 MB  -> 2 MB
+            : "${WPE_SHELL_MEDIA_DISK_CACHE_SIZE_BYTES:=16777216}" # 64 MB -> 16 MB
+            ;;
         baseline|web|default)
             : "${ATLANTIC_CACHE_MODEL:=web}"
             ;;
         *)
-            echo "atlantic: unknown ATLANTIC_PROFILE='${profile}' (use lean|moderate|min|baseline)" >&2
+            echo "atlantic: unknown ATLANTIC_PROFILE='${profile}' (use lean|moderate|min|media|baseline)" >&2
             return 0
             ;;
     esac
 
-    export ATLANTIC_CACHE_MODEL
-    echo "atlantic: profile=${profile} cache_model=${ATLANTIC_CACHE_MODEL}" \
-         "mem_base=${WEBKIT_MEMORY_BASE_THRESHOLD_MB:-default}MB" >&2
+    # Export whatever the profile set so it survives into the browser AND the
+    # WebProcess helper wrappers (both run atlantic_export_helper_env). Anything
+    # left unset stays unset and falls through to the ${VAR:-default} exports.
+    for v in ATLANTIC_CACHE_MODEL \
+             WEBKIT_MEMORY_BASE_THRESHOLD_MB WEBKIT_MEMORY_POLL_INTERVAL_MS \
+             WEBKIT_GST_RING_BUFFER_MAX_SIZE WEBKIT_GST_URIDECODEBIN_BUFFER_SIZE \
+             WPE_SHELL_MEDIA_DISK_CACHE_SIZE_BYTES; do
+        eval "[ -n \"\${${v}:-}\" ]" && export "${v}"
+    done
+    echo "atlantic: profile=${profile}" \
+         "cache=${ATLANTIC_CACHE_MODEL:-default}" \
+         "mem_base=${WEBKIT_MEMORY_BASE_THRESHOLD_MB:-default}" \
+         "gst_ring=${WEBKIT_GST_RING_BUFFER_MAX_SIZE:-default}" >&2
 }
 
 atlantic_export_browser_env() {
-    atlantic_export_helper_env
-
-    # Apply the selected ATLANTIC_PROFILE preset (if any) BEFORE the per-knob
-    # defaults below, so a profile's value feeds the ${VAR:-default} exports.
-    atlantic_apply_profile
+    atlantic_export_helper_env   # also applies ATLANTIC_PROFILE (see above)
 
     # ── WPE bubblewrap process sandbox ──────────────────────────────────────
     # The bwrap sandbox is FUNDAMENTALLY INCOMPATIBLE with the libhybris
