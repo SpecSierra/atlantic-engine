@@ -126,7 +126,7 @@ atlantic_export_helper_env() {
     export WEBKIT_GST_VIDEO_DECODING_LIMIT="${WEBKIT_GST_VIDEO_DECODING_LIMIT:-1920x1080@60}"
     # Identify audio streams to PulseAudio as x-maemo so SFOS media policy routes them correctly.
     # Note: dot-containing property names must be set via PULSE_PROP_OVERRIDE (not PULSE_PROP_x.y).
-    export PULSE_PROP_OVERRIDE="media.role=x-maemo"
+    export PULSE_PROP_OVERRIDE="${PULSE_PROP_OVERRIDE:-media.role=x-maemo}"
 }
 
 atlantic_export_browser_env() {
@@ -183,15 +183,17 @@ atlantic_export_browser_env() {
     # ── JSC JIT thread tuning (Snapdragon 665: 8-core big.LITTLE) ────────────
     # Default JSC spawns 7 FTL threads + 8 GC markers on an 8-core device,
     # flooding the CPU during page load.  Cap to sane mobile limits.
-    export JSC_numberOfFTLCompilerThreads=2
-    export JSC_numberOfDFGCompilerThreads=2
-    export JSC_numberOfBaselineCompilerThreads=2
-    export JSC_numberOfGCMarkers=2
-    export JSC_maxNumberOfWorklistThreads=4
-    export JSC_worklistLoadFactor=20
-    export JSC_worklistFTLLoadWeight=20
-    export JSC_worklistDFGLoadWeight=5
-    export JSC_worklistBaselineLoadWeight=2
+    # Each is env-tunable (set the var before launch to A/B on device); the
+    # values below are the mobile defaults applied when nothing is preset.
+    export JSC_numberOfFTLCompilerThreads="${JSC_numberOfFTLCompilerThreads:-2}"
+    export JSC_numberOfDFGCompilerThreads="${JSC_numberOfDFGCompilerThreads:-2}"
+    export JSC_numberOfBaselineCompilerThreads="${JSC_numberOfBaselineCompilerThreads:-2}"
+    export JSC_numberOfGCMarkers="${JSC_numberOfGCMarkers:-2}"
+    export JSC_maxNumberOfWorklistThreads="${JSC_maxNumberOfWorklistThreads:-4}"
+    export JSC_worklistLoadFactor="${JSC_worklistLoadFactor:-20}"
+    export JSC_worklistFTLLoadWeight="${JSC_worklistFTLLoadWeight:-20}"
+    export JSC_worklistDFGLoadWeight="${JSC_worklistDFGLoadWeight:-5}"
+    export JSC_worklistBaselineLoadWeight="${JSC_worklistBaselineLoadWeight:-2}"
 
     # ── JSC JIT tier-up thresholds / GC heap tuning ──────────────────────────
     # Deliberately NOT overridden — and actively cleared below, because stale
@@ -253,7 +255,8 @@ atlantic_export_browser_env() {
     # ── Tile size alignment ───────────────────────────────────────────────────
     # 256 px tiles for Adreno 610 — smaller texture uploads reduce GPU pipeline
     # stalls vs 512 px, avoiding dropped frames during scroll on limited-bandwidth GPUs.
-    export WEBKIT_LAYERS_TILE_SIZE=256
+    # Env-tunable (e.g. 512 on the future Mali device) — default applied if unset.
+    export WEBKIT_LAYERS_TILE_SIZE="${WEBKIT_LAYERS_TILE_SIZE:-256}"
 }
 
 atlantic_cleanup_runtime_artifacts() {
