@@ -129,8 +129,59 @@ atlantic_export_helper_env() {
     export PULSE_PROP_OVERRIDE="${PULSE_PROP_OVERRIDE:-media.role=x-maemo}"
 }
 
+# ── Tuning profiles ──────────────────────────────────────────────────────────
+# ATLANTIC_PROFILE bundles the memory/footprint knobs into a single switch for
+# on-device A/B. Unset (default) = ship baseline, nothing changed. A profile only
+# sets a knob when it is not already set, so an explicit per-variable override
+# (e.g. ATLANTIC_CACHE_MODEL=document) still wins over the profile. The cache
+# model is the WebProcess steady-state footprint lever: on this 3.5 GB device the
+# live object cache barely shrinks between models (~96-128 MB), so the real win is
+# what `viewer` drops — the back/forward page cache (2 full prior pages resident)
+# plus the 64 MB dead-resource cache and the 60 s decoded-image hold.
+#
+#   lean      ATLANTIC_CACHE_MODEL=viewer   (no bfcache, drop dead/decoded caches)
+#   moderate  ATLANTIC_CACHE_MODEL=document (keep bfcache, trim dead cache)
+#   min       lean + purge earlier (base 900 MB, 2 s poll) — the never-OOM arm
+#   baseline  ATLANTIC_CACHE_MODEL=web      (explicit ship default, for clean A/B)
+#
+# NOTE: cache-model profiles need the browser build that reads ATLANTIC_CACHE_MODEL
+# (WPEWebContainer); the WEBKIT_MEMORY_* knobs already apply on older builds.
+atlantic_apply_profile() {
+    profile="${ATLANTIC_PROFILE:-}"
+    [ -z "${profile}" ] && return 0
+
+    case "${profile}" in
+        lean)
+            : "${ATLANTIC_CACHE_MODEL:=viewer}"
+            ;;
+        moderate)
+            : "${ATLANTIC_CACHE_MODEL:=document}"
+            ;;
+        min)
+            : "${ATLANTIC_CACHE_MODEL:=viewer}"
+            : "${WEBKIT_MEMORY_BASE_THRESHOLD_MB:=900}"
+            : "${WEBKIT_MEMORY_POLL_INTERVAL_MS:=2000}"
+            ;;
+        baseline|web|default)
+            : "${ATLANTIC_CACHE_MODEL:=web}"
+            ;;
+        *)
+            echo "atlantic: unknown ATLANTIC_PROFILE='${profile}' (use lean|moderate|min|baseline)" >&2
+            return 0
+            ;;
+    esac
+
+    export ATLANTIC_CACHE_MODEL
+    echo "atlantic: profile=${profile} cache_model=${ATLANTIC_CACHE_MODEL}" \
+         "mem_base=${WEBKIT_MEMORY_BASE_THRESHOLD_MB:-default}MB" >&2
+}
+
 atlantic_export_browser_env() {
     atlantic_export_helper_env
+
+    # Apply the selected ATLANTIC_PROFILE preset (if any) BEFORE the per-knob
+    # defaults below, so a profile's value feeds the ${VAR:-default} exports.
+    atlantic_apply_profile
 
     # ── WPE bubblewrap process sandbox ──────────────────────────────────────
     # The bwrap sandbox is FUNDAMENTALLY INCOMPATIBLE with the libhybris
