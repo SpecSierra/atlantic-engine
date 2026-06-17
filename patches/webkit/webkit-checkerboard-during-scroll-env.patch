@@ -1,0 +1,101 @@
+diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-06-17 08:00:25.621627770 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-06-17 08:00:25.649627935 +0000
+@@ -72,6 +72,31 @@
+     return enabled;
+ }
+ 
++// Aggressive checkerboard during fast scroll. The coordinated-graphics port
++// always rasterizes at least the visible rect every time the viewport moves, so
++// a fast fling pays the per-tile paint cost (serialized by gpu-sync glFinish) on
++// the hot path. Gecko APZ and the Cocoa TileController instead decouple scroll
++// from paint: during a fast fling they show already-painted tiles plus the page
++// background for the exposed area, then paint once motion settles. This mirrors
++// that. While the viewport is moving faster than this many device px/s we skip
++// creating the newly-exposed tiles (the gap shows the page background) and defer
++// the paint to the settle timer. WEBKIT_CHECKERBOARD_DURING_SCROLL unset/0 =
++// disabled (default); "1" = enabled at a 1500 px/s threshold; a number = that
++// threshold in px/s.
++static float checkerboardScrollSpeedThreshold()
++{
++    static float threshold = [] {
++        if (const char* env = getenv("WEBKIT_CHECKERBOARD_DURING_SCROLL")) {
++            if (!*env || !strcmp(env, "0"))
++                return 0.0f;
++            float value = atof(env);
++            return value > 1.0f ? value : 1500.0f;
++        }
++        return 0.0f;
++    }();
++    return threshold;
++}
++
+ WTF_MAKE_TZONE_ALLOCATED_IMPL(CoordinatedBackingStoreProxy);
+ 
+ static uint32_t generateTileID()
+@@ -240,6 +265,11 @@
+     bool contentsScaleChanged = m_contentsScale != contentsScale;
+     m_contentsScale = contentsScale;
+ 
++    // Set below when the viewport is flinging fast enough to checkerboard. Stays
++    // false for layout changes and for the settle-timer re-entry (geometry
++    // unchanged), so those passes always paint.
++    bool fastScroll = false;
++
+     IntRect contentsRect = mapFromContents(unscaledContentsRect);
+     IntRect visibleRect = mapFromContents(unscaledVisibleRect);
+     bool contentsRectChanged = contentsScaleChanged || m_contentsRect != contentsRect;
+@@ -263,6 +293,16 @@
+                 m_scrollAccumulatorY += dy;
+                 if (std::abs(m_scrollAccumulatorY) > m_visibleRect.height() / 2)
+                     m_lastScrollDirectionY = m_scrollAccumulatorY > 0 ? 1 : -1;
++
++                if (float speedThreshold = checkerboardScrollSpeedThreshold()) {
++                    auto now = MonotonicTime::now();
++                    double dtSec = (now - m_lastScrollSampleTime).seconds();
++                    m_lastScrollSampleTime = now;
++                    // Ignore the stale/huge gap between separate gestures; only
++                    // consecutive in-fling updates count toward velocity.
++                    if (dtSec > 0 && dtSec < 0.2 && std::abs(dy) / dtSec > speedThreshold)
++                        fastScroll = true;
++                }
+             }
+         }
+ 
+@@ -329,6 +369,17 @@
+     if (m_coverRect.isEmpty())
+         return;
+ 
++    // Aggressive checkerboard: while flinging fast, don't rasterize the
++    // newly-exposed tiles. Tiles inside keepRect were retained just above and
++    // simply scroll; the exposed area shows the page background. Flag a pending
++    // creation so the existing timer re-enters this method once motion stops --
++    // then geometryChanged is false and fastScroll is false, so the deferred
++    // tiles get painted at the final position.
++    if (fastScroll) {
++        m_pendingTileCreation = true;
++        return;
++    }
++
+     // Resize tiles at the edge in case the contents size has changed, but only do so
+     // after having dropped tiles outside the keep rect.
+     if (contentsRectChanged) {
+diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h	2026-06-17 08:00:25.624627788 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h	2026-06-17 08:00:25.649627935 +0000
+@@ -27,6 +27,7 @@
+ #include <wtf/Assertions.h>
+ #include <wtf/HashMap.h>
+ #include <wtf/Lock.h>
++#include <wtf/MonotonicTime.h>
+ #include <wtf/TZoneMalloc.h>
+ #include <wtf/ThreadSafeRefCounted.h>
+ 
+@@ -147,6 +148,7 @@
+     float m_coverAreaMultiplier { 2 };
+     int m_lastScrollDirectionY { 0 };
+     int m_scrollAccumulatorY { 0 };
++    MonotonicTime m_lastScrollSampleTime;
+     bool m_pendingTileCreation { false };
+     IntRect m_contentsRect;
+     IntRect m_visibleRect;

@@ -47,6 +47,13 @@ readonly WEBKIT_SOURCE_PATCHES=(
     "patches/webkit/webkit-texpool-compositor-sync-env.patch"
     "patches/webkit/webkit-raster-on-compositor-thread-env.patch"
     "patches/webkit/webkit-directional-tile-coverage-env.patch"
+    # webkit-checkerboard-during-scroll-env.patch: WEBKIT_CHECKERBOARD_DURING_SCROLL
+    # — during a fast fling, skip rasterizing newly-exposed tiles (show page
+    # background, like Gecko APZ / Cocoa TileController) and defer the paint to the
+    # settle timer. Targets the per-tile gpu-sync paint cost on the scroll hot path.
+    # Off by default (env-gated); must come AFTER the directional-coverage patch
+    # since both edit CoordinatedBackingStoreProxy.
+    "patches/webkit/webkit-checkerboard-during-scroll-env.patch"
     # webkit-memory-pressure-threshold-env.patch: make WebKit's memory-pressure
     # purge threshold + poll interval tunable (WEBKIT_MEMORY_BASE_THRESHOLD_MB /
     # WEBKIT_MEMORY_POLL_INTERVAL_MS, defaults exported by runtime-common.sh).
