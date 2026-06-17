@@ -348,7 +348,7 @@ atlantic_export_browser_env() {
     # WEBKIT_CHECKERBOARD_DURING_SCROLL toward 800 if it checkerboards too eagerly,
     # raise WEBKIT_COVER_AREA_MULTIPLIER toward 3 to re-enable prepaint.
     export WEBKIT_CHECKERBOARD_DURING_SCROLL="${WEBKIT_CHECKERBOARD_DURING_SCROLL:-200}"
-    export WEBKIT_CHECKERBOARD_SETTLE_MS="${WEBKIT_CHECKERBOARD_SETTLE_MS:-800}"
+    export WEBKIT_CHECKERBOARD_SETTLE_MS="${WEBKIT_CHECKERBOARD_SETTLE_MS:-100}"
     export WEBKIT_COVER_AREA_MULTIPLIER="${WEBKIT_COVER_AREA_MULTIPLIER:-2}"
 
     # ── Skia painting backend ────────────────────────────────────────────────
