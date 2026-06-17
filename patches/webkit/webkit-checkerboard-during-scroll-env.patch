@@ -103,3 +103,55 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
      bool m_pendingTileCreation { false };
      IntRect m_contentsRect;
      IntRect m_visibleRect;
+diff -ur a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp	2026-06-17 08:58:14.187146185 +0000
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp	2026-06-17 08:58:14.223146405 +0000
+@@ -36,6 +36,8 @@
+ #include <WebCore/Region.h>
+ #include <WebCore/ShareableBitmap.h>
+ #include <array>
++#include <cstdlib>
++#include <cstring>
+ #include <fcntl.h>
+ #include <unistd.h>
+ #include <wtf/SafeStrerror.h>
+@@ -1046,6 +1048,30 @@
+         glViewport(0, 0, size.width(), size.height());
+ }
+ 
++// True when aggressive checkerboarding (WEBKIT_CHECKERBOARD_DURING_SCROLL) is
++// enabled. See CoordinatedBackingStoreProxy: during a fast fling the backing store
++// deliberately leaves the newly-exposed viewport region untiled so it "shows the
++// page background". But CoordinatedBackingStore::paintToTextureMapper only paints
++// the tiles that exist -- nothing fills the gap. The page background is put there
++// solely by the clear() below, which for an opaque page upstream restricts to
++// AsyncScrolling composites. The checkerboard hold, however, also recomposites via
++// RenderingUpdate (m_pendingTileCreation -> isWaitingForTiles -> the settle tail),
++// and on those frames the opaque-background clear was skipped -- so the recycled
++// swap-chain target showed stale prior-frame content in the gap, i.e. the "glitch"
++// instead of a clean background. When checkerboarding is on we therefore clear the
++// opaque background on every composite too. The clear is scissored to the current
++// repaint/damage region (TextureMapper keeps GL_SCISSOR_TEST enabled and the clip
++// stack constrains the box), so it never erases undamaged tiles; the only cost is a
++// fullscreen clear while actively scrolling, which already happened via AsyncScrolling.
++static bool checkerboardClearsOpaqueBackground()
++{
++    static bool enabled = [] {
++        const char* env = getenv("WEBKIT_CHECKERBOARD_DURING_SCROLL");
++        return env && *env && strcmp(env, "0");
++    }();
++    return enabled;
++}
++
+ void AcceleratedSurface::clear(const OptionSet<WebCore::CompositionReason>& reasons)
+ {
+     ASSERT(!RunLoop::isMain());
+@@ -1053,7 +1079,7 @@
+     if (!isColorOpaque(backgroundColor)) {
+         glClearColor(0, 0, 0, 0);
+         glClear(GL_COLOR_BUFFER_BIT);
+-    } else if (reasons.contains(CompositionReason::AsyncScrolling)) {
++    } else if (checkerboardClearsOpaqueBackground() || reasons.contains(CompositionReason::AsyncScrolling)) {
+         auto [r, g, b, a] = backgroundColor;
+         glClearColor(r, g, b, a);
+         glClear(GL_COLOR_BUFFER_BIT);
