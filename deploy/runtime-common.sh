@@ -130,9 +130,17 @@ atlantic_export_helper_env() {
     # 3.5 GB RAM and OOM-kill the WebProcess. Override with a larger value on the
     # future Mali device, or unset to remove the ceiling.
     export WEBKIT_GST_VIDEO_DECODING_LIMIT="${WEBKIT_GST_VIDEO_DECODING_LIMIT:-1920x1080@60}"
-    # Identify audio streams to PulseAudio as x-maemo so SFOS media policy routes them correctly.
-    # Note: dot-containing property names must be set via PULSE_PROP_OVERRIDE (not PULSE_PROP_x.y).
-    export PULSE_PROP_OVERRIDE="${PULSE_PROP_OVERRIDE:-media.role=x-maemo}"
+    # Make the SFOS system media volume (the hardware volume keys / MainVolume2 /
+    # module-meego-mainvolume) control browser audio natively. That policy only
+    # steps PulseAudio streams whose media.role is "x-maemo"; WebKit hardcodes
+    # "video"/"music", which it ignores. WEBKIT_GST_MEDIA_ROLE (engine patch
+    # webkit-gst-media-role-env.patch) overrides the role WebKit stamps on every
+    # audio sink so all browser audio joins the media-volume group.
+    #
+    # Note: PULSE_PROP[_OVERRIDE] CANNOT do this — it only sets the client/context
+    # proplist, and WebKit's explicit per-stream media.role wins (device-verified).
+    # The old PULSE_PROP_OVERRIDE=media.role=x-maemo here was a no-op; removed.
+    export WEBKIT_GST_MEDIA_ROLE="${WEBKIT_GST_MEDIA_ROLE:-x-maemo}"
 }
 
 # ── Tuning profiles ──────────────────────────────────────────────────────────

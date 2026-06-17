@@ -1,0 +1,50 @@
+Make the GStreamer audio sink media.role overridable via WEBKIT_GST_MEDIA_ROLE.
+
+SFOS routes the system media volume (the hardware volume keys, via
+module-meego-mainvolume) only to PulseAudio streams whose media.role is in its
+route table — "x-maemo" on Sailfish (/etc/pulse/x-maemo-route.table). WebKit
+hardcodes media.role to "video"/"music" on its audio sinks
+(MediaPlayerPrivateGStreamer::createAudioSink -> createPlatformAudioSink ->
+createAutoAudioSink, which stamps it onto the pulsesink stream-properties here),
+and neither role is in that table, so the volume keys cannot attenuate browser
+audio at all — the root cause behind all the el.volume / MainVolume2-poll hacks.
+
+This can't be fixed from the environment: PULSE_PROP[_OVERRIDE] only sets the
+client/context proplist, and an explicit per-stream media.role (which WebKit
+sets) wins — device-verified. So override the role at the point WebKit sets it.
+
+createAutoAudioSink is the single chokepoint in the default config (the audio
+mixer / webkitAudioSinkNew path is off unless WEBKIT_GST_ENABLE_AUDIO_MIXER),
+covering HTML5 <audio>/<video>, the mixer device sink, and speech. With
+WEBKIT_GST_MEDIA_ROLE=x-maemo (set in deploy/runtime-common.sh) every browser
+audio stream lands in the system media-volume group = native, browser-level
+volume. Unset = upstream behaviour. Device-proven: an x-maemo stream tracks the
+volume step (29%@2 -> 95%@10) while "music"/"video" stay put.
+--- a/Source/WebCore/platform/graphics/gstreamer/GStreamerCommon.cpp
++++ b/Source/WebCore/platform/graphics/gstreamer/GStreamerCommon.cpp
+@@ -1164,6 +1164,16 @@
+ 
+ GstElement* /* (transfer floating) */ createAutoAudioSink(const String& role)
+ {
++    // SFOS: route browser audio into the system media-volume group. The Nemo
++    // mainvolume policy (module-meego-mainvolume, driven by the hardware volume
++    // keys) only steps streams whose media.role is in its route table — "x-maemo"
++    // on Sailfish. WebKit's default "video"/"music" roles are ignored by it, so
++    // the volume keys cannot attenuate browser audio. WEBKIT_GST_MEDIA_ROLE forces
++    // a single media.role onto every audio sink. Unset = upstream behaviour.
++    String effectiveRole = role;
++    if (const char* envRole = std::getenv("WEBKIT_GST_MEDIA_ROLE"); envRole && *envRole)
++        effectiveRole = String::fromUTF8(envRole);
++
+     auto* audioSink = makeGStreamerElement("autoaudiosink"_s);
+     g_signal_connect_data(audioSink, "child-added", G_CALLBACK(+[](GstChildProxy*, GObject* object, gchar*, gpointer userData) {
+         auto* role = reinterpret_cast<StringImpl*>(userData);
+@@ -1179,7 +1189,7 @@
+             auto& clientName = getApplicationName();
+             g_object_set(object, "client-name", clientName.ascii().data(), nullptr);
+         }
+-    }), role.isolatedCopy().releaseImpl().leakRef(), static_cast<GClosureNotify>([](gpointer userData, GClosure*) {
++    }), effectiveRole.isolatedCopy().releaseImpl().leakRef(), static_cast<GClosureNotify>([](gpointer userData, GClosure*) {
+         if (auto* roleImpl = reinterpret_cast<StringImpl*>(userData))
+             roleImpl->deref();
+     }), static_cast<GConnectFlags>(0));

@@ -99,16 +99,18 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # (defaults exported by deploy/runtime-common.sh). Authored in 20106a4 but
     # never added to this list — the runtime env vars were dead until now.
     "patches/webkit/webkit-gst-buffer-tuning.patch"
-    # webkit-webview-media-volume-api.patch: surface the existing page-level media
-    # volume (WebCore Page::setMediaVolume, folded into HTMLMediaElement::
-    # effectiveVolume as element.volume * page->mediaVolume()) on the public glib
-    # WebKitWebView binding as webkit_web_view_set_media_volume(). Gives a true
-    # browser-global output volume that attenuates every <audio>/<video> element
-    # regardless of whether the site exposes a slider — a separate multiplier the
-    # page JS can't see or reset, so it works on players that manage their own
-    # el.volume (YouTube) where the old per-element el.volume injection was fought.
-    # The browser (apps/wpe/WPEWebPage.cpp) calls it from the MainVolume2 poll.
-    "patches/webkit/webkit-webview-media-volume-api.patch"
+    # webkit-gst-media-role-env.patch: let WEBKIT_GST_MEDIA_ROLE override the
+    # media.role WebKit stamps on its GStreamer audio sinks (hardcoded "video"/
+    # "music"). SFOS's system media volume (module-meego-mainvolume / the hardware
+    # volume keys) only steps streams whose media.role is in its route table —
+    # "x-maemo" on Sailfish — so with the upstream roles the volume keys can't
+    # attenuate browser audio at all. Setting WEBKIT_GST_MEDIA_ROLE=x-maemo
+    # (deploy/runtime-common.sh) puts every browser audio stream in the system
+    # media-volume group = native, browser-level volume control. Device-proven:
+    # an x-maemo pacat stream tracks the volume step; "music"/"video" do not.
+    # PULSE_PROP_OVERRIDE can't do this — it only sets the context proplist, and
+    # WebKit's explicit per-stream media.role wins. Unset = upstream behaviour.
+    "patches/webkit/webkit-gst-media-role-env.patch"
     "patches/webkit/webkit-bubblewrap-sfos-sandbox.patch"
 )
 
