@@ -99,6 +99,16 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # (defaults exported by deploy/runtime-common.sh). Authored in 20106a4 but
     # never added to this list — the runtime env vars were dead until now.
     "patches/webkit/webkit-gst-buffer-tuning.patch"
+    # webkit-webview-media-volume-api.patch: surface the existing page-level media
+    # volume (WebCore Page::setMediaVolume, folded into HTMLMediaElement::
+    # effectiveVolume as element.volume * page->mediaVolume()) on the public glib
+    # WebKitWebView binding as webkit_web_view_set_media_volume(). Gives a true
+    # browser-global output volume that attenuates every <audio>/<video> element
+    # regardless of whether the site exposes a slider — a separate multiplier the
+    # page JS can't see or reset, so it works on players that manage their own
+    # el.volume (YouTube) where the old per-element el.volume injection was fought.
+    # The browser (apps/wpe/WPEWebPage.cpp) calls it from the MainVolume2 poll.
+    "patches/webkit/webkit-webview-media-volume-api.patch"
     "patches/webkit/webkit-bubblewrap-sfos-sandbox.patch"
 )
 
