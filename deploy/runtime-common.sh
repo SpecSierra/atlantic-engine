@@ -347,9 +347,9 @@ atlantic_export_browser_env() {
     # cover=1 are aggressive/under-tuning values — dial via the env: raise
     # WEBKIT_CHECKERBOARD_DURING_SCROLL toward 800 if it checkerboards too eagerly,
     # raise WEBKIT_COVER_AREA_MULTIPLIER toward 3 to re-enable prepaint.
-    export WEBKIT_CHECKERBOARD_DURING_SCROLL="${WEBKIT_CHECKERBOARD_DURING_SCROLL:-50}"
-    export WEBKIT_CHECKERBOARD_SETTLE_MS="${WEBKIT_CHECKERBOARD_SETTLE_MS:-600}"
-    export WEBKIT_COVER_AREA_MULTIPLIER="${WEBKIT_COVER_AREA_MULTIPLIER:-1}"
+    export WEBKIT_CHECKERBOARD_DURING_SCROLL="${WEBKIT_CHECKERBOARD_DURING_SCROLL:-200}"
+    export WEBKIT_CHECKERBOARD_SETTLE_MS="${WEBKIT_CHECKERBOARD_SETTLE_MS:-800}"
+    export WEBKIT_COVER_AREA_MULTIPLIER="${WEBKIT_COVER_AREA_MULTIPLIER:-2}"
 
     # ── Skia painting backend ────────────────────────────────────────────────
     # WEBKIT_SKIA_ENABLE_CPU_RENDERING and WEBKIT_SKIA_GPU_PAINTING_THREADS are
