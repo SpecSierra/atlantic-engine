@@ -1,0 +1,15 @@
+[Unit]
+Description=Atlantic: rev the big CPU cluster (fix vendor-init powersave lock)
+Documentation=https://github.com/SpecSierra/atlantic-engine
+# Run well after libhybris/droid-hal-init has applied the vendor power init.
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/atlantic/atlantic-cpu-governor.sh
+RemainAfterExit=yes
+# Don't fail the boot transaction if sysfs is laid out differently.
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=multi-user.target

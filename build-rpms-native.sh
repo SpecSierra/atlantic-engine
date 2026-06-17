@@ -365,6 +365,21 @@ done
 # Keep shim preload/library-path scoped to Atlantic launcher/helper wrappers only.
 # Global nemo session injection breaks unrelated services (e.g. PulseAudio).
 
+# CPU governor repair: the Xperia 10 II vendor init leaves the big cluster
+# (cpu4-7) stuck in "powersave" at 300 MHz, and Atlantic pins the browser +
+# WPE helpers to that cluster. Ship a boot-time oneshot that revs it back up.
+install -d -m 755 "${S}/usr/libexec/atlantic"
+install -m 755 "${SCRIPT_DIR}/deploy/atlantic-cpu-governor.sh" \
+    "${S}/usr/libexec/atlantic/atlantic-cpu-governor.sh"
+install -d -m 755 "${S}/usr/lib/systemd/system"
+install -m 644 "${SCRIPT_DIR}/deploy/atlantic-cpu-governor.service" \
+    "${S}/usr/lib/systemd/system/atlantic-cpu-governor.service"
+
+# Enable + start the governor service on install (idempotent; tolerant on a
+# host without the unit running, e.g. during image builds).
+FPM_POST_EXTRA="systemctl daemon-reload >/dev/null 2>&1 || :
+systemctl enable atlantic-cpu-governor.service >/dev/null 2>&1 || :
+systemctl start atlantic-cpu-governor.service >/dev/null 2>&1 || :" \
 fpm_rpm wpe-sfos-compat "$WPE_SFOS_COMPAT_VERSION" "SFOS compatibility shims for WPE WebKit" "$S"
 
 # ===========================================================================
