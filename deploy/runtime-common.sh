@@ -314,12 +314,42 @@ atlantic_export_browser_env() {
     #   did NOT reproduce on 334-336 (faults ~0, RSS bounded) — the purge ITSELF
     #   was the dominant spike source, not thrashing.
     #
-    # 2200 MB → conservative purge ~730 / strict ~1100 MB: above the scroll
-    # footprint (no purging mid-scroll) yet well below the ramSize-based kill, so
-    # OOM protection on heavy multi-page sessions is retained. Poll 3 s. Override
-    # per-launch via the env (the `min` profile lowers it for max headroom).
-    export WEBKIT_MEMORY_BASE_THRESHOLD_MB="${WEBKIT_MEMORY_BASE_THRESHOLD_MB:-2200}"
+    # 700 MB → conservative purge ~230 / strict ~350 MB: AGGRESSIVE on purpose.
+    # Device-measured (build 341): just sitting on a reddit feed grows ~1.5 GB of
+    # mostly-OFF-RSS memory (decoded images → GPU textures + disk/URL cache) in 30 s
+    # and HARD-OOMs the phone (lowmemorykiller reaps system procs). A high threshold
+    # (2200) never purged before the system died, because WebKit's purge watches
+    # RSS, not the graphics memory. Purging early releases the decoded images (and
+    # their GPU textures) and bounds total memory — verified: avail held ~2.15 GB,
+    # RSS ~220 MB, 0 LMK kills. The usual cost of aggressive purge (tile eviction →
+    # scroll spikes) is hidden by the checkerboard below (we don't paint mid-fling),
+    # so it is now affordable. Poll 3 s. Override per-launch via the env.
+    export WEBKIT_MEMORY_BASE_THRESHOLD_MB="${WEBKIT_MEMORY_BASE_THRESHOLD_MB:-700}"
     export WEBKIT_MEMORY_POLL_INTERVAL_MS="${WEBKIT_MEMORY_POLL_INTERVAL_MS:-3000}"
+
+    # ── Steady-state cache footprint ──────────────────────────────────────────
+    # document_viewer: no back/forward page cache, no disk/URL cache, minimal
+    # decoded-image retention. Part of the OOM fix above — the disk/URL cache and
+    # bfcache are the bulk of the ~1.5 GB off-RSS growth that hard-OOMs the phone
+    # on a reddit feed under the desktop-style web_browser model. Read by the
+    # browser (WPEWebContainer); env-tunable (web / document / viewer).
+    export ATLANTIC_CACHE_MODEL="${ATLANTIC_CACHE_MODEL:-viewer}"
+
+    # ── Scroll tile policy: checkerboard, no prepaint ─────────────────────────
+    # Honoured by webkit-checkerboard-during-scroll-env.patch +
+    # webkit-directional-tile-coverage-env.patch (read by the WebProcess).
+    # During a fast fling, stop rasterizing newly-exposed tiles (show page
+    # background) and repaint once at rest — mirrors Gecko APZ / Cocoa
+    # TileController, and removes the per-tile gpu-sync paint cost from the scroll
+    # hot path. Disabling prepaint (cover=1) avoids painting tiles that get
+    # checkerboarded anyway, and pairs with the aggressive purge above (no large
+    # prepainted backing store to evict). NOTE: the threshold (50 px/s) and
+    # cover=1 are aggressive/under-tuning values — dial via the env: raise
+    # WEBKIT_CHECKERBOARD_DURING_SCROLL toward 800 if it checkerboards too eagerly,
+    # raise WEBKIT_COVER_AREA_MULTIPLIER toward 3 to re-enable prepaint.
+    export WEBKIT_CHECKERBOARD_DURING_SCROLL="${WEBKIT_CHECKERBOARD_DURING_SCROLL:-50}"
+    export WEBKIT_CHECKERBOARD_SETTLE_MS="${WEBKIT_CHECKERBOARD_SETTLE_MS:-600}"
+    export WEBKIT_COVER_AREA_MULTIPLIER="${WEBKIT_COVER_AREA_MULTIPLIER:-1}"
 
     # ── Skia painting backend ────────────────────────────────────────────────
     # WEBKIT_SKIA_ENABLE_CPU_RENDERING and WEBKIT_SKIA_GPU_PAINTING_THREADS are
