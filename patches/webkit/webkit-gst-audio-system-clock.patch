@@ -1,0 +1,55 @@
+Stop the PulseAudio sink from providing the pipeline clock (WEBKIT_GST_AUDIO_SYSTEM_CLOCK).
+
+On the Xperia 10 II (libhybris PulseAudio) the GStreamer pulsesink that WebKit
+builds via createAutoAudioSink intermittently locks up: its provided clock
+(GstPulseSinkClock) freezes at the current playback instant and never advances.
+Because the audio sink is the pipeline's clock provider, the whole pipeline —
+which is slaved to that clock — stalls. Audio plays out only the already-buffered
+~250 ms and then goes silent, and the picture freezes with it, while the
+HTMLMediaElement still reports paused=false / muted=false.
+
+Device-reproduced on YouTube (build 354): a real unmute (or an MSE audio re-init)
+froze currentTime at the exact unmute timestamp; GST_DEBUG showed
+GstPulseSinkClock internal time pinned while wall-clock advanced, with the render
+thread spinning in gst_system_clock_id_wait (... unlocked after timeout ...
+restart). At the PulseAudio level the active sink-input was left in state CORKED
+even though the element was playing+unmuted. This is a cork/clock deadlock: the
+pulse stream cannot uncork until the audio clock advances, but the audio clock
+cannot advance until the stream uncorks. It is intermittent (a race, worsened by
+the device's heavy memory pressure) — sometimes the stream uncorks and audio
+plays, sometimes it does not.
+
+Forcing provide-clock=FALSE on the pulsesink makes the pipeline select the
+monotonic GstSystemClock instead, so the pipeline clock keeps advancing
+regardless of the pulse stream state and the deadlock cannot form; pulsesink
+resamples (its default slave-method=skew) to track the audio HW clock. Gated by
+WEBKIT_GST_AUDIO_SYSTEM_CLOCK (set in deploy/runtime-common.sh). Unset = upstream
+behaviour. Set in the same autoaudiosink "child-added" hook that the media.role
+override (webkit-gst-media-role-env.patch) uses, so it applies to every browser
+audio sink before the pipeline reaches PAUSED/PLAYING and picks its clock.
+--- a/Source/WebCore/platform/graphics/gstreamer/GStreamerCommon.cpp
++++ b/Source/WebCore/platform/graphics/gstreamer/GStreamerCommon.cpp
+@@ -1189,6 +1189,23 @@
+             auto& clientName = getApplicationName();
+             g_object_set(object, "client-name", clientName.ascii().data(), nullptr);
+         }
++        // SFOS: do not let the PulseAudio sink provide the pipeline clock. On the
++        // Xperia 10 II (libhybris PulseAudio) the pulsesink clock intermittently
++        // freezes after its stream is (re)corked across a mute/unmute or an MSE
++        // re-init: the stream cannot uncork until the audio clock advances, but the
++        // clock cannot advance until the stream uncorks — a deadlock. The pipeline,
++        // slaved to that frozen clock, then stalls (audio cuts out ~250 ms in and
++        // the picture freezes; device-reproduced on YouTube, sink-input left CORKED
++        // while the element reports playing+unmuted). Forcing provide-clock=FALSE
++        // makes the pipeline run off the monotonic system clock, breaking the cycle;
++        // pulsesink resamples (slave-method=skew) to track the audio HW clock. Gated
++        // by WEBKIT_GST_AUDIO_SYSTEM_CLOCK (set in deploy/runtime-common.sh); unset =
++        // upstream behaviour.
++        if (g_object_class_find_property(objectClass, "provide-clock")) {
++            const char* sysClock = std::getenv("WEBKIT_GST_AUDIO_SYSTEM_CLOCK");
++            if (sysClock && *sysClock && g_strcmp0(sysClock, "0"))
++                g_object_set(object, "provide-clock", FALSE, nullptr);
++        }
+     }), effectiveRole.isolatedCopy().releaseImpl().leakRef(), static_cast<GClosureNotify>([](gpointer userData, GClosure*) {
+         if (auto* roleImpl = reinterpret_cast<StringImpl*>(userData))
+             roleImpl->deref();

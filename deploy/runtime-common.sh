@@ -141,6 +141,16 @@ atlantic_export_helper_env() {
     # proplist, and WebKit's explicit per-stream media.role wins (device-verified).
     # The old PULSE_PROP_OVERRIDE=media.role=x-maemo here was a no-op; removed.
     export WEBKIT_GST_MEDIA_ROLE="${WEBKIT_GST_MEDIA_ROLE:-x-maemo}"
+    # Fix "YouTube sound stops after ~0.25 s". The libhybris PulseAudio sink's
+    # provided clock (GstPulseSinkClock) intermittently freezes when its stream is
+    # (re)corked across a mute/unmute or an MSE audio re-init; because the audio
+    # sink is the pipeline clock provider, the slaved pipeline deadlocks (audio
+    # plays only the buffered ~250 ms then cuts out, picture freezes, element still
+    # reports playing+unmuted). WEBKIT_GST_AUDIO_SYSTEM_CLOCK (engine patch
+    # webkit-gst-audio-system-clock.patch) forces provide-clock=FALSE on the
+    # pulsesink so the pipeline uses the monotonic system clock instead; pulsesink
+    # resamples (slave-method=skew) to track the audio HW clock. Unset = upstream.
+    export WEBKIT_GST_AUDIO_SYSTEM_CLOCK="${WEBKIT_GST_AUDIO_SYSTEM_CLOCK:-1}"
 }
 
 # ── Tuning profiles ──────────────────────────────────────────────────────────

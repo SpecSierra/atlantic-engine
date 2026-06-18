@@ -111,6 +111,14 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # PULSE_PROP_OVERRIDE can't do this — it only sets the context proplist, and
     # WebKit's explicit per-stream media.role wins. Unset = upstream behaviour.
     "patches/webkit/webkit-gst-media-role-env.patch"
+    # webkit-gst-audio-system-clock.patch: WEBKIT_GST_AUDIO_SYSTEM_CLOCK — force
+    # provide-clock=FALSE on the PulseAudio sink so the pipeline runs off the
+    # monotonic system clock. Fixes "YouTube sound stops after ~0.25 s": the
+    # libhybris pulsesink clock intermittently freezes when its stream is (re)corked
+    # across a mute/unmute or MSE re-init, deadlocking the slaved pipeline (audio
+    # cuts out, picture freezes). Must come AFTER the media-role patch — it extends
+    # the same autoaudiosink "child-added" hook.
+    "patches/webkit/webkit-gst-audio-system-clock.patch"
     "patches/webkit/webkit-bubblewrap-sfos-sandbox.patch"
 )
 
