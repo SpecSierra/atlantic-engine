@@ -10,7 +10,7 @@ per-tile clip to skip ops -- every tile walks, and submits to the GPU (only to b
 scissored away), the ENTIRE layer's draw-op list. An N-tile dirty band therefore
 costs ~N x the full op list. On the libhybris/Adreno device that replay is
 serialized on the compositor thread (WEBKIT_RASTER_ON_COMPOSITOR_THREAD), so this
-redundant work is exactly what makes newly-exposed tiles paint late during a fast
+redundant work is exactly what makes newly-exposed tiles paint late on a fast
 scroll.
 
 Recording with an SkRTreeFactory builds an R-tree once at record time (cheap,
@@ -31,17 +31,16 @@ upstream no-BBH recording). Default = enabled (it is lossless).
  #include <skia/core/SkPictureRecorder.h>
  #include <skia/gpu/ganesh/GrBackendSurface.h>
  #include <skia/gpu/ganesh/SkImageGanesh.h>
-@@ -64,6 +65,25 @@ static bool canPerformAcceleratedRendering()
- {
+@@ -66,6 +67,24 @@
      return ProcessCapabilities::canUseAcceleratedBuffers() && PlatformDisplay::sharedDisplay().skiaGLContext();
  }
-
+ 
 +// A layer flush records the union of all dirty tiles into one SkPicture (record())
-+// and then replays it once per dirty tile, clipped to that tile (replay()). With
-+// no bounding-box hierarchy on the picture, each per-tile playback walks (and
-+// submits, to be scissored away) the entire layer's draw ops, so an N-tile band
-+// costs ~N x the full op list -- the redundant work that makes tiles paint late on
-+// the serialized compositor-thread raster path. Recording with an R-tree lets each
++// and then replays it once per dirty tile, clipped to that tile (replay()). With no
++// bounding-box hierarchy on the picture, each per-tile playback walks (and submits,
++// to be scissored away) the entire layer's draw ops, so an N-tile band costs ~N x
++// the full op list -- the redundant work that makes tiles paint late on the
++// serialized compositor-thread raster path. Recording with an R-tree lets each
 +// replay cull to its tile's clip. Lossless (identical pixels); the win scales with
 +// tiles painted per flush. WEBKIT_SKIA_RECORD_RTREE=0 disables it for A/B.
 +static bool recordWithRTree()
@@ -57,8 +56,8 @@ upstream no-BBH recording). Default = enabled (it is lossless).
  SkiaPaintingEngine::SkiaPaintingEngine()
  {
      if (canPerformAcceleratedRendering()) {
-@@ -159,7 +179,9 @@ Ref<SkiaRecordingResult> SkiaPaintingEngine::record(const GraphicsLayerCoordinat
-
+@@ -160,7 +179,9 @@
+ 
      WTFBeginSignpost(this, RecordTile);
      SkPictureRecorder pictureRecorder;
 -    auto* recordingCanvas = pictureRecorder.beginRecording(recordRect.width(), recordRect.height());
