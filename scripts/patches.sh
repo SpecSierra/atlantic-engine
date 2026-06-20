@@ -62,6 +62,19 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # Off by default (env-gated); must come AFTER the directional-coverage patch
     # since both edit CoordinatedBackingStoreProxy.
     "patches/webkit/webkit-checkerboard-during-scroll-env.patch"
+    # webkit-lowres-tiles-during-scroll-env.patch: WEBKIT_LOWRES_TILE_SCALE — during
+    # a fast fling, rasterize newly-exposed tiles into a buffer scaled down by this
+    # factor (e.g. 0.6) and bilinear-upscale them back to full size at composite time
+    # (Chrome/Android "low-res tiles"), then repaint full-res once scrolling settles.
+    # Raster/fill cost is quadratic in scale, so this directly cuts the per-frame
+    # GPU/raster pixel cost on the serialized compositor-thread paint path — the
+    # remaining lever after rtree/style-resolver/raster-on-compositor. An alternative
+    # to checkerboard for the same exposed band (paint-cheap-now vs paint-later); A/B
+    # them, don't enable both. Off by default (>=1.0). Must come AFTER the checkerboard
+    # patch — it edits the same CoordinatedBackingStoreProxy / SkiaPaintingEngine /
+    # CoordinatedBackingStore(Tile) / CoordinatedPlatformLayer files and reuses the
+    # checkerboard fling-detect/settle signal.
+    "patches/webkit/webkit-lowres-tiles-during-scroll-env.patch"
     # webkit-memory-pressure-threshold-env.patch: make WebKit's memory-pressure
     # purge threshold + poll interval tunable (WEBKIT_MEMORY_BASE_THRESHOLD_MB /
     # WEBKIT_MEMORY_POLL_INTERVAL_MS, defaults exported by runtime-common.sh).

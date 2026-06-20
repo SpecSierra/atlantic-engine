@@ -1,7 +1,10 @@
 # Handover — Low-resolution tiles during scroll
 
-Author: prior session (2026-06-20). Status: **not started** — this is a design +
-starting-point doc for the next person.
+Author: prior session (2026-06-20). Status: **Option A implemented (2026-06-20),
+NOT yet built/CI'd/device-verified** — patch `patches/webkit/webkit-lowres-tiles-during-scroll-env.patch`
+is in the tree and registered in `scripts/patches.sh` (after the checkerboard patch).
+The rest of this doc is the original design; see "Implementation notes" at the
+bottom for what was actually built and the deviations from the sketch.
 
 ## Why
 
@@ -149,6 +152,66 @@ single coalesced re-raster, not per-frame, or you reintroduce cost.
   screenshot a fling), and at rest the page is full-res sharp. Baseline numbers captured this
   session: jeuxvideo forum during scroll (build 365) main 41% / comp 49% / GPU 45%, nothing
   saturated — the serialized pipeline, not a hot CPU, is the target.
+
+## Implementation notes (Option A, as built 2026-06-20)
+
+Env: **`WEBKIT_LOWRES_TILE_SCALE`** in `[0.4, 1.0)`, default off (`>=1.0`). To test
+on device: `WEBKIT_LOWRES_TILE_SCALE=0.6` and turn checkerboard OFF
+(`WEBKIT_CHECKERBOARD_DURING_SCROLL=0`) — they're alternatives for the same exposed
+band; with both on, checkerboard's early-return defers the band so low-res never
+paints it (low-res becomes a no-op). No browser-side device default set yet (do that
+in `apps/browser/main.cpp` conservative branch once proven).
+
+Files touched (all in the one patch): `SkiaPaintingEngine.{cpp,h}`,
+`CoordinatedPlatformLayer.{cpp,h}`, `CoordinatedBackingStoreProxy.{cpp,h}`,
+`CoordinatedBackingStoreTile.{cpp,h}`, `CoordinatedBackingStore.cpp`.
+
+Design as built (and where it deviates from the sketch above):
+- **Fling signal reused**, but generalized: a new `scrollFlingSpeedThreshold()` arms
+  the existing `m_checkerboardHoldUntil` window when *either* checkerboard or low-res
+  is enabled (default 800 px/s when only low-res is on). `lowResScrollActive =
+  enabled && now < m_checkerboardHoldUntil`.
+- **Low-res is gated to whole-tile updates only** (`tile.dirtyRect == tile.rect`),
+  which is exactly the freshly-exposed band during a fling. This is the key
+  invariant that keeps the compositor correct: a low-res tile's texture is smaller
+  than its rect, and the **fast-path swap has `RELEASE_ASSERT(m_size==other.m_size)`**
+  (BitmapTexture::swapTexture) while the **partial-copy path** would write a full-res
+  sub-rect into a small texture. So the sketch's "free swap" only works if the tile
+  texture is *also* sized to the low-res buffer — done in
+  `CoordinatedBackingStoreTile::processPendingUpdates` by sizing the acquired texture
+  to `update.buffer->size()` (not `update.tileRect.size()`) on whole-tile updates,
+  and adding `m_texture->size() != textureSize` to the re-acquire condition so the
+  resolution can flip cleanly. `update.buffer->size()` == `buffer.texture().size()`
+  for accelerated buffers, so the swap assert holds.
+- **A low-res tile is never partial-updated.** The proxy tracks `Tile::isLowRes` and,
+  before computing the record union, expands any partial dirty on a low-res tile to
+  the whole tile (so its next update is a whole-tile = fast-path swap, never a partial
+  copy into the small texture). This is the correctness lynchpin — don't remove it.
+- **Sharpen-at-rest**: when `lowResScrollActive` goes false, the proxy marks every
+  `isLowRes` tile whole-dirty once → repainted at full res (whole-tile swap replaces
+  the small texture). To make sure that pass actually runs after the fling, the proxy
+  sets `m_pendingTileCreation = true` while flinging (reuses the existing
+  TilesPending re-poll mechanism the checkerboard patch relies on).
+- **Raster scaling**: `SkiaPaintingEngine` allocates the buffer at
+  `ceil(dirtyRect.size() * scale)` (`lowResBufferSize`) and prepends
+  `canvas->scale(scale)` (replay) / `context.scale(scale)` (sync paint) so full-res
+  draw ops land in the smaller buffer. The recording is unchanged (resolution-
+  independent SkPicture at full contentsScale); only the replay target shrinks. The
+  fence path (`SkiaReplayCanvas`, an SkNWayCanvas that forwards the CTM to the child
+  buffer canvas) is sized to the low-res buffer and gets the same scale.
+- **Low-res is GPU-only.** Both engine entry points force `scale=1.0` when not
+  accelerated (the CPU `updateContents` copy path can't take a low-res buffer).
+- **Composite upscale is free**: `CoordinatedBackingStore::paintToTextureMapper`
+  already stretches `tile.texture()` to `tile.rect()` via `drawTexture`. The only
+  guard added: skip the `ENABLE(DAMAGE_TRACKING)` `drawTextureFragment` fast path for
+  low-res tiles (it assumes 1:1 texel mapping) — `DAMAGE_TRACKING` *is* on in this
+  build (PlatformEnableGlib.h), so this guard matters. New `Tile::isLowRes()` flag on
+  the compositor tile feeds it, set in `processPendingUpdates`.
+
+Still TODO: build via CI, device A/B (`WEBKIT_LOWRES_TILE_SCALE=0.6` vs `1.0` on a
+jeuxvideo-forum / reddit fling — watch WebProc-COMPOSITOR jiffies + `gpubusy`, and
+screenshot mid-fling softness + that sharpen-at-rest fires), then set the conservative
+device default and decide low-res vs checkerboard.
 
 ## Related
 - Memories: `tile`/`gpu-explicit-compositor-thread-fix`, `atlantic-gpu-rendering-conservative`

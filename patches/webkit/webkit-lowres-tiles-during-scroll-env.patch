@@ -1,0 +1,417 @@
+diff -ur a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
+--- a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp	2026-06-20 23:00:11.750139302 +0000
++++ b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp	2026-06-20 23:02:00.329856911 +0000
+@@ -26,6 +26,7 @@
+ #include "config.h"
+ #include "SkiaPaintingEngine.h"
+ 
++#include <cmath>
+ #include <cstdlib>
+ #include <cstring>
+ 
+@@ -105,8 +106,23 @@
+     return makeUnique<SkiaPaintingEngine>();
+ }
+ 
+-void SkiaPaintingEngine::paintIntoGraphicsContext(const GraphicsLayer& layer, GraphicsContext& context, const IntRect& dirtyRect, bool contentsOpaque, float contentsScale) const
++// During scroll a tile may be rasterized into a buffer scaled down by lowResScale
++// (the texture is upscaled back to its full rect at composite time). Everything
++// below works in full-resolution tile-local coordinates; the leading
++// context.scale(lowResScale) maps those into the smaller buffer.
++IntSize SkiaPaintingEngine::lowResBufferSize(const IntSize& fullSize, float lowResScale)
++{
++    if (lowResScale >= 1.0f || fullSize.isEmpty())
++        return fullSize;
++    return IntSize(std::max(1, static_cast<int>(std::ceil(fullSize.width() * lowResScale))),
++        std::max(1, static_cast<int>(std::ceil(fullSize.height() * lowResScale))));
++}
++
++void SkiaPaintingEngine::paintIntoGraphicsContext(const GraphicsLayer& layer, GraphicsContext& context, const IntRect& dirtyRect, bool contentsOpaque, float contentsScale, float lowResScale) const
+ {
++    if (lowResScale < 1.0f)
++        context.scale(lowResScale);
++
+     IntRect initialClip(IntPoint::zero(), dirtyRect.size());
+     context.clip(initialClip);
+ 
+@@ -139,16 +155,21 @@
+     return CoordinatedUnacceleratedTileBuffer::create(size, contentsOpaque ? CoordinatedTileBuffer::NoFlags : CoordinatedTileBuffer::SupportsAlpha);
+ }
+ 
+-Ref<CoordinatedTileBuffer> SkiaPaintingEngine::paint(const GraphicsLayerCoordinated& layer, const IntRect& dirtyRect, bool contentsOpaque, float contentsScale)
++Ref<CoordinatedTileBuffer> SkiaPaintingEngine::paint(const GraphicsLayerCoordinated& layer, const IntRect& dirtyRect, bool contentsOpaque, float contentsScale, float lowResScale)
+ {
+     // ### Synchronous rendering on main thread ###
+     ASSERT(!useThreadedRendering());
+ 
++    auto renderingMode = canPerformAcceleratedRendering() ? RenderingMode::Accelerated : RenderingMode::Unaccelerated;
++    // Low-res tiles are only correct on the GPU swap path (see CoordinatedBackingStoreTile);
++    // the unaccelerated CPU copy path always paints full-resolution.
++    if (renderingMode != RenderingMode::Accelerated)
++        lowResScale = 1.0f;
++
+     Ref platformLayer = layer.coordinatedPlatformLayer();
+     platformLayer->willPaintTile();
+ 
+-    auto renderingMode = canPerformAcceleratedRendering() ? RenderingMode::Accelerated : RenderingMode::Unaccelerated;
+-    auto buffer = createBuffer(renderingMode, dirtyRect.size(), contentsOpaque);
++    auto buffer = createBuffer(renderingMode, lowResBufferSize(dirtyRect.size(), lowResScale), contentsOpaque);
+     buffer->beginPainting();
+ 
+     if (auto* canvas = buffer->canvas()) {
+@@ -157,7 +178,7 @@
+         canvas->clear(SkColors::kTransparent);
+ 
+         GraphicsContextSkia context(*canvas, renderingMode, RenderingPurpose::LayerBacking);
+-        paintIntoGraphicsContext(layer, context, dirtyRect, contentsOpaque, contentsScale);
++        paintIntoGraphicsContext(layer, context, dirtyRect, contentsOpaque, contentsScale, lowResScale);
+ 
+         canvas->restore();
+         WTFEndSignpost(canvas, PaintTile);
+@@ -192,23 +213,31 @@
+     return SkiaRecordingResult::create(WTF::move(picture), WTF::move(imageToFenceMap), recordRect, renderingMode, contentsOpaque, contentsScale);
+ }
+ 
+-Ref<CoordinatedTileBuffer> SkiaPaintingEngine::replay(const GraphicsLayerCoordinated& layer, const RefPtr<SkiaRecordingResult>& recording, const IntRect& dirtyRect)
++Ref<CoordinatedTileBuffer> SkiaPaintingEngine::replay(const GraphicsLayerCoordinated& layer, const RefPtr<SkiaRecordingResult>& recording, const IntRect& dirtyRect, float lowResScale)
+ {
+     // ### Asynchronous rendering on worker threads ###
+     ASSERT(useThreadedRendering());
+ 
++    // Low-res tiles are only correct on the GPU swap path (see CoordinatedBackingStoreTile);
++    // the unaccelerated CPU copy path always replays full-resolution.
++    if (recording->renderingMode() != RenderingMode::Accelerated)
++        lowResScale = 1.0f;
++
+     Ref platformLayer = layer.coordinatedPlatformLayer();
+     platformLayer->willPaintTile();
+ 
+     auto renderingMode = recording->renderingMode();
+-    auto buffer = createBuffer(renderingMode, dirtyRect.size(), recording->contentsOpaque());
++    auto bufferSize = lowResBufferSize(dirtyRect.size(), lowResScale);
++    auto buffer = createBuffer(renderingMode, bufferSize, recording->contentsOpaque());
+     buffer->beginPainting();
+ 
+-    auto rasterTask = [platformLayer = WTF::move(platformLayer), buffer = Ref { buffer }, dirtyRect, recording = RefPtr { recording }]() mutable {
++    auto rasterTask = [platformLayer = WTF::move(platformLayer), buffer = Ref { buffer }, dirtyRect, bufferSize, lowResScale, recording = RefPtr { recording }]() mutable {
+         if (auto* canvas = buffer->canvas()) {
+-            auto replayPicture = [](const sk_sp<SkPicture>& picture, SkCanvas* canvas, const IntRect& recordRect, const IntRect& paintRect) {
++            auto replayPicture = [lowResScale](const sk_sp<SkPicture>& picture, SkCanvas* canvas, const IntRect& recordRect, const IntRect& paintRect) {
+                 canvas->save();
+                 canvas->clear(SkColors::kTransparent);
++                if (lowResScale < 1.0f)
++                    canvas->scale(lowResScale, lowResScale);
+                 canvas->clipRect(SkRect::MakeXYWH(0, 0, paintRect.width(), paintRect.height()));
+                 canvas->translate(recordRect.x() - paintRect.x(), recordRect.y() - paintRect.y());
+                 picture->playback(canvas);
+@@ -217,7 +246,7 @@
+ 
+             WTFBeginSignpost(canvas, PaintTile, "Skia/%s threaded, dirty region %ix%i+%i+%i", buffer->isBackedByOpenGL() ? "GPU" : "CPU", dirtyRect.x(), dirtyRect.y(), dirtyRect.width(), dirtyRect.height());
+             if (recording->hasFences()) {
+-                auto replayCanvas = SkiaReplayCanvas::create(dirtyRect.size(), recording);
++                auto replayCanvas = SkiaReplayCanvas::create(bufferSize, recording);
+                 replayCanvas->addCanvas(canvas);
+                 replayPicture(replayCanvas->picture(), &replayCanvas.get(), recording->recordRect(), dirtyRect);
+                 replayCanvas->removeCanvas(canvas);
+diff -ur a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h
+--- a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h	2026-06-20 23:00:11.762139381 +0000
++++ b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h	2026-06-20 23:01:12.323539842 +0000
+@@ -69,13 +69,19 @@
+ 
+     bool useThreadedRendering() const { return m_workerPool; }
+ 
+-    Ref<CoordinatedTileBuffer> paint(const GraphicsLayerCoordinated&, const IntRect& dirtyRect, bool contentsOpaque, float contentsScale);
++    // lowResScale (<1.0) rasterizes the tile buffer at a reduced resolution during
++    // scroll; the smaller tile texture is bilinear-upscaled to its full on-screen
++    // rect at composite time (see CoordinatedBackingStore). Quadratic raster/fill
++    // saving on the serialized compositor-thread paint path. lowResScale is honoured
++    // only for accelerated (GPU) rendering; the CPU path always paints full-res.
++    Ref<CoordinatedTileBuffer> paint(const GraphicsLayerCoordinated&, const IntRect& dirtyRect, bool contentsOpaque, float contentsScale, float lowResScale = 1.0f);
+     Ref<SkiaRecordingResult> record(const GraphicsLayerCoordinated&, const IntRect& recordRect, bool contentsOpaque, float contentsScale);
+-    Ref<CoordinatedTileBuffer> replay(const GraphicsLayerCoordinated&, const RefPtr<SkiaRecordingResult>&, const IntRect& dirtyRect);
++    Ref<CoordinatedTileBuffer> replay(const GraphicsLayerCoordinated&, const RefPtr<SkiaRecordingResult>&, const IntRect& dirtyRect, float lowResScale = 1.0f);
+ 
+ private:
+     Ref<CoordinatedTileBuffer> createBuffer(RenderingMode, const IntSize&, bool contentsOpaque) const;
+-    void paintIntoGraphicsContext(const GraphicsLayer&, GraphicsContext&, const IntRect&, bool contentsOpaque, float contentsScale) const;
++    void paintIntoGraphicsContext(const GraphicsLayer&, GraphicsContext&, const IntRect&, bool contentsOpaque, float contentsScale, float lowResScale) const;
++    static IntSize lowResBufferSize(const IntSize& fullSize, float lowResScale);
+ 
+     RefPtr<WorkerPool> m_workerPool;
+     RunLoop* m_compositorRunLoop { nullptr };
+diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp	2026-06-20 23:00:11.796139606 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp	2026-06-20 23:04:57.956027701 +0000
+@@ -84,7 +84,10 @@
+         const auto allEdgesExposed = allTileEdgesExposed(layerRect, tile.rect()) ? TextureMapper::AllEdgesExposed::Yes : TextureMapper::AllEdgesExposed::No;
+ 
+ #if ENABLE(DAMAGE_TRACKING)
+-        if (canUseDamageToDrawTextureFragment && allEdgesExposed == TextureMapper::AllEdgesExposed::No && tile.texture().isOpaque() && !tile.texture().filterOperation()) {
++        // A low-res tile's texture is smaller than its on-screen rect; the damage
++        // fragment path assumes a 1:1 texel mapping, so fall through to the upscaling
++        // drawTexture for it.
++        if (canUseDamageToDrawTextureFragment && !tile.isLowRes() && allEdgesExposed == TextureMapper::AllEdgesExposed::No && tile.texture().isOpaque() && !tile.texture().filterOperation()) {
+             const auto tileDamageRect = intersection(tile.rect(), frameDamage->bounds());
+             if (!tileDamageRect.isEmpty()) {
+                 const auto sourceRect = FloatRect { FloatPoint { tileDamageRect.location() - tile.rect().location() }, tileDamageRect.size() };
+diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-06-20 23:00:11.703138991 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-06-20 23:03:57.842631851 +0000
+@@ -113,6 +113,45 @@
+     return ms;
+ }
+ 
++// Low-resolution tiles during scroll. While flinging, freshly-exposed tiles are
++// rasterized into a buffer scaled down by this factor and bilinear-upscaled back to
++// their full on-screen rect at composite time (the eye doesn't resolve detail
++// mid-fling; this is the Chrome/Android "low-res tiles" idea). Raster + fill cost is
++// quadratic in scale, so 0.6x is ~2.8x cheaper per painted pixel -- the lever that
++// directly cuts the per-frame GPU/raster cost on the serialized compositor-thread
++// paint path. Once the fling settles the tiles are repainted full-res (sharpen at
++// rest). WEBKIT_LOWRES_TILE_SCALE in [0.4, 1.0); unset or >=1.0 disables it.
++// Fling detection reuses the checkerboard scroll-speed/settle signal below.
++static float lowResTileScaleDuringScroll()
++{
++    static float scale = [] {
++        if (const char* env = getenv("WEBKIT_LOWRES_TILE_SCALE")) {
++            float value = atof(env);
++            if (value >= 0.4f && value < 1.0f)
++                return value;
++        }
++        return 1.0f;
++    }();
++    return scale;
++}
++
++static bool lowResTilesEnabled()
++{
++    return lowResTileScaleDuringScroll() < 1.0f;
++}
++
++// The px/s threshold above which a scroll counts as a fling for the purpose of
++// arming the low-res / checkerboard hold window. Reuses the checkerboard threshold
++// when that feature is configured; otherwise (low-res only) defaults to 800 px/s.
++static float scrollFlingSpeedThreshold()
++{
++    if (float threshold = checkerboardScrollSpeedThreshold())
++        return threshold;
++    if (lowResTilesEnabled())
++        return 800.0f;
++    return 0.0f;
++}
++
+ WTF_MAKE_TZONE_ALLOCATED_IMPL(CoordinatedBackingStoreProxy);
+ 
+ static uint32_t generateTileID()
+@@ -181,6 +220,22 @@
+     if (!m_tiles.isEmpty())
+         invalidateRegion(dirtyRegion);
+ 
++    // Low-res-during-scroll bookkeeping. While a fling is in progress, newly-exposed
++    // tiles are painted at reduced resolution (in the dirty-tile loop below). Once it
++    // settles, repaint any tiles still at low resolution back to full resolution
++    // (sharpen at rest), coalesced to a single whole-tile pass per tile.
++    bool lowResScrollActive = lowResTilesEnabled() && MonotonicTime::now() < m_checkerboardHoldUntil;
++    if (lowResTilesEnabled() && !lowResScrollActive) {
++        for (auto& tile : m_tiles.values()) {
++            if (tile.isLowRes)
++                tile.dirtyRect = tile.rect; // whole-tile => full-res fast-path swap
++        }
++    } else if (lowResScrollActive) {
++        // Keep getting polled while flinging so the sharpen pass above runs once the
++        // hold window expires, even if no further scroll motion arrives.
++        m_pendingTileCreation = true;
++    }
++
+     OptionSet<UpdateResult> result;
+     if (m_pendingTileCreation)
+         result.add(UpdateResult::TilesPending);
+@@ -188,10 +243,16 @@
+     // Update the dirty tiles.
+     IntRect tileDirtyRectUnion;
+     unsigned dirtyTilesCount = 0;
+-    for (const auto& tile : m_tiles.values()) {
++    for (auto& tile : m_tiles.values()) {
+         if (!tile.isDirty())
+             continue;
+ 
++        // A low-res tile must be repainted whole (so the compositor fast-path swap
++        // replaces its low-res texture, never a partial copy into it); expand a
++        // partial dirty to the whole tile before the record union is computed.
++        if (tile.isLowRes && tile.dirtyRect != tile.rect)
++            tile.dirtyRect = tile.rect;
++
+         tileDirtyRectUnion.unite(tile.dirtyRect);
+         ++dirtyTilesCount;
+     }
+@@ -215,16 +276,22 @@
+             WTFBeginSignpost(this, UpdateTile, "%u/%u, id: %d, rect: %ix%i+%i+%i, dirty: %ix%i+%i+%i", ++dirtyTileIndex, dirtyTilesCount, tile.id,
+                 tile.rect.x(), tile.rect.y(), tile.rect.width(), tile.rect.height(), tile.dirtyRect.x(), tile.dirtyRect.y(), tile.dirtyRect.width(), tile.dirtyRect.height());
+ 
++            // Paint low-res only while flinging and only for a whole-tile update
++            // (the compositor swaps the whole low-res texture in; a partial copy
++            // into a low-res texture would be invalid -- see CoordinatedBackingStoreTile).
++            float lowResScale = (lowResScrollActive && tile.dirtyRect == tile.rect) ? lowResTileScaleDuringScroll() : 1.0f;
++
+ #if USE(SKIA)
+-            auto buffer = recording ? layer.replay(recording, tile.dirtyRect) : layer.paint(tile.dirtyRect);
++            auto buffer = recording ? layer.replay(recording, tile.dirtyRect, lowResScale) : layer.paint(tile.dirtyRect, lowResScale);
+ #else
+-            auto buffer = layer.paint(tile.dirtyRect);
++            auto buffer = layer.paint(tile.dirtyRect, lowResScale);
+ #endif
+ 
+             IntRect updateRect(tile.dirtyRect);
+             updateRect.move(-tile.rect.x(), -tile.rect.y());
+             tilesToUpdate.append({ tile.id, tile.rect, WTF::move(updateRect), WTF::move(buffer) });
+             tile.markClean();
++            tile.isLowRes = lowResScale < 1.0f;
+             result.add(UpdateResult::BuffersChanged);
+ 
+             WTFEndSignpost(this, UpdateTile);
+@@ -305,11 +372,12 @@
+                 if (std::abs(m_scrollAccumulatorY) > m_visibleRect.height() / 2)
+                     m_lastScrollDirectionY = m_scrollAccumulatorY > 0 ? 1 : -1;
+ 
+-                if (float speedThreshold = checkerboardScrollSpeedThreshold()) {
++                if (float speedThreshold = scrollFlingSpeedThreshold()) {
+                     auto now = MonotonicTime::now();
+                     double dtSec = (now - m_lastScrollSampleTime).seconds();
+                     m_lastScrollSampleTime = now;
+-                    // A fast-enough fling (re)arms the checkerboard hold window.
++                    // A fast-enough fling (re)arms the hold window shared by the
++                    // checkerboard and low-res-tiles scroll features.
+                     if (dtSec > 0 && dtSec < 0.2 && std::abs(dy) / dtSec > speedThreshold)
+                         m_checkerboardHoldUntil = now + Seconds::fromMilliseconds(checkerboardSettleMs());
+                 }
+diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h	2026-06-20 23:00:11.713139057 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h	2026-06-20 23:02:46.752163235 +0000
+@@ -127,6 +127,11 @@
+         IntPoint position;
+         IntRect rect;
+         IntRect dirtyRect;
++        // True when this tile was last rasterized at reduced resolution during a
++        // fling (low-res-during-scroll). Such a tile must only ever receive a
++        // whole-tile update next (so the compositor's fast-path swap replaces its
++        // low-res texture cleanly); it is repainted full-res once scrolling settles.
++        bool isLowRes { false };
+     };
+ 
+     CoordinatedBackingStoreProxy() = default;
+diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp	2026-06-20 23:00:11.774139461 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp	2026-06-20 23:04:29.567840806 +0000
+@@ -75,14 +75,26 @@
+         }
+ #endif
+ 
++        // A whole-tile update may carry a reduced-resolution buffer (low-res tiles
++        // during scroll). The fast-path swap below requires the tile texture to match
++        // the incoming buffer's size, and paintToTextureMapper upscales the smaller
++        // texture to the full tile rect. Partial updates always keep a full-size tile
++        // texture, since the source sub-rect is copied into it 1:1.
++        bool wholeTileUpdate = update.sourceRect.size() == update.tileRect.size();
++        IntSize textureSize = wholeTileUpdate ? update.buffer->size() : update.tileRect.size();
++
+         WTFBeginSignpost(this, AcquireTexture);
+-        if (!m_texture || unscaledTileRect != m_rect) {
++        if (!m_texture || unscaledTileRect != m_rect || m_texture->size() != textureSize) {
+             m_rect = unscaledTileRect;
+-            m_texture = BitmapTexturePool::singleton().acquireTexture(update.tileRect.size(), flags);
++            m_texture = BitmapTexturePool::singleton().acquireTexture(textureSize, flags);
+         } else if (update.buffer->supportsAlpha() == m_texture->isOpaque())
+-            m_texture->reset(update.tileRect.size(), flags);
++            m_texture->reset(textureSize, flags);
+         WTFEndSignpost(this, AcquireTexture);
+ 
++        // The tile is low-res when its texture is smaller than its full device-pixel
++        // rect; paintToTextureMapper must then avoid the 1:1 damage-fragment fast path.
++        m_isLowRes = textureSize != update.tileRect.size();
++
+         update.buffer->waitUntilPaintingComplete();
+ 
+ #if USE(SKIA)
+diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h	2026-06-20 23:00:11.783139520 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h	2026-06-20 23:04:49.698973348 +0000
+@@ -38,6 +38,10 @@
+     float scale() const { return m_scale; }
+     const FloatRect& rect() const { return m_rect; }
+ 
++    // True when the tile texture was rasterized at reduced resolution during scroll
++    // and is bilinear-upscaled to its full rect at composite time.
++    bool isLowRes() const { return m_isLowRes; }
++
+     struct Update {
+         Ref<CoordinatedTileBuffer> buffer;
+         IntRect sourceRect;
+@@ -55,6 +59,7 @@
+     Vector<Update> m_updates;
+     float m_scale { 1. };
+     FloatRect m_rect;
++    bool m_isLowRes { false };
+ };
+ 
+ } // namespace WebCore
+diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp	2026-06-20 23:00:11.725139137 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp	2026-06-20 23:02:31.200060642 +0000
+@@ -844,12 +844,13 @@
+         m_client->didPaintTile();
+ }
+ 
+-Ref<CoordinatedTileBuffer> CoordinatedPlatformLayer::paint(const IntRect& dirtyRect)
++Ref<CoordinatedTileBuffer> CoordinatedPlatformLayer::paint(const IntRect& dirtyRect, float lowResScale)
+ {
+     ASSERT(m_lock.isHeld());
+     ASSERT(m_client);
+     ASSERT(m_owner);
+ #if USE(CAIRO)
++    UNUSED_PARAM(lowResScale);
+     FloatRect scaledDirtyRect(dirtyRect);
+     scaledDirtyRect.scale(1 / m_contentsScale);
+ 
+@@ -859,7 +860,7 @@
+ #elif USE(SKIA)
+     auto& paintingEngine = m_client->paintingEngine();
+     ASSERT(!paintingEngine.useThreadedRendering());
+-    return paintingEngine.paint(*m_owner, dirtyRect, m_contentsOpaque, m_contentsScale);
++    return paintingEngine.paint(*m_owner, dirtyRect, m_contentsOpaque, m_contentsScale, lowResScale);
+ #endif
+ }
+ 
+@@ -874,7 +875,7 @@
+     return paintingEngine.record(*m_owner, recordRect, m_contentsOpaque, m_contentsScale);
+ }
+ 
+-Ref<CoordinatedTileBuffer> CoordinatedPlatformLayer::replay(const RefPtr<SkiaRecordingResult>& recording, const IntRect& dirtyRect)
++Ref<CoordinatedTileBuffer> CoordinatedPlatformLayer::replay(const RefPtr<SkiaRecordingResult>& recording, const IntRect& dirtyRect, float lowResScale)
+ {
+     ASSERT(m_lock.isHeld());
+     ASSERT(m_client);
+@@ -882,7 +883,7 @@
+     ASSERT(recording);
+     auto& paintingEngine = m_client->paintingEngine();
+     ASSERT(paintingEngine.useThreadedRendering());
+-    return paintingEngine.replay(*m_owner, recording, dirtyRect);
++    return paintingEngine.replay(*m_owner, recording, dirtyRect, lowResScale);
+ }
+ #endif
+ 
+diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.h b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.h
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.h	2026-06-20 23:00:11.737139216 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.h	2026-06-20 23:02:12.188935190 +0000
+@@ -187,10 +187,10 @@
+     RunLoop* compositingRunLoop() const;
+     int maxTextureSize() const;
+ 
+-    Ref<CoordinatedTileBuffer> paint(const IntRect&);
++    Ref<CoordinatedTileBuffer> paint(const IntRect&, float lowResScale = 1.0f);
+ #if USE(SKIA)
+     Ref<SkiaRecordingResult> record(const IntRect&);
+-    Ref<CoordinatedTileBuffer> replay(const RefPtr<SkiaRecordingResult>&, const IntRect&);
++    Ref<CoordinatedTileBuffer> replay(const RefPtr<SkiaRecordingResult>&, const IntRect&, float lowResScale = 1.0f);
+ #endif
+     void willPaintTile();
+     void didPaintTile();
