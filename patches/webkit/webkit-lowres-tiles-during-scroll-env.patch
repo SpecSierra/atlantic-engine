@@ -1,6 +1,6 @@
 diff -ur a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
 --- a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp	2026-06-20 23:00:11.750139302 +0000
-+++ b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp	2026-06-20 23:02:00.329856911 +0000
++++ b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp	2026-06-20 23:21:45.254631541 +0000
 @@ -26,6 +26,7 @@
  #include "config.h"
  #include "SkiaPaintingEngine.h"
@@ -68,7 +68,18 @@ diff -ur a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp b/Source
  
          canvas->restore();
          WTFEndSignpost(canvas, PaintTile);
-@@ -192,23 +213,31 @@
+@@ -184,7 +205,9 @@
+         recordWithRTree() ? &rTreeFactory : nullptr);
+     GraphicsContextSkia recordingContext(*recordingCanvas, renderingMode, RenderingPurpose::LayerBacking);
+     recordingContext.beginRecording();
+-    paintIntoGraphicsContext(layer, recordingContext, recordRect, contentsOpaque, contentsScale);
++    // The recording is resolution-independent (it is replayed per tile, optionally
++    // into a low-res buffer); record at full scale.
++    paintIntoGraphicsContext(layer, recordingContext, recordRect, contentsOpaque, contentsScale, 1.0f);
+     auto imageToFenceMap = recordingContext.endRecording();
+     auto picture = pictureRecorder.finishRecordingAsPicture();
+     WTFEndSignpost(this, RecordTile);
+@@ -192,23 +215,31 @@
      return SkiaRecordingResult::create(WTF::move(picture), WTF::move(imageToFenceMap), recordRect, renderingMode, contentsOpaque, contentsScale);
  }
  
@@ -104,7 +115,7 @@ diff -ur a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp b/Source
                  canvas->clipRect(SkRect::MakeXYWH(0, 0, paintRect.width(), paintRect.height()));
                  canvas->translate(recordRect.x() - paintRect.x(), recordRect.y() - paintRect.y());
                  picture->playback(canvas);
-@@ -217,7 +246,7 @@
+@@ -217,7 +248,7 @@
  
              WTFBeginSignpost(canvas, PaintTile, "Skia/%s threaded, dirty region %ix%i+%i+%i", buffer->isBackedByOpenGL() ? "GPU" : "CPU", dirtyRect.x(), dirtyRect.y(), dirtyRect.width(), dirtyRect.height());
              if (recording->hasFences()) {
