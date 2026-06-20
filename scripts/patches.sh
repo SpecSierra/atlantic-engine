@@ -73,6 +73,17 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # the kernel thrashes. The device default (1200 MB base, 3 s poll) makes the
     # handler purge at ~400-600 MB. Kill threshold is unaffected (ramSize-based).
     "patches/webkit/webkit-memory-pressure-threshold-env.patch"
+    # webkit-preserve-style-resolver-on-memory-pressure.patch: skip the
+    # Document::styleScope().releaseMemory() call in releaseCriticalMemory() by
+    # default, so the aggressive low-threshold memory-pressure purge (needed to
+    # bound decoded-image / GPU memory and avoid OOM at MEMORY_BASE_THRESHOLD_MB=
+    # 700) stops nuking + rebuilding the CSS style resolver every poll. On reddit
+    # (many stylesheets + shadow DOM) that rebuild (appendAuthorStyleSheets /
+    # RuleSetBuilder) ran on every style update during scroll and pinned the main
+    # thread ~88% (gdb-profiled), starving tile recording so new tiles paint late.
+    # All footprint-bounding purges (decoded images, bfcache, caches, GC) are kept.
+    # WEBKIT_PURGE_STYLE_ON_MEMORY_PRESSURE=1 restores upstream behaviour.
+    "patches/webkit/webkit-preserve-style-resolver-on-memory-pressure.patch"
     "patches/webkit/webkit-renderbox-isnan.patch"
     "patches/webkit/webkit-shapeoutside-isnan.patch"
     # webkit-gpu-process-by-default-wpe.patch: DISABLED. It hard-enables

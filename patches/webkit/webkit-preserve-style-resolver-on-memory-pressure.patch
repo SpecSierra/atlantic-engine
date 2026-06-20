@@ -1,0 +1,76 @@
+Preserve the CSS style resolver across memory-pressure purges (default), so the
+aggressive low-threshold purge stops thrashing scroll on heavy pages.
+
+releaseCriticalMemory() purges decoded images, the back/forward cache, URL/disk
+cache and JS code to bound the process footprint -- AND calls
+Document::styleScope().releaseMemory(), which clears the style resolver
+(clearResolver + shared shadow-tree resolvers + match cache). The resolver frees
+little memory, but rebuilding it costs a full pass over every author stylesheet
+(Style::Resolver::appendAuthorStyleSheets, RuleSetBuilder, RuleFeatureSet,
+createOrFindSharedShadowTreeResolver).
+
+On this device the memory-pressure base threshold must be kept low
+(WEBKIT_MEMORY_BASE_THRESHOLD_MB=700) because a reddit feed grows ~1.5 GB of
+mostly-off-RSS memory (decoded images -> GPU textures + caches) that hard-OOMs the
+phone, and WebKit's purge watches RSS, not graphics memory. But at that threshold
+the critical purge fires on most 3 s polls, and on reddit (many stylesheets +
+shadow DOM) the resolver rebuild then runs on every style update DURING scroll --
+device-profiled (gdb stack sampling) as ~40% of main-thread samples in
+appendAuthorStyleSheets / RuleSetBuilder, pinning the main thread ~88% and starving
+tile recording + input (so newly-exposed tiles paint late). The checkerboard hides
+tile eviction but does nothing for this.
+
+Skipping just the styleScope purge keeps every footprint-bounding purge intact (so
+the OOM protection at base=700 still holds) while removing the rebuild thrash.
+Default = preserve; WEBKIT_PURGE_STYLE_ON_MEMORY_PRESSURE=1 restores upstream.
+
+--- a/Source/WebCore/page/MemoryRelease.cpp
++++ b/Source/WebCore/page/MemoryRelease.cpp
+@@ -65,6 +65,8 @@
+ #include "WorkerGlobalScope.h"
+ #include "WorkerThread.h"
+ #include <JavaScriptCore/VM.h>
++#include <cstdlib>
++#include <cstring>
+ #include <wtf/ResourceUsage.h>
+ #include <wtf/SystemTracing.h>
+ #include <wtf/text/MakeString.h>
+@@ -115,6 +117,28 @@
+ #endif
+ }
+ 
++// The memory-pressure purge of the CSS style resolver (Style::Scope::releaseMemory
++// -> clearResolver + shared shadow-tree resolvers) frees little memory but forces a
++// full rebuild of every author stylesheet / RuleSet on the next style update. On
++// script-heavy, many-stylesheet, shadow-DOM pages (e.g. reddit) the aggressive
++// low-threshold purge that is required to bound decoded-image / GPU-texture memory
++// then fires this rebuild on every poll DURING scroll, pinning the main thread in
++// Style::Resolver::appendAuthorStyleSheets and starving tile recording and input
++// (device-profiled on Sailfish/Adreno). The footprint that actually drives OOM --
++// decoded images, back/forward cache, URL/disk cache, JS code -- is freed by the
++// other steps in releaseCriticalMemory(); the resolver is not the hog, so by default
++// we preserve it under pressure. WEBKIT_PURGE_STYLE_ON_MEMORY_PRESSURE=1 restores the
++// upstream behaviour (always purge).
++static bool purgeStyleResolverOnMemoryPressure()
++{
++    static bool purge = [] {
++        if (const char* envString = getenv("WEBKIT_PURGE_STYLE_ON_MEMORY_PRESSURE"))
++            return envString[0] && strcmp(envString, "0");
++        return false;
++    }();
++    return purge;
++}
++
+ static void releaseCriticalMemory(Synchronous synchronous, MaintainBackForwardCache maintainBackForwardCache, MaintainMemoryCache maintainMemoryCache)
+ {
+     // Right now, the only reason we call release critical memory while not under memory pressure is if the process is about to be suspended.
+@@ -143,7 +167,8 @@
+     });
+     for (auto& document : protectedDocuments) {
+         document->clearQuerySelectorAllResults();
+-        document->styleScope().releaseMemory();
++        if (purgeStyleResolverOnMemoryPressure())
++            document->styleScope().releaseMemory();
+         if (RefPtr fontSelector = document->fontSelectorIfExists())
+             fontSelector->emptyCaches();
+         document->protectedCachedResourceLoader()->garbageCollectDocumentResources();
