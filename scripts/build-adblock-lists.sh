@@ -92,4 +92,10 @@ BUILDER_ARGS=(
 for region in ${REGIONAL_ANTI_CV_LISTS}; do
     BUILDER_ARGS+=("${CONTENT_BLOCKER_FETCH_DIR}/anti-cv-${region}.txt")
 done
+# Atlantic custom rules: domains EasyList/EasyPrivacy miss (e.g. getjad/getjan,
+# the jeuxvideo.com forum ad library that pins the main thread). Vendored in the
+# repo (data/content-blocker), always present, no fetch.
+if [ -s "${CONTENT_BLOCKER_DATA_DIR}/atlantic-extra.txt" ]; then
+    BUILDER_ARGS+=("${CONTENT_BLOCKER_DATA_DIR}/atlantic-extra.txt")
+fi
 "${SCRIPT_DIR}/adblock-engine/target/release/builder" "${BUILDER_ARGS[@]}"

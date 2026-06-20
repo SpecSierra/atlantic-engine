@@ -1,0 +1,14 @@
+! Title: Atlantic extra network filters
+! Description: Sites/ad networks that EasyList/EasyPrivacy miss, found via
+!   on-device profiling. EasyList-syntax network rules compiled into engine.dat
+!   by scripts/build-adblock-lists.sh.
+!
+! getjad / getjan (jeuxvideo.com ad library):
+!   cdn.lib.getjad.io serves the forum ad bundle whose run() callback fires on a
+!   ~74 Hz setTimeout loop and mutates the DOM every tick, forcing a continuous
+!   style-recalc + layout + repaint even while the page is idle (device-measured:
+!   ~28% WebProcess main-thread + ~52% GPU at rest). On a forum thread that drops
+!   scrolling to ~2 fps. Blocking the domain restores it (main-thread 28% -> 2%).
+!   '||domain^' also covers the cdn.lib.* subdomain.
+||getjad.io^
+||getjan.io^
