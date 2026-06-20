@@ -1,0 +1,70 @@
+Record per-layer tile SkPictures with an R-tree bounding-box hierarchy so the
+per-tile replay() can cull draw ops outside each tile's clip.
+
+CoordinatedBackingStoreProxy::updateIfNeeded() records the union of all dirty
+tiles ONCE (SkiaPaintingEngine::record) and then replays that single SkPicture
+once per dirty tile, clipped to the tile (SkiaPaintingEngine::replay). Upstream
+calls SkPictureRecorder::beginRecording() with no SkBBHFactory, so the recorded
+picture has no bounding-box hierarchy and SkPicture::playback() cannot use the
+per-tile clip to skip ops -- every tile walks, and submits to the GPU (only to be
+scissored away), the ENTIRE layer's draw-op list. An N-tile dirty band therefore
+costs ~N x the full op list. On the libhybris/Adreno device that replay is
+serialized on the compositor thread (WEBKIT_RASTER_ON_COMPOSITOR_THREAD), so this
+redundant work is exactly what makes newly-exposed tiles paint late during a fast
+scroll.
+
+Recording with an SkRTreeFactory builds an R-tree once at record time (cheap,
+WebProcess main thread) so each replay() playback only processes the ops that
+intersect its tile. The output is pixel-identical; the win scales with the number
+of tiles painted per flush (e.g. a full-viewport band exposed by a fling).
+
+Env-gated for A/B measurement: WEBKIT_SKIA_RECORD_RTREE=0 disables it (restores
+upstream no-BBH recording). Default = enabled (it is lossless).
+
+--- a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
++++ b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
+@@ -42,6 +42,7 @@
+ #include "SkiaRecordingResult.h"
+ #include "SkiaReplayCanvas.h"
+ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
++#include <skia/core/SkBBHFactory.h>
+ #include <skia/core/SkPictureRecorder.h>
+ #include <skia/gpu/ganesh/GrBackendSurface.h>
+ #include <skia/gpu/ganesh/SkImageGanesh.h>
+@@ -64,6 +65,25 @@ static bool canPerformAcceleratedRendering()
+ {
+     return ProcessCapabilities::canUseAcceleratedBuffers() && PlatformDisplay::sharedDisplay().skiaGLContext();
+ }
+
++// A layer flush records the union of all dirty tiles into one SkPicture (record())
++// and then replays it once per dirty tile, clipped to that tile (replay()). With
++// no bounding-box hierarchy on the picture, each per-tile playback walks (and
++// submits, to be scissored away) the entire layer's draw ops, so an N-tile band
++// costs ~N x the full op list -- the redundant work that makes tiles paint late on
++// the serialized compositor-thread raster path. Recording with an R-tree lets each
++// replay cull to its tile's clip. Lossless (identical pixels); the win scales with
++// tiles painted per flush. WEBKIT_SKIA_RECORD_RTREE=0 disables it for A/B.
++static bool recordWithRTree()
++{
++    static bool enabled = [] {
++        if (const char* envString = getenv("WEBKIT_SKIA_RECORD_RTREE"))
++            return envString[0] && strcmp(envString, "0");
++        return true;
++    }();
++    return enabled;
++}
++
+ SkiaPaintingEngine::SkiaPaintingEngine()
+ {
+     if (canPerformAcceleratedRendering()) {
+@@ -159,7 +179,9 @@ Ref<SkiaRecordingResult> SkiaPaintingEngine::record(const GraphicsLayerCoordinat
+
+     WTFBeginSignpost(this, RecordTile);
+     SkPictureRecorder pictureRecorder;
+-    auto* recordingCanvas = pictureRecorder.beginRecording(recordRect.width(), recordRect.height());
++    SkRTreeFactory rTreeFactory;
++    auto* recordingCanvas = pictureRecorder.beginRecording(recordRect.width(), recordRect.height(),
++        recordWithRTree() ? &rTreeFactory : nullptr);
+     GraphicsContextSkia recordingContext(*recordingCanvas, renderingMode, RenderingPurpose::LayerBacking);
+     recordingContext.beginRecording();
+     paintIntoGraphicsContext(layer, recordingContext, recordRect, contentsOpaque, contentsScale);

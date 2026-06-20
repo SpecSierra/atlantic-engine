@@ -46,6 +46,14 @@ readonly WEBKIT_SOURCE_PATCHES=(
     "patches/webkit/webkit-glfence-disable-env.patch"
     "patches/webkit/webkit-texpool-compositor-sync-env.patch"
     "patches/webkit/webkit-raster-on-compositor-thread-env.patch"
+    # webkit-skia-record-rtree-env.patch: record the per-layer tile SkPicture with
+    # an R-tree BBH so each per-tile replay() culls draw ops to its tile's clip,
+    # instead of every tile re-walking/re-submitting the whole layer's op list
+    # (an N-tile dirty band cost ~N x the full list). Lossless; the win scales with
+    # tiles painted per flush -- targets late-painting tiles on a fast scroll, where
+    # replay is serialized on the compositor thread. WEBKIT_SKIA_RECORD_RTREE=0
+    # disables (A/B). Must come AFTER raster-on-compositor (same file).
+    "patches/webkit/webkit-skia-record-rtree-env.patch"
     "patches/webkit/webkit-directional-tile-coverage-env.patch"
     # webkit-checkerboard-during-scroll-env.patch: WEBKIT_CHECKERBOARD_DURING_SCROLL
     # — during a fast fling, skip rasterizing newly-exposed tiles (show page
