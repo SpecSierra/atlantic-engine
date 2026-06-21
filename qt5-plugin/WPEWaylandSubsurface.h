@@ -61,6 +61,9 @@ private:
     void destroy();
     bool setupEgl();
     bool bindGlobals();
+    // Commit the parent surface to latch double-buffered sub-surface state
+    // (placement/position), which otherwise only applies on Qt's next frame.
+    void commitParent();
 
     bool m_valid { false };
     bool m_attempted { false };

@@ -201,6 +201,15 @@ bool WPEWaylandSubsurface::ensureCreated(QQuickWindow* window)
     if (!m_surface || !m_subsurface)
         return false;
 
+    // The web content surface is output-only: give it an empty input region so the
+    // compositor routes all touches/pointer events to the chrome (parent) surface
+    // instead of to this surface (which has no input handling). Without this the
+    // on-top web surface swallows every touch and the chrome becomes dead.
+    if (struct wl_region* empty = wl_compositor_create_region(m_compositor)) {
+        wl_surface_set_input_region(m_surface, empty);
+        wl_region_destroy(empty);
+    }
+
     // Desync so web frames commit independently of the Qt window's frames; place
     // below the chrome surface, which is transparent where the web content shows.
     wl_subsurface_set_desync(m_subsurface);
@@ -214,10 +223,28 @@ bool WPEWaylandSubsurface::ensureCreated(QQuickWindow* window)
         return false;
     }
 
+    // place_below/set_position are double-buffered on the PARENT surface and only
+    // take effect on its next commit. Qt commits the window surface from the
+    // QSGRenderThread, so relying on it is racy (and the render loop may go idle
+    // once the web item paints nothing) — the stacking then never latches and the
+    // web surface stays on top of the chrome. Commit the parent ourselves to apply
+    // the pending sub-surface state deterministically. No buffer is attached, so
+    // this only flushes sub-surface placement and does not disturb Qt's own frame.
+    commitParent();
+
     m_appliedGeometry = m_geometry;
     m_valid = true;
-    qWarning("[WPE-DIRECT-COMPOSITE] active: web content on dedicated wl_subsurface");
+    qWarning("[WPE-DIRECT-COMPOSITE] active: web content on dedicated wl_subsurface (below chrome)");
     return true;
+}
+
+void WPEWaylandSubsurface::commitParent()
+{
+    if (!m_parentSurface)
+        return;
+    wl_surface_commit(m_parentSurface);
+    if (m_display)
+        wl_display_flush(m_display);
 }
 
 void WPEWaylandSubsurface::setGeometry(const QRect& devicePixelRect)
@@ -231,8 +258,10 @@ void WPEWaylandSubsurface::setGeometry(const QRect& devicePixelRect)
     if (m_eglWindow && devicePixelRect.width() > 0 && devicePixelRect.height() > 0)
         wl_egl_window_resize(m_eglWindow, devicePixelRect.width(), devicePixelRect.height(), 0, 0);
     m_appliedGeometry = devicePixelRect;
-    // set_position is applied on the parent's next commit; the WPEQtView triggers
-    // a Qt window update on geometry changes so that happens promptly.
+    // set_position is double-buffered on the parent and only applies on its next
+    // commit — commit it ourselves so the move latches even if Qt's render loop is
+    // idle (the web item paints nothing in direct-composite mode).
+    commitParent();
 }
 
 void WPEWaylandSubsurface::present(struct wpe_fdo_egl_exported_image* image, bool flipY)
