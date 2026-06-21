@@ -177,6 +177,7 @@ bool WPEWaylandSubsurface::ensureCreated(QQuickWindow* window)
     if (m_attempted || !window)
         return m_valid;
     m_attempted = true;
+    qWarning("[WPE-DIRECT-COMPOSITE] ensureCreated: enter");
 
     QPlatformNativeInterface* ni = QGuiApplication::platformNativeInterface();
     if (!ni)
@@ -197,6 +198,7 @@ bool WPEWaylandSubsurface::ensureCreated(QQuickWindow* window)
         return false;
     }
 
+    qWarning("[WPE-DIRECT-COMPOSITE] ensureCreated: globals bound");
     m_surface = wl_compositor_create_surface(m_compositor);
     m_subsurface = wl_subcompositor_get_subsurface(m_subcompositor, m_surface, m_parentSurface);
     if (!m_surface || !m_subsurface)
@@ -218,11 +220,13 @@ bool WPEWaylandSubsurface::ensureCreated(QQuickWindow* window)
     if (m_geometry.width() > 0)
         wl_subsurface_set_position(m_subsurface, m_geometry.x(), m_geometry.y());
 
+    qWarning("[WPE-DIRECT-COMPOSITE] ensureCreated: subsurface created, setting up EGL");
     if (!setupEgl()) {
         qWarning("[WPE-DIRECT-COMPOSITE] EGL subsurface setup failed; falling back to QSG path");
         destroy();
         return false;
     }
+    qWarning("[WPE-DIRECT-COMPOSITE] ensureCreated: EGL ready, committing parent");
 
     // place_below/set_position are double-buffered on the PARENT surface and only
     // take effect on its next commit. Qt commits the window surface from the
