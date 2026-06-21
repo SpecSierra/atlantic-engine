@@ -29,6 +29,7 @@ struct wl_subsurface;
 struct wl_egl_window;
 struct wl_display;
 class QQuickWindow;
+class QWindow;
 
 class WPEWaylandSubsurface {
 public:
@@ -75,10 +76,6 @@ private:
     // Apply the sub-surface position from m_appliedGeometry, pushing it off-screen
     // while m_hidden so the chrome shows through (lipstick can't stack it below).
     void applyPosition();
-    // Debug (ATLANTIC_DC_LAYER_TEST): create a second subsurface placed ABOVE the
-    // web surface to validate that lipstick honours sibling stacking — the basis for
-    // putting the UI on its own layer above the web. Throwaway.
-    void createTestLayer();
 
     bool m_valid { false };
     bool m_attempted { false };
@@ -100,12 +97,6 @@ private:
     unsigned m_program { 0 };
     int m_textureUniform { -1 };
     unsigned m_texture { 0 };
-
-    // ATLANTIC_DC_LAYER_TEST throwaway layer (see createTestLayer).
-    wl_surface* m_testSurface { nullptr };
-    wl_subsurface* m_testSubsurface { nullptr };
-    wl_egl_window* m_testEglWindow { nullptr };
-    void* m_testEglSurface { nullptr };
 
     QRect m_geometry;
     QRect m_appliedGeometry;
