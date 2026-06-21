@@ -167,8 +167,8 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
                  const auto sourceRect = FloatRect { FloatPoint { tileDamageRect.location() - tile.rect().location() }, tileDamageRect.size() };
 diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
 --- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-06-20 23:00:11.703138991 +0000
-+++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-06-20 23:03:57.842631851 +0000
-@@ -113,6 +113,45 @@
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-06-21 00:01:25.973064982 +0000
+@@ -113,6 +113,61 @@
      return ms;
  }
  
@@ -199,6 +199,22 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
 +    return lowResTileScaleDuringScroll() < 1.0f;
 +}
 +
++// Graduated resolution: keep tiles intersecting the viewport at full resolution and
++// only paint the prepaint cushion ahead of it (cover rect beyond the visible rect)
++// at low resolution. The leading edge you actually look at as it scrolls in stays
++// crisp; only the cushion you'd reach by continuing to fling is cheap. (During a very
++// fast fling a cushion tile can still reach the viewport before settling -- it then
++// sharpens at rest.) WEBKIT_LOWRES_VIEWPORT_FULL=1 enables it; default off = uniform
++// low-res across the whole exposed band.
++static bool lowResKeepViewportFullRes()
++{
++    static bool enabled = [] {
++        const char* env = getenv("WEBKIT_LOWRES_VIEWPORT_FULL");
++        return env && *env && strcmp(env, "0");
++    }();
++    return enabled;
++}
++
 +// The px/s threshold above which a scroll counts as a fling for the purpose of
 +// arming the low-res / checkerboard hold window. Reuses the checkerboard threshold
 +// when that feature is configured; otherwise (low-res only) defaults to 800 px/s.
@@ -214,7 +230,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
  WTF_MAKE_TZONE_ALLOCATED_IMPL(CoordinatedBackingStoreProxy);
  
  static uint32_t generateTileID()
-@@ -181,6 +220,22 @@
+@@ -181,6 +236,22 @@
      if (!m_tiles.isEmpty())
          invalidateRegion(dirtyRegion);
  
@@ -237,7 +253,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
      OptionSet<UpdateResult> result;
      if (m_pendingTileCreation)
          result.add(UpdateResult::TilesPending);
-@@ -188,10 +243,16 @@
+@@ -188,10 +259,16 @@
      // Update the dirty tiles.
      IntRect tileDirtyRectUnion;
      unsigned dirtyTilesCount = 0;
@@ -255,14 +271,19 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
          tileDirtyRectUnion.unite(tile.dirtyRect);
          ++dirtyTilesCount;
      }
-@@ -215,16 +276,22 @@
+@@ -215,16 +292,27 @@
              WTFBeginSignpost(this, UpdateTile, "%u/%u, id: %d, rect: %ix%i+%i+%i, dirty: %ix%i+%i+%i", ++dirtyTileIndex, dirtyTilesCount, tile.id,
                  tile.rect.x(), tile.rect.y(), tile.rect.width(), tile.rect.height(), tile.dirtyRect.x(), tile.dirtyRect.y(), tile.dirtyRect.width(), tile.dirtyRect.height());
  
 +            // Paint low-res only while flinging and only for a whole-tile update
 +            // (the compositor swaps the whole low-res texture in; a partial copy
 +            // into a low-res texture would be invalid -- see CoordinatedBackingStoreTile).
-+            float lowResScale = (lowResScrollActive && tile.dirtyRect == tile.rect) ? lowResTileScaleDuringScroll() : 1.0f;
++            bool paintLowRes = lowResScrollActive && tile.dirtyRect == tile.rect;
++            // Graduated mode: keep the tiles under the viewport full-res; only the
++            // prepaint cushion ahead of it goes low-res.
++            if (paintLowRes && lowResKeepViewportFullRes() && tile.rect.intersects(m_visibleRect))
++                paintLowRes = false;
++            float lowResScale = paintLowRes ? lowResTileScaleDuringScroll() : 1.0f;
 +
  #if USE(SKIA)
 -            auto buffer = recording ? layer.replay(recording, tile.dirtyRect) : layer.paint(tile.dirtyRect);
@@ -280,7 +301,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
              result.add(UpdateResult::BuffersChanged);
  
              WTFEndSignpost(this, UpdateTile);
-@@ -305,11 +372,12 @@
+@@ -305,11 +393,12 @@
                  if (std::abs(m_scrollAccumulatorY) > m_visibleRect.height() / 2)
                      m_lastScrollDirectionY = m_scrollAccumulatorY > 0 ? 1 : -1;
  

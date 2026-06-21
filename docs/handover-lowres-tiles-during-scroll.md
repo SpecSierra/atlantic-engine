@@ -162,6 +162,14 @@ band; with both on, checkerboard's early-return defers the band so low-res never
 paints it (low-res becomes a no-op). No browser-side device default set yet (do that
 in `apps/browser/main.cpp` conservative branch once proven).
 
+Env: **`WEBKIT_LOWRES_VIEWPORT_FULL=1`** (default off) — graduated resolution: keep
+tiles intersecting the viewport at full res and only paint the prepaint cushion ahead
+of it at low res, so the leading edge you look at stays crisp. Mixed full/low-res
+tiles coexist for free (per-tile buffer size + `m_isLowRes` + sharpen). Caveat: under
+a *fast* fling, cushion tiles are created low-res before reaching the viewport and
+just scroll in, so they still arrive soft and sharpen at rest; the win is for
+slow/medium scroll and the leading edge. A/B graduated vs uniform with this toggle.
+
 Files touched (all in the one patch): `SkiaPaintingEngine.{cpp,h}`,
 `CoordinatedPlatformLayer.{cpp,h}`, `CoordinatedBackingStoreProxy.{cpp,h}`,
 `CoordinatedBackingStoreTile.{cpp,h}`, `CoordinatedBackingStore.cpp`.
