@@ -155,12 +155,12 @@ single coalesced re-raster, not per-frame, or you reintroduce cost.
 
 ## Implementation notes (Option A, as built 2026-06-20)
 
-Env: **`WEBKIT_LOWRES_TILE_SCALE`** in `[0.4, 1.0)`, default off (`>=1.0`). To test
-on device: `WEBKIT_LOWRES_TILE_SCALE=0.6` and turn checkerboard OFF
-(`WEBKIT_CHECKERBOARD_DURING_SCROLL=0`) — they're alternatives for the same exposed
-band; with both on, checkerboard's early-return defers the band so low-res never
-paints it (low-res becomes a no-op). No browser-side device default set yet (do that
-in `apps/browser/main.cpp` conservative branch once proven).
+Env: **`WEBKIT_LOWRES_TILE_SCALE`** in `[0.25, 1.0)`, **default 0.3 (ON)** when unset.
+Set it to `1.0` (or any `>=1.0`) to disable. NOTE this deviates from the usual
+"engine defaults off, browser sets the device default" convention — low-res is now on
+unconditionally in the lib at 0.3; revisit if a per-device/per-GPU gate is wanted
+(e.g. only the Adreno conservative branch). The default only affects *fling*
+rendering (full-res at rest), so it's safe, just softer mid-fling.
 
 Env: **`WEBKIT_LOWRES_VIEWPORT_FULL=1`** (default off) — graduated resolution: keep
 tiles intersecting the viewport at full res and only paint the prepaint cushion ahead

@@ -167,8 +167,8 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
                  const auto sourceRect = FloatRect { FloatPoint { tileDamageRect.location() - tile.rect().location() }, tileDamageRect.size() };
 diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
 --- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-06-20 23:00:11.703138991 +0000
-+++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-06-21 00:21:37.135356323 +0000
-@@ -113,6 +113,67 @@
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-06-21 00:29:35.598547901 +0000
+@@ -113,6 +113,71 @@
      return ms;
  }
  
@@ -176,20 +176,24 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
 +// rasterized into a buffer scaled down by this factor and bilinear-upscaled back to
 +// their full on-screen rect at composite time (the eye doesn't resolve detail
 +// mid-fling; this is the Chrome/Android "low-res tiles" idea). Raster + fill cost is
-+// quadratic in scale, so 0.6x is ~2.8x cheaper per painted pixel -- the lever that
++// quadratic in scale, so 0.3x is ~11x cheaper per painted pixel -- the lever that
 +// directly cuts the per-frame GPU/raster cost on the serialized compositor-thread
 +// paint path. Once the fling settles the tiles are repainted full-res (sharpen at
-+// rest). WEBKIT_LOWRES_TILE_SCALE in [0.4, 1.0); unset or >=1.0 disables it.
-+// Fling detection reuses the checkerboard scroll-speed/settle signal below.
++// rest). WEBKIT_LOWRES_TILE_SCALE in [0.25, 1.0); **default 0.3 (ON)** when unset.
++// To disable, set it to 1.0 (or any value >=1.0). Fling detection uses the scroll-
++// speed ladder below.
 +static float lowResTileScaleDuringScroll()
 +{
 +    static float scale = [] {
 +        if (const char* env = getenv("WEBKIT_LOWRES_TILE_SCALE")) {
 +            float value = atof(env);
-+            if (value >= 0.4f && value < 1.0f)
++            if (value >= 0.25f && value < 1.0f)
 +                return value;
++            // Explicitly set but out of the low-res range (e.g. 1.0) => disabled.
++            return 1.0f;
 +        }
-+        return 1.0f;
++        // Unset => default ON at 0.3.
++        return 0.3f;
 +    }();
 +    return scale;
 +}
@@ -236,7 +240,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
  WTF_MAKE_TZONE_ALLOCATED_IMPL(CoordinatedBackingStoreProxy);
  
  static uint32_t generateTileID()
-@@ -181,6 +242,25 @@
+@@ -181,6 +246,25 @@
      if (!m_tiles.isEmpty())
          invalidateRegion(dirtyRegion);
  
@@ -262,7 +266,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
      OptionSet<UpdateResult> result;
      if (m_pendingTileCreation)
          result.add(UpdateResult::TilesPending);
-@@ -188,10 +268,16 @@
+@@ -188,10 +272,16 @@
      // Update the dirty tiles.
      IntRect tileDirtyRectUnion;
      unsigned dirtyTilesCount = 0;
@@ -280,7 +284,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
          tileDirtyRectUnion.unite(tile.dirtyRect);
          ++dirtyTilesCount;
      }
-@@ -215,16 +301,27 @@
+@@ -215,16 +305,27 @@
              WTFBeginSignpost(this, UpdateTile, "%u/%u, id: %d, rect: %ix%i+%i+%i, dirty: %ix%i+%i+%i", ++dirtyTileIndex, dirtyTilesCount, tile.id,
                  tile.rect.x(), tile.rect.y(), tile.rect.width(), tile.rect.height(), tile.dirtyRect.x(), tile.dirtyRect.y(), tile.dirtyRect.width(), tile.dirtyRect.height());
  
@@ -310,7 +314,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
              result.add(UpdateResult::BuffersChanged);
  
              WTFEndSignpost(this, UpdateTile);
-@@ -305,13 +402,29 @@
+@@ -305,13 +406,29 @@
                  if (std::abs(m_scrollAccumulatorY) > m_visibleRect.height() / 2)
                      m_lastScrollDirectionY = m_scrollAccumulatorY > 0 ? 1 : -1;
  
@@ -344,7 +348,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
                  }
              }
          }
-@@ -379,13 +492,15 @@
+@@ -379,13 +496,15 @@
      if (m_coverRect.isEmpty())
          return;
  

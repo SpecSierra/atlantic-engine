@@ -70,7 +70,9 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # GPU/raster pixel cost on the serialized compositor-thread paint path — the
     # remaining lever after rtree/style-resolver/raster-on-compositor. An alternative
     # to checkerboard for the same exposed band (paint-cheap-now vs paint-later); A/B
-    # them, don't enable both. Off by default (>=1.0). Must come AFTER the checkerboard
+    # them. DEFAULT ON at scale 0.3 (set WEBKIT_LOWRES_TILE_SCALE>=1.0 to disable).
+    # Speed ladder: WEBKIT_LOWRES_SCROLL_SPEED (T1, quick=low-res) <
+    # WEBKIT_CHECKERBOARD_DURING_SCROLL (T2, ultra-fast=checkerboard). Must come AFTER the checkerboard
     # patch — it edits the same CoordinatedBackingStoreProxy / SkiaPaintingEngine /
     # CoordinatedBackingStore(Tile) / CoordinatedPlatformLayer files and reuses the
     # checkerboard fling-detect/settle signal.
