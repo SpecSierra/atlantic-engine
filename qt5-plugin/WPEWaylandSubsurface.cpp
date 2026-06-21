@@ -230,12 +230,56 @@ bool WPEWaylandSubsurface::ensureCreated(QQuickWindow* window)
     // web surface stays on top of the chrome. Commit the parent ourselves to apply
     // the pending sub-surface state deterministically. No buffer is attached, so
     // this only flushes sub-surface placement and does not disturb Qt's own frame.
+    createTestLayer();
     commitParent();
 
     m_appliedGeometry = m_geometry;
     m_valid = true;
     qWarning("[WPE-DIRECT-COMPOSITE] active: web content on dedicated wl_subsurface (below chrome)");
     return true;
+}
+
+void WPEWaylandSubsurface::createTestLayer()
+{
+    const char* env = getenv("ATLANTIC_DC_LAYER_TEST");
+    if (!env || !env[0] || !strcmp(env, "0"))
+        return;
+
+    m_testSurface = wl_compositor_create_surface(m_compositor);
+    m_testSubsurface = wl_subcompositor_get_subsurface(m_subcompositor, m_testSurface, m_parentSurface);
+    if (!m_testSurface || !m_testSubsurface)
+        return;
+
+    if (struct wl_region* empty = wl_compositor_create_region(m_compositor)) {
+        wl_surface_set_input_region(m_testSurface, empty);
+        wl_region_destroy(empty);
+    }
+
+    wl_subsurface_set_desync(m_testSubsurface);
+    // The crux of the "UI on its own layer" plan: a sibling subsurface placed ABOVE
+    // the web surface. If lipstick honours this, the bar draws over the web.
+    wl_subsurface_place_above(m_testSubsurface, m_surface);
+
+    const int w = m_geometry.width()  > 0 ? m_geometry.width()  : 400;
+    const int h = m_geometry.height() > 0 ? m_geometry.height() : 2000;
+    const int barH = h / 5;
+    wl_subsurface_set_position(m_testSubsurface, m_geometry.x(), m_geometry.y() + h - barH);
+
+    m_testEglWindow = wl_egl_window_create(m_testSurface, w, barH);
+    if (!m_testEglWindow)
+        return;
+    m_testEglSurface = eglCreateWindowSurface(m_eglDisplay, m_eglConfig,
+        reinterpret_cast<EGLNativeWindowType>(m_testEglWindow), nullptr);
+    if (m_testEglSurface == EGL_NO_SURFACE)
+        return;
+
+    if (eglMakeCurrent(m_eglDisplay, m_testEglSurface, m_testEglSurface, m_eglContext)) {
+        glViewport(0, 0, w, barH);
+        glClearColor(1.0f, 0.0f, 0.6f, 1.0f); // opaque magenta — unmistakable over web
+        glClear(GL_COLOR_BUFFER_BIT);
+        eglSwapBuffers(m_eglDisplay, m_testEglSurface);
+    }
+    qWarning("[WPE-DIRECT-COMPOSITE] layer-test: magenta bar placed ABOVE the web surface");
 }
 
 void WPEWaylandSubsurface::commitParent()
