@@ -186,14 +186,7 @@ bool WPEWaylandSubsurface::ensureCreated(QQuickWindow* window)
     if (!m_display)
         m_display = static_cast<wl_display*>(ni->nativeResourceForIntegration(QByteArrayLiteral("wl_display")));
 
-    // In direct-composite mode the chrome runs in a child window that is a transient
-    // child of an empty root window; the web surface must parent to that root (a
-    // sibling BELOW the chrome window) since a subsurface can't stack below its own
-    // parent. transientParent() is the root when present; otherwise (legacy single
-    // window) parent to the WPEView's own window.
-    QWindow* parentWindow = window->transientParent() ? window->transientParent()
-                                                      : static_cast<QWindow*>(window);
-    m_parentSurface = static_cast<wl_surface*>(ni->nativeResourceForWindow(QByteArrayLiteral("surface"), parentWindow));
+    m_parentSurface = static_cast<wl_surface*>(ni->nativeResourceForWindow(QByteArrayLiteral("surface"), window));
     if (!m_display || !m_parentSurface) {
         qWarning("[WPE-DIRECT-COMPOSITE] no wayland display/surface; falling back to QSG path");
         return false;

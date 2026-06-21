@@ -29,6 +29,7 @@
 class WPEQtViewBackend;
 class WPEQtViewLoadRequest;
 class WPEWaylandSubsurface;
+class WPEChromeOverlay;
 
 class Q_DECL_EXPORT WPEQtView : public QQuickItem {
     Q_OBJECT
@@ -85,6 +86,11 @@ public:
     // pending state is applied when the web view is created.
     void setWebKitVisible(bool visible);
     bool webKitVisible() const { return m_webKitVisible; }
+
+    // Direct-composite: the web content wl_surface (void*), so the browser can create a
+    // chrome overlay subsurface place_above it. Null unless the direct-composite
+    // subsurface is active. See WPEWaylandSubsurface::webContentSurface.
+    void* webContentSurface() const;
 
 public Q_SLOTS:
     // Direct-composite only: show/hide the web content surface. The chrome cannot
@@ -155,6 +161,10 @@ private:
 
     WPEQtViewBackend* m_backend { nullptr };
     WPEWaylandSubsurface* m_subsurface { nullptr };
+    WPEChromeOverlay* m_chromeOverlay { nullptr };
+    // Create the chrome overlay subsurface (ATLANTIC_DC_OVERLAY_TEST) above the web,
+    // once the web subsurface exists. M1 validation hook.
+    void maybeCreateChromeOverlay();
     bool m_webKitVisible { true };
     bool m_errorOccured { false };
     qreal m_pendingDeviceScaleFactor { 1.0 };

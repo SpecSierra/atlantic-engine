@@ -25,6 +25,7 @@ add_library(qtwpe MODULE
     WPEQtView.cpp
     WPEQtViewLoadRequest.cpp
     WPEWaylandSubsurface.cpp
+    WPEChromeOverlay.cpp
 )
 set_target_properties(qtwpe PROPERTIES
     OUTPUT_NAME qtwpe

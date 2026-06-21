@@ -63,6 +63,11 @@ public:
     void setVisible(bool visible);
     bool isHidden() const { return m_hidden; }
 
+    // The web content wl_surface, so an external overlay subsurface (the chrome layer,
+    // created browser-side) can place_above it. Returned as void* to keep wayland types
+    // out of callers that don't include wayland-client. Null until the subsurface exists.
+    void* webContentSurface() const { return m_surface; }
+
     // Called by the wl_registry listener; public so the C callback can reach it.
     void onRegistryGlobal(struct wl_registry* registry, uint32_t name, const char* interface);
 

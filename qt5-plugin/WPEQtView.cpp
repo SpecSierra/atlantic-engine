@@ -25,6 +25,7 @@
 #include "WPEQtViewLoadRequest.h"
 #include "WPEQtViewLoadRequestPrivate.h"
 #include "WPEWaylandSubsurface.h"
+#include "WPEChromeOverlay.h"
 #include <QDebug>
 #include <QGuiApplication>
 #include <QQuickWindow>
@@ -61,6 +62,7 @@ WPEQtView::WPEQtView(QQuickItem* parent)
 
 WPEQtView::~WPEQtView()
 {
+    delete m_chromeOverlay;
     delete m_subsurface;
     if (m_webView) {
         g_signal_handlers_disconnect_by_func(m_webView, reinterpret_cast<gpointer>(notifyUrlChangedCallback), this);
@@ -86,6 +88,43 @@ void WPEQtView::setWebContentSurfaceVisible(bool visible)
         m_subsurface->setVisible(visible);
 }
 
+void* WPEQtView::webContentSurface() const
+{
+    return m_subsurface ? m_subsurface->webContentSurface() : nullptr;
+}
+
+void WPEQtView::maybeCreateChromeOverlay()
+{
+    if (m_chromeOverlay || !WPEChromeOverlay::testEnabled())
+        return;
+    if (!m_subsurface || !m_subsurface->isValid() || !window())
+        return;
+
+    QPlatformNativeInterface* ni = QGuiApplication::platformNativeInterface();
+    if (!ni)
+        return;
+    auto* display = static_cast<wl_display*>(ni->nativeResourceForIntegration(QByteArrayLiteral("display")));
+    if (!display)
+        display = static_cast<wl_display*>(ni->nativeResourceForIntegration(QByteArrayLiteral("wl_display")));
+    auto* parentSurface = static_cast<wl_surface*>(ni->nativeResourceForWindow(QByteArrayLiteral("surface"), window()));
+    auto* webSurface = static_cast<wl_surface*>(m_subsurface->webContentSurface());
+    if (!display || !parentSurface)
+        return;
+
+    const qreal dpr = window()->effectiveDevicePixelRatio();
+    QSize sz(qRound(m_size.width() * dpr), qRound(m_size.height() * dpr));
+    if (sz.isEmpty())
+        sz = window()->size() * dpr;
+    if (sz.isEmpty())
+        return;
+
+    m_chromeOverlay = new WPEChromeOverlay();
+    if (!m_chromeOverlay->create(display, parentSurface, webSurface, sz)) {
+        delete m_chromeOverlay;
+        m_chromeOverlay = nullptr;
+    }
+}
+
 void WPEQtView::updateSubsurfaceGeometry()
 {
     if (!m_subsurface || !window())
@@ -94,6 +133,9 @@ void WPEQtView::updateSubsurfaceGeometry()
     const QRectF sceneRect = mapRectToScene(QRectF(QPointF(0, 0), m_size));
     m_subsurface->setGeometry(QRect(qRound(sceneRect.x() * dpr), qRound(sceneRect.y() * dpr),
                                     qRound(sceneRect.width() * dpr), qRound(sceneRect.height() * dpr)));
+    // M1: create the overlay once a real size is known (covers the case where geometry
+    // wasn't set yet at createWebView time). Resize handling is a later milestone.
+    maybeCreateChromeOverlay();
     // set_position is applied on the parent surface's next commit; nudge Qt to
     // render a frame so the new position takes effect promptly.
     if (QQuickWindow* w = window())
@@ -142,6 +184,7 @@ void WPEQtView::createWebView()
         if (m_subsurface->ensureCreated(window())) {
             updateSubsurfaceGeometry();
             m_backend->setSubsurface(m_subsurface);
+            maybeCreateChromeOverlay();
         } else {
             delete m_subsurface;
             m_subsurface = nullptr; // QSG path
