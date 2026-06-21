@@ -310,7 +310,20 @@ bool WPEChromeOverlay::create(wl_display* display, wl_surface* parentSurface,
     qWarning("[WPE-DC-OVERLAY] step: subsurface created + placed");
 
     // Qt GL context (creates its own EGLContext via QPA) + offscreen surface for FBO render.
+    // Request an ALPHA config: the overlay surface is presented over the web, so its
+    // EGLConfig (which the window surface shares) must have an alpha channel or the
+    // compositor treats the surface as opaque and transparent scene areas render black,
+    // hiding the web.
     m_glContext = new QOpenGLContext();
+    {
+        QSurfaceFormat fmt;
+        fmt.setRenderableType(QSurfaceFormat::OpenGLES);
+        fmt.setRedBufferSize(8);
+        fmt.setGreenBufferSize(8);
+        fmt.setBlueBufferSize(8);
+        fmt.setAlphaBufferSize(8);
+        m_glContext->setFormat(fmt);
+    }
     if (QOpenGLContext* share = QOpenGLContext::globalShareContext())
         m_glContext->setShareContext(share);
     if (!m_glContext->create()) {
