@@ -223,6 +223,11 @@ bool WPEChromeOverlay::ensureFbo()
 void WPEChromeOverlay::scheduleRender()
 {
     QTimer::singleShot(0, [this]() { renderFrame(); });
+    // M1 robustness: also re-render shortly after, in case the very first render fired
+    // before the scene graph was fully ready. (A later milestone drives renders purely
+    // from sceneChanged/renderRequested.)
+    QTimer::singleShot(150, [this]() { renderFrame(); });
+    QTimer::singleShot(500, [this]() { renderFrame(); });
 }
 
 void WPEChromeOverlay::renderFrame()
@@ -242,6 +247,12 @@ void WPEChromeOverlay::renderFrame()
     m_renderControl->render();
     m_glContext->functions()->glFlush();
     const GLuint texId = m_fbo->texture();
+    static int frame = 0;
+    if (frame++ < 6)
+        qWarning("[WPE-DC-OVERLAY] renderFrame #%d: fboValid=%d tex=%u fboSize=%dx%d rootItem=%gx%g",
+                 frame, m_fbo ? m_fbo->isValid() : 0, texId,
+                 m_fbo ? m_fbo->width() : 0, m_fbo ? m_fbo->height() : 0,
+                 m_rootItem ? m_rootItem->width() : -1.0, m_rootItem ? m_rootItem->height() : -1.0);
     m_glContext->doneCurrent();
 
     // 2) Blit the FBO texture into the subsurface's EGL window surface (same EGLContext),
