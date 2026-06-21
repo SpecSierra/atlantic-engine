@@ -353,19 +353,20 @@ atlantic_export_browser_env() {
     # browser (WPEWebContainer); env-tunable (web / document / viewer).
     export ATLANTIC_CACHE_MODEL="${ATLANTIC_CACHE_MODEL:-viewer}"
 
-    # ── Scroll tile policy: checkerboard, no prepaint ─────────────────────────
-    # Honoured by webkit-checkerboard-during-scroll-env.patch +
+    # ── Scroll tile policy: low-resolution tiles during scroll ────────────────
+    # Honoured by webkit-lowres-tiles-during-scroll-env.patch +
     # webkit-directional-tile-coverage-env.patch (read by the WebProcess).
-    # During a fast fling, stop rasterizing newly-exposed tiles (show page
-    # background) and repaint once at rest — mirrors Gecko APZ / Cocoa
-    # TileController, and removes the per-tile gpu-sync paint cost from the scroll
-    # hot path. Disabling prepaint (cover=1) avoids painting tiles that get
-    # checkerboarded anyway, and pairs with the aggressive purge above (no large
-    # prepainted backing store to evict). NOTE: the threshold (50 px/s) and
-    # cover=1 are aggressive/under-tuning values — dial via the env: raise
-    # WEBKIT_CHECKERBOARD_DURING_SCROLL toward 800 if it checkerboards too eagerly,
-    # raise WEBKIT_COVER_AREA_MULTIPLIER toward 3 to re-enable prepaint.
-    export WEBKIT_CHECKERBOARD_DURING_SCROLL="${WEBKIT_CHECKERBOARD_DURING_SCROLL:-200}"
+    # Policy: during a fast fling, rasterize newly-exposed tiles at reduced
+    # resolution (WEBKIT_LOWRES_TILE_SCALE) and bilinear-upscale them, then repaint
+    # full-res once motion settles — keeps content visible (soft) instead of blank,
+    # while cutting the per-tile gpu-sync paint cost on the scroll hot path. Two-tier
+    # ladder: full-res below WEBKIT_LOWRES_SCROLL_SPEED, 0.3 above it. The
+    # checkerboard (top) rung is DISABLED here (=0); set it to e.g. 2500 to
+    # re-enable a "very fast = blank band" tier above the low-res one. Prepaint
+    # cover stays at 2 (normal) so low-res only bites when a fling outruns it.
+    export WEBKIT_LOWRES_TILE_SCALE="${WEBKIT_LOWRES_TILE_SCALE:-0.3}"
+    export WEBKIT_LOWRES_SCROLL_SPEED="${WEBKIT_LOWRES_SCROLL_SPEED:-400}"
+    export WEBKIT_CHECKERBOARD_DURING_SCROLL="${WEBKIT_CHECKERBOARD_DURING_SCROLL:-0}"
     export WEBKIT_CHECKERBOARD_SETTLE_MS="${WEBKIT_CHECKERBOARD_SETTLE_MS:-100}"
     export WEBKIT_COVER_AREA_MULTIPLIER="${WEBKIT_COVER_AREA_MULTIPLIER:-2}"
 
