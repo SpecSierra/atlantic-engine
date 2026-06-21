@@ -170,6 +170,32 @@ a *fast* fling, cushion tiles are created low-res before reaching the viewport a
 just scroll in, so they still arrive soft and sharpen at rest; the win is for
 slow/medium scroll and the leading edge. A/B graduated vs uniform with this toggle.
 
+### Scroll-speed ladder (low-res + checkerboard unified)
+
+Low-res and checkerboard are now **two rungs of one speed-graded ladder**, not
+mutually-exclusive features. Per fling sample the proxy classifies `|dy|/dt` (px/s)
+into a `ScrollTier` (None / LowRes / Checkerboard), held for `CHECKERBOARD_SETTLE_MS`
+after the last fast motion, and repaints full-res at rest:
+
+| speed | tier | behavior |
+|-------|------|----------|
+| `< T1` | None | full-res paint |
+| `T1..T2` | LowRes | exposed band painted at `WEBKIT_LOWRES_TILE_SCALE` (VIEWPORT_FULL still applies) |
+| `>= T2` | Checkerboard | band deferred (background shown), repaint at rest |
+
+- **T1** = `WEBKIT_LOWRES_SCROLL_SPEED` (default 800 px/s when low-res enabled).
+- **T2** = `WEBKIT_CHECKERBOARD_DURING_SCROLL` (px/s; set it **above T1**).
+- Set both → full ladder; only the scale → uniform low-res at >800; only checkerboard
+  → pure checkerboard. The `createOrDestroyTiles` deferral fires only on the
+  Checkerboard tier; the low-res band paint only on the LowRes tier; sharpen-at-rest
+  only fires at true rest (no tier), so escalating into checkerboard does NOT trigger a
+  mid-fling full-res repaint. Tier tracks the latest fast sample, so a decelerating
+  flick naturally upgrades checkerboard→low-res→full.
+- Caveat: per-sample speed is noisy (dt jitter); classification can flicker near a
+  boundary. Tolerable (repaint-once-at-settle hides it); add hysteresis/EMA on `speed`
+  if it looks jittery on device. Example ladder: `WEBKIT_LOWRES_TILE_SCALE=0.5
+  WEBKIT_LOWRES_SCROLL_SPEED=800 WEBKIT_CHECKERBOARD_DURING_SCROLL=2500`.
+
 Files touched (all in the one patch): `SkiaPaintingEngine.{cpp,h}`,
 `CoordinatedPlatformLayer.{cpp,h}`, `CoordinatedBackingStoreProxy.{cpp,h}`,
 `CoordinatedBackingStoreTile.{cpp,h}`, `CoordinatedBackingStore.cpp`.
