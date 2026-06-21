@@ -81,17 +81,21 @@ bool WPEChromeOverlay::bindGlobals()
 
 bool WPEChromeOverlay::setupEgl()
 {
-    // Borrow Qt's EGLContext/EGLDisplay so the FBO texture (rendered by Qt) is valid in
-    // the same context we use to blit into the subsurface — no cross-context sharing.
-    if (!m_glContext)
+    // Use Qt's actual current EGLDisplay/EGLContext (so the FBO texture rendered by Qt
+    // is valid in the same context we blit with — no cross-context sharing). Reading
+    // them from eglGetCurrent* after making Qt's context current is more robust than
+    // QOpenGLContext::nativeHandle(), which is empty on some QtWayland builds.
+    if (!m_glContext || !m_offscreenSurface)
         return false;
-    QVariant nh = m_glContext->nativeHandle();
-    if (!nh.canConvert<QEGLNativeContext>())
+    if (!m_glContext->makeCurrent(m_offscreenSurface)) {
+        qWarning("[WPE-DC-OVERLAY] setupEgl: makeCurrent(offscreen) failed");
         return false;
-    QEGLNativeContext eglNh = nh.value<QEGLNativeContext>();
-    m_eglContext = eglNh.context();
-    m_eglDisplay = eglNh.display();
-    if (!m_eglContext || !m_eglDisplay)
+    }
+    m_eglDisplay = eglGetCurrentDisplay();
+    m_eglContext = eglGetCurrentContext();
+    m_glContext->doneCurrent();
+    qWarning("[WPE-DC-OVERLAY] setupEgl: eglDisplay=%p eglContext=%p", m_eglDisplay, m_eglContext);
+    if (!m_eglDisplay || m_eglDisplay == EGL_NO_DISPLAY || !m_eglContext || m_eglContext == EGL_NO_CONTEXT)
         return false;
 
     const EGLint configAttribs[] = {
@@ -102,19 +106,25 @@ bool WPEChromeOverlay::setupEgl()
     };
     EGLConfig config = nullptr;
     EGLint num = 0;
-    if (!eglChooseConfig(static_cast<EGLDisplay>(m_eglDisplay), configAttribs, &config, 1, &num) || num < 1)
+    if (!eglChooseConfig(static_cast<EGLDisplay>(m_eglDisplay), configAttribs, &config, 1, &num) || num < 1) {
+        qWarning("[WPE-DC-OVERLAY] setupEgl: eglChooseConfig failed (num=%d err=0x%x)", num, eglGetError());
         return false;
+    }
     m_eglConfig = config;
 
     const int w = m_size.width() > 0 ? m_size.width() : 1;
     const int h = m_size.height() > 0 ? m_size.height() : 1;
     m_eglWindow = wl_egl_window_create(m_surface, w, h);
-    if (!m_eglWindow)
+    if (!m_eglWindow) {
+        qWarning("[WPE-DC-OVERLAY] setupEgl: wl_egl_window_create failed");
         return false;
+    }
     m_eglSurface = eglCreateWindowSurface(static_cast<EGLDisplay>(m_eglDisplay), config,
         reinterpret_cast<EGLNativeWindowType>(m_eglWindow), nullptr);
-    if (m_eglSurface == EGL_NO_SURFACE)
+    if (m_eglSurface == EGL_NO_SURFACE) {
+        qWarning("[WPE-DC-OVERLAY] setupEgl: eglCreateWindowSurface failed (err=0x%x)", eglGetError());
         return false;
+    }
     return true;
 }
 
