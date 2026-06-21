@@ -54,6 +54,14 @@ public:
     // GUI thread. flipY matches WPEQtViewBackend's orientation handling.
     void present(struct wpe_fdo_egl_exported_image* image, bool flipY);
 
+    // Show/hide the web surface. lipstick (a QtWayland compositor) always stacks a
+    // subsurface above its parent's own content, so the web surface cannot go behind
+    // the chrome that is the parent window. Instead we unmap it (attach a null buffer)
+    // while the chrome overlay is engaged, so the chrome shows; the next present()
+    // re-maps it. Web stays full-screen and directly composited while browsing.
+    void setVisible(bool visible);
+    bool isHidden() const { return m_hidden; }
+
     // Called by the wl_registry listener; public so the C callback can reach it.
     void onRegistryGlobal(struct wl_registry* registry, uint32_t name, const char* interface);
 
@@ -64,9 +72,13 @@ private:
     // Commit the parent surface to latch double-buffered sub-surface state
     // (placement/position), which otherwise only applies on Qt's next frame.
     void commitParent();
+    // Apply the sub-surface position from m_appliedGeometry, pushing it off-screen
+    // while m_hidden so the chrome shows through (lipstick can't stack it below).
+    void applyPosition();
 
     bool m_valid { false };
     bool m_attempted { false };
+    bool m_hidden { false };
 
     wl_display* m_display { nullptr };
     wl_surface* m_parentSurface { nullptr };

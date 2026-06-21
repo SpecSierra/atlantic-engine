@@ -87,6 +87,11 @@ public:
     bool webKitVisible() const { return m_webKitVisible; }
 
 public Q_SLOTS:
+    // Direct-composite only: show/hide the web content surface. The chrome cannot
+    // be stacked above the web surface on lipstick, so the UI hides the web surface
+    // while its overlay is engaged and shows it (full-screen) while browsing. No-op
+    // on the legacy QSG path (no subsurface). See WPEWaylandSubsurface::setVisible.
+    void setWebContentSurfaceVisible(bool visible);
     void goBack();
     void goForward();
     void reload();

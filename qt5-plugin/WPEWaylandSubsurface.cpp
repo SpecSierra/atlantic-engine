@@ -253,20 +253,45 @@ void WPEWaylandSubsurface::setGeometry(const QRect& devicePixelRect)
     if (!m_valid || devicePixelRect == m_appliedGeometry)
         return;
 
-    if (m_subsurface)
-        wl_subsurface_set_position(m_subsurface, devicePixelRect.x(), devicePixelRect.y());
     if (m_eglWindow && devicePixelRect.width() > 0 && devicePixelRect.height() > 0)
         wl_egl_window_resize(m_eglWindow, devicePixelRect.width(), devicePixelRect.height(), 0, 0);
     m_appliedGeometry = devicePixelRect;
-    // set_position is double-buffered on the parent and only applies on its next
-    // commit — commit it ourselves so the move latches even if Qt's render loop is
-    // idle (the web item paints nothing in direct-composite mode).
+    // Apply via applyPosition() so a geometry change while hidden keeps the surface
+    // off-screen. set_position is double-buffered on the parent and only applies on
+    // its next commit — commit it ourselves so the move latches even if Qt's render
+    // loop is idle (the web item paints nothing in direct-composite mode).
+    applyPosition();
+    commitParent();
+}
+
+// Large vertical offset (device pixels) used to push the web surface fully
+// off-screen when hidden — bigger than any panel, so it never peeks.
+static constexpr int kOffscreenOffset = 100000;
+
+void WPEWaylandSubsurface::applyPosition()
+{
+    if (!m_subsurface)
+        return;
+    const int y = m_appliedGeometry.y() + (m_hidden ? kOffscreenOffset : 0);
+    wl_subsurface_set_position(m_subsurface, m_appliedGeometry.x(), y);
+}
+
+void WPEWaylandSubsurface::setVisible(bool visible)
+{
+    if (!m_valid || m_hidden == !visible)
+        return;
+    m_hidden = !visible;
+
+    // lipstick can't stack the web surface behind the chrome, so to "hide" it we
+    // move it fully off-screen; the last buffer stays attached, so showing again is
+    // instant (no blank, no forced re-render). present() short-circuits while hidden.
+    applyPosition();
     commitParent();
 }
 
 void WPEWaylandSubsurface::present(struct wpe_fdo_egl_exported_image* image, bool flipY)
 {
-    if (!m_valid || !image)
+    if (!m_valid || !image || m_hidden)
         return;
 
     if (!eglMakeCurrent(m_eglDisplay, m_eglSurface, m_eglSurface, m_eglContext))

@@ -80,6 +80,12 @@ void WPEQtView::geometryChanged(const QRectF& newGeometry, const QRectF&)
     updateSubsurfaceGeometry();
 }
 
+void WPEQtView::setWebContentSurfaceVisible(bool visible)
+{
+    if (m_subsurface)
+        m_subsurface->setVisible(visible);
+}
+
 void WPEQtView::updateSubsurfaceGeometry()
 {
     if (!m_subsurface || !window())
