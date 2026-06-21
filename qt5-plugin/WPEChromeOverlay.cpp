@@ -10,6 +10,7 @@
 
 #include <QByteArray>
 #include <QGuiApplication>
+#include <QVector>
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickItem>
@@ -98,18 +99,38 @@ bool WPEChromeOverlay::setupEgl()
     if (!m_eglDisplay || m_eglDisplay == EGL_NO_DISPLAY || !m_eglContext || m_eglContext == EGL_NO_CONTEXT)
         return false;
 
-    const EGLint configAttribs[] = {
-        EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
-        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
-        EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
-        EGL_NONE
-    };
+    // The window surface MUST use the same EGLConfig as Qt's context, or eglMakeCurrent
+    // fails with EGL_BAD_MATCH. Query the context's config id and find that exact config.
+    EGLDisplay dpy = static_cast<EGLDisplay>(m_eglDisplay);
+    EGLint ctxConfigId = 0;
+    eglQueryContext(dpy, static_cast<EGLContext>(m_eglContext), EGL_CONFIG_ID, &ctxConfigId);
     EGLConfig config = nullptr;
-    EGLint num = 0;
-    if (!eglChooseConfig(static_cast<EGLDisplay>(m_eglDisplay), configAttribs, &config, 1, &num) || num < 1) {
-        qWarning("[WPE-DC-OVERLAY] setupEgl: eglChooseConfig failed (num=%d err=0x%x)", num, eglGetError());
-        return false;
+    EGLint total = 0;
+    eglGetConfigs(dpy, nullptr, 0, &total);
+    if (total > 0) {
+        QVector<EGLConfig> cfgs(total);
+        eglGetConfigs(dpy, cfgs.data(), total, &total);
+        for (int i = 0; i < total; ++i) {
+            EGLint id = 0;
+            eglGetConfigAttrib(dpy, cfgs[i], EGL_CONFIG_ID, &id);
+            if (id == ctxConfigId) { config = cfgs[i]; break; }
+        }
     }
+    if (!config) {
+        // Fallback: choose a window+alpha config.
+        const EGLint configAttribs[] = {
+            EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+            EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
+            EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
+            EGL_NONE
+        };
+        EGLint num = 0;
+        if (!eglChooseConfig(dpy, configAttribs, &config, 1, &num) || num < 1) {
+            qWarning("[WPE-DC-OVERLAY] setupEgl: no config (ctxId=%d err=0x%x)", ctxConfigId, eglGetError());
+            return false;
+        }
+    }
+    qWarning("[WPE-DC-OVERLAY] setupEgl: using config id=%d", ctxConfigId);
     m_eglConfig = config;
 
     const int w = m_size.width() > 0 ? m_size.width() : 1;
@@ -312,7 +333,7 @@ bool WPEChromeOverlay::create(wl_display* display, wl_surface* parentSurface,
     // Blit program (built in the borrowed EGLContext on the subsurface surface).
     if (!eglMakeCurrent(static_cast<EGLDisplay>(m_eglDisplay), static_cast<EGLSurface>(m_eglSurface),
                         static_cast<EGLSurface>(m_eglSurface), static_cast<EGLContext>(m_eglContext))) {
-        qWarning("[WPE-DC-OVERLAY] eglMakeCurrent for blit-program failed");
+        qWarning("[WPE-DC-OVERLAY] eglMakeCurrent for blit-program failed (err=0x%x)", eglGetError());
         destroy();
         return false;
     }
