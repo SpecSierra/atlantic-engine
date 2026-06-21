@@ -167,7 +167,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
                  const auto sourceRect = FloatRect { FloatPoint { tileDamageRect.location() - tile.rect().location() }, tileDamageRect.size() };
 diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
 --- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-06-20 23:00:11.703138991 +0000
-+++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-06-21 00:31:24.510278063 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-06-21 00:33:28.497110305 +0000
 @@ -79,9 +79,10 @@
  // from paint: during a fling they show already-painted tiles plus the page
  // background for the exposed area, then paint once motion settles. This mirrors
@@ -247,7 +247,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
 +// independent of the checkerboard (upper rung) threshold so the two form a graded
 +// degradation: slow scroll = full res, quick = low-res (this threshold), ultra-fast =
 +// checkerboard (WEBKIT_CHECKERBOARD_DURING_SCROLL, which should be set higher).
-+// WEBKIT_LOWRES_SCROLL_SPEED; default 800 px/s when low-res is enabled, else off.
++// WEBKIT_LOWRES_SCROLL_SPEED; default 400 px/s when low-res is enabled, else off.
 +static float lowResScrollSpeedThreshold()
 +{
 +    static float threshold = [] {
@@ -256,7 +256,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
 +            if (v > 1.0f)
 +                return v;
 +        }
-+        return lowResTilesEnabled() ? 800.0f : 0.0f;
++        return lowResTilesEnabled() ? 400.0f : 0.0f;
 +    }();
 +    return threshold;
 +}

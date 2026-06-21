@@ -183,11 +183,11 @@ after the last fast motion, and repaints full-res at rest:
 | `T1..T2` | LowRes | exposed band painted at `WEBKIT_LOWRES_TILE_SCALE` (VIEWPORT_FULL still applies) |
 | `>= T2` | Checkerboard | band deferred (background shown), repaint at rest |
 
-- **T1** = `WEBKIT_LOWRES_SCROLL_SPEED` (default 800 px/s when low-res enabled).
+- **T1** = `WEBKIT_LOWRES_SCROLL_SPEED` (default 400 px/s when low-res enabled).
 - **T2** = `WEBKIT_CHECKERBOARD_DURING_SCROLL` (**default 2500 px/s**; "0" disables; must be **above T1**).
-- The full default ladder is therefore ON out of the box: full-res < 800 px/s,
-  0.3 low-res 800–2500, checkerboard ≥ 2500.
-- Set both → full ladder; only the scale → uniform low-res at >800; only checkerboard
+- The full default ladder is therefore ON out of the box: full-res < 400 px/s,
+  0.3 low-res 400–2500, checkerboard ≥ 2500.
+- Set both → full ladder; only the scale → uniform low-res at >400; only checkerboard
   → pure checkerboard. The `createOrDestroyTiles` deferral fires only on the
   Checkerboard tier; the low-res band paint only on the LowRes tier; sharpen-at-rest
   only fires at true rest (no tier), so escalating into checkerboard does NOT trigger a
@@ -196,7 +196,7 @@ after the last fast motion, and repaints full-res at rest:
 - Caveat: per-sample speed is noisy (dt jitter); classification can flicker near a
   boundary. Tolerable (repaint-once-at-settle hides it); add hysteresis/EMA on `speed`
   if it looks jittery on device. Example ladder: `WEBKIT_LOWRES_TILE_SCALE=0.5
-  WEBKIT_LOWRES_SCROLL_SPEED=800 WEBKIT_CHECKERBOARD_DURING_SCROLL=2500`.
+  WEBKIT_LOWRES_SCROLL_SPEED=400 WEBKIT_CHECKERBOARD_DURING_SCROLL=2500`.
 
 Files touched (all in the one patch): `SkiaPaintingEngine.{cpp,h}`,
 `CoordinatedPlatformLayer.{cpp,h}`, `CoordinatedBackingStoreProxy.{cpp,h}`,
