@@ -95,10 +95,24 @@ void* WPEQtView::webContentSurface() const
 
 void WPEQtView::maybeCreateChromeOverlay()
 {
-    if (m_chromeOverlay || !WPEChromeOverlay::testEnabled())
+    if (m_chromeOverlay || m_chromeOverlayAttempted || !WPEChromeOverlay::testEnabled())
         return;
     if (!m_subsurface || !m_subsurface->isValid() || !window())
         return;
+    m_chromeOverlayAttempted = true;
+
+    // Defer out of the QML-construction / scene-graph call stack: creating a second
+    // QtQuick scene (QQuickRenderControl) re-entrantly during web-view construction is
+    // unsafe. Run it on the next event-loop turn instead.
+    qWarning("[WPE-DC-OVERLAY] scheduling overlay creation");
+    QMetaObject::invokeMethod(this, "createChromeOverlayNow", Qt::QueuedConnection);
+}
+
+void WPEQtView::createChromeOverlayNow()
+{
+    if (m_chromeOverlay || !m_subsurface || !m_subsurface->isValid() || !window())
+        return;
+    qWarning("[WPE-DC-OVERLAY] creating overlay now");
 
     QPlatformNativeInterface* ni = QGuiApplication::platformNativeInterface();
     if (!ni)

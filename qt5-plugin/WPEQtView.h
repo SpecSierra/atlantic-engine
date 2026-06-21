@@ -140,6 +140,7 @@ protected:
 private Q_SLOTS:
     void configureWindow();
     void createWebView();
+    void createChromeOverlayNow();
 
 private:
     static void notifyUrlChangedCallback(WPEQtView*);
@@ -162,8 +163,9 @@ private:
     WPEQtViewBackend* m_backend { nullptr };
     WPEWaylandSubsurface* m_subsurface { nullptr };
     WPEChromeOverlay* m_chromeOverlay { nullptr };
+    bool m_chromeOverlayAttempted { false };
     // Create the chrome overlay subsurface (ATLANTIC_DC_OVERLAY_TEST) above the web,
-    // once the web subsurface exists. M1 validation hook.
+    // once the web subsurface exists. M1 validation hook (defers to createChromeOverlayNow).
     void maybeCreateChromeOverlay();
     bool m_webKitVisible { true };
     bool m_errorOccured { false };

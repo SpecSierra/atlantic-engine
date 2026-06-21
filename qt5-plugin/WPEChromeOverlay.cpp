@@ -162,12 +162,14 @@ bool WPEChromeOverlay::setupScene()
 
     // Initialise the render control against Qt's GL context (current on the offscreen
     // surface). QQuickRenderControl::initialize must be called with the context current.
+    qWarning("[WPE-DC-OVERLAY] scene: QML root created, initializing render control");
     if (!m_glContext->makeCurrent(m_offscreenSurface)) {
         qWarning("[WPE-DC-OVERLAY] makeCurrent(offscreen) failed");
         return false;
     }
     m_renderControl->initialize(m_glContext);
     m_glContext->doneCurrent();
+    qWarning("[WPE-DC-OVERLAY] scene: render control initialized");
 
     // Re-render whenever the scene changes.
     QObject::connect(m_renderControl, &QQuickRenderControl::renderRequested,
@@ -254,11 +256,13 @@ bool WPEChromeOverlay::create(wl_display* display, wl_surface* parentSurface,
     m_display = display;
     m_parentSurface = parentSurface;
     m_size = sizeDevicePx;
+    qWarning("[WPE-DC-OVERLAY] create: enter (%dx%d)", m_size.width(), m_size.height());
 
     if (!bindGlobals()) {
         qWarning("[WPE-DC-OVERLAY] no wl_subcompositor");
         return false;
     }
+    qWarning("[WPE-DC-OVERLAY] step: globals bound");
 
     m_surface = wl_compositor_create_surface(m_compositor);
     m_subsurface = wl_subcompositor_get_subsurface(m_subcompositor, m_surface, m_parentSurface);
@@ -272,6 +276,7 @@ bool WPEChromeOverlay::create(wl_display* display, wl_surface* parentSurface,
     // the placement latches (the parent's own frames come from a separate thread).
     wl_surface_commit(m_parentSurface);
     wl_display_flush(m_display);
+    qWarning("[WPE-DC-OVERLAY] step: subsurface created + placed");
 
     // Qt GL context (creates its own EGLContext via QPA) + offscreen surface for FBO render.
     m_glContext = new QOpenGLContext();
@@ -285,12 +290,14 @@ bool WPEChromeOverlay::create(wl_display* display, wl_surface* parentSurface,
     m_offscreenSurface = new QOffscreenSurface();
     m_offscreenSurface->setFormat(m_glContext->format());
     m_offscreenSurface->create();
+    qWarning("[WPE-DC-OVERLAY] step: QOpenGLContext + offscreen surface created");
 
     if (!setupEgl()) {
         qWarning("[WPE-DC-OVERLAY] EGL setup failed");
         destroy();
         return false;
     }
+    qWarning("[WPE-DC-OVERLAY] step: EGL surface ready");
 
     // Blit program (built in the borrowed EGLContext on the subsurface surface).
     if (!eglMakeCurrent(static_cast<EGLDisplay>(m_eglDisplay), static_cast<EGLSurface>(m_eglSurface),
@@ -314,11 +321,14 @@ bool WPEChromeOverlay::create(wl_display* display, wl_surface* parentSurface,
     glLinkProgram(m_blitProgram);
     m_blitTexUniform = glGetUniformLocation(m_blitProgram, "t");
     eglMakeCurrent(static_cast<EGLDisplay>(m_eglDisplay), EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    qWarning("[WPE-DC-OVERLAY] step: blit program built");
 
     if (!setupScene()) {
+        qWarning("[WPE-DC-OVERLAY] setupScene failed");
         destroy();
         return false;
     }
+    qWarning("[WPE-DC-OVERLAY] step: scene set up");
 
     m_valid = true;
     qWarning("[WPE-DC-OVERLAY] active: chrome overlay subsurface above web (%dx%d)",
