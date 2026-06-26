@@ -3,7 +3,7 @@ set -euo pipefail
 
 source "$(cd "$(dirname "$0")" && pwd)/common.sh"
 
-PUBLIC_SFOS_BASE_VERSION="${PUBLIC_SFOS_BASE_VERSION:-5.1.0.8}"
+PUBLIC_SFOS_BASE_VERSION="${PUBLIC_SFOS_BASE_VERSION:-5.1.0.11}"
 LOCAL_SFOS_SOURCE_SYSROOT="${LOCAL_SFOS_SOURCE_SYSROOT:-/opt/sfos-sysroot}"
 
 sysroot_version_of() {
@@ -125,7 +125,7 @@ else
     current_sysroot_version="$(sysroot_version_of "${SYSROOT}" || true)"
     if [ "${current_sysroot_version}" != "${SFOS_SYSROOT_VERSION}" ]; then
         echo "ERROR: sysroot at ${SYSROOT} is ${current_sysroot_version:-unknown}, but ${SFOS_SYSROOT_VERSION} is required." >&2
-        echo "       Public SDK target ${PUBLIC_SFOS_BASE_VERSION} can be downloaded, but this machine also needs an updated ${SFOS_SYSROOT_VERSION} sysroot source (for example ${LOCAL_SFOS_SOURCE_SYSROOT}) to seed CI builds." >&2
+        echo "       The public SDK target downloaded was ${PUBLIC_SFOS_BASE_VERSION}; set PUBLIC_SFOS_BASE_VERSION to match SFOS_SYSROOT_VERSION (${SFOS_SYSROOT_VERSION}), or provide a matching sysroot source (for example ${LOCAL_SFOS_SOURCE_SYSROOT}) to seed CI builds." >&2
         exit 1
     fi
 

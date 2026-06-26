@@ -3,14 +3,14 @@
 # Usage: sudo ./scripts/update-sysroot.sh [TARGET_VERSION] [SYSROOT_PATH]
 #
 # Example:
-#   sudo ./scripts/update-sysroot.sh 5.1.0.8 /opt/github-runner/cache/sfos-sysroot-5.1.0.8
+#   sudo ./scripts/update-sysroot.sh 5.1.0.11 /opt/github-runner/cache/sfos-sysroot-5.1.0.11
 #
 # Requires: running on aarch64 (no QEMU needed); internet access to releases.jolla.com
 set -euo pipefail
 
-TARGET_VERSION="${1:-5.1.0.8}"
+TARGET_VERSION="${1:-5.1.0.11}"
 SYSROOT="${2:-/opt/github-runner/cache/sfos-sysroot-${TARGET_VERSION}}"
-SOURCE_SYSROOT="${SOURCE_SYSROOT:-/opt/github-runner/cache/sfos-sysroot-5.1.0.5}"
+SOURCE_SYSROOT="${SOURCE_SYSROOT:-/opt/github-runner/cache/sfos-sysroot-5.1.0.11}"
 
 if [ "$(uname -m)" != "aarch64" ]; then
     echo "ERROR: This script must run on an aarch64 host (runner is $(uname -m))." >&2

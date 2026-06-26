@@ -7,13 +7,13 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 export WORK="${WORK:-$(cd "${REPO_ROOT}/.." && pwd)}"
 export BUILD_TOOLS="${BUILD_TOOLS:-${REPO_ROOT}}"
 export BROWSER_SRC="${BROWSER_SRC:-${WORK}/atlantic-browser}"
-# CI can bootstrap from the public 5.0 SDK target, but this host seeds the
-# actual cached sysroot from its updated 5.1 tree.
-export PUBLIC_SFOS_BASE_VERSION="${PUBLIC_SFOS_BASE_VERSION:-5.1.0.8}"
+# The official 5.1.0.11 SDK target is public, so CI downloads the sysroot
+# directly from https://releases.sailfishos.org/sdk/targets/.
+export PUBLIC_SFOS_BASE_VERSION="${PUBLIC_SFOS_BASE_VERSION:-5.1.0.11}"
 export LOCAL_SFOS_SOURCE_SYSROOT="${LOCAL_SFOS_SOURCE_SYSROOT:-/opt/sfos-sysroot}"
 export CI_CACHE_ROOT="${CI_CACHE_ROOT:-/opt/github-runner/cache/atlantic-build}"
 export WPE_PREFIX="${WPE_PREFIX:-${WORK}/wpe-sfos-prefix}"
-export SYSROOT="${SYSROOT:-/opt/github-runner/cache/sfos-sysroot-5.1.0.5}"
+export SYSROOT="${SYSROOT:-/opt/github-runner/cache/sfos-sysroot-5.1.0.11}"
 export OUT="${OUT:-/tmp/wpe-sfos-rpms}"
 export STAGING="${STAGING:-/tmp/wpe-sfos-stage}"
 
