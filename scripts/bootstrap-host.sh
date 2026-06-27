@@ -28,6 +28,81 @@ replace_sysroot_with_copy() {
     cp -a "${source_root}" "${dest_root}"
 }
 
+# The public SFOS SDK target is a stock runtime image: it ships the runtime
+# libraries (libgbm, libsoup3, ...) but NOT their -devel headers, which the WPE
+# Qt5 plugin needs at compile time (gbm.h, libsoup/soup.h). Install them into the
+# sysroot using its own zypper (aarch64 host -> no QEMU needed). libsoup3-devel
+# lands headers under /usr/include/libsoup-3.0/; expose them at the bare
+# <libsoup/...> path too, because build-webkit.sh strips the libsoup-3.0 Requires
+# from wpe-webkit-2.0.pc so no -I .../libsoup-3.0 ever reaches the plugin.
+SYSROOT_DEVEL_PACKAGES="${SYSROOT_DEVEL_PACKAGES:-mesa-llvmpipe-libgbm-devel libsoup3-devel}"
+
+ensure_sysroot_devel() {
+    local root="$1"
+    local ver="${SFOS_SYSROOT_VERSION}"
+    local repos="${root}/etc/zypp/repos.d"
+    local base="https://releases.jolla.com"
+    local arch="aarch64"
+    local m
+
+    if [ -f "${root}/usr/include/gbm.h" ] && [ -e "${root}/usr/include/libsoup/soup.h" ]; then
+        echo "  Sysroot dev headers already present."
+        return 0
+    fi
+
+    if [ ! -x "${root}/usr/bin/zypper" ]; then
+        echo "ERROR: ${root} has no zypper; cannot install dev headers (${SYSROOT_DEVEL_PACKAGES})." >&2
+        exit 1
+    fi
+
+    echo "  Installing dev headers into sysroot: ${SYSROOT_DEVEL_PACKAGES}"
+    mkdir -p "${repos}"
+    cat > "${repos}/atlantic_jolla.repo" <<EOF
+[jolla]
+name=jolla
+enabled=1
+gpgcheck=0
+baseurl=${base}/releases/${ver}/jolla/${arch}/
+EOF
+    cat > "${repos}/atlantic_sdk.repo" <<EOF
+[sdk]
+name=sdk
+enabled=1
+gpgcheck=0
+baseurl=${base}/releases/${ver}/sdk/${arch}/
+EOF
+    cat > "${repos}/atlantic_adaptation-common.repo" <<EOF
+[adaptation-common]
+name=adaptation-common
+enabled=1
+gpgcheck=0
+baseurl=${base}/releases/${ver}/jolla-hw/adaptation-common/${arch}/
+EOF
+
+    cp -L /etc/resolv.conf "${root}/etc/resolv.conf" 2>/dev/null || true
+
+    for m in proc sys dev; do
+        mountpoint -q "${root}/${m}" || mount --bind "/${m}" "${root}/${m}"
+    done
+    trap 'for m in proc sys dev; do umount -lf "'"${root}"'/${m}" 2>/dev/null || true; done' EXIT
+
+    chroot "${root}" /usr/bin/zypper --non-interactive --no-gpg-checks ref
+    chroot "${root}" /usr/bin/zypper --non-interactive --no-gpg-checks in ${SYSROOT_DEVEL_PACKAGES}
+
+    for m in proc sys dev; do umount -lf "${root}/${m}" 2>/dev/null || true; done
+    trap - EXIT
+
+    if [ -d "${root}/usr/include/libsoup-3.0/libsoup" ] && [ ! -e "${root}/usr/include/libsoup" ]; then
+        ln -sfn libsoup-3.0/libsoup "${root}/usr/include/libsoup"
+    fi
+
+    if [ ! -f "${root}/usr/include/gbm.h" ] || [ ! -e "${root}/usr/include/libsoup/soup.h" ]; then
+        echo "ERROR: dev headers still missing after install (need gbm.h and libsoup/soup.h)." >&2
+        exit 1
+    fi
+    echo "  Sysroot dev headers installed."
+}
+
 echo ""
 echo "--- [0] Setting up 64 GB swap ---"
 if ! swapon --show | grep -q /swapfile; then
@@ -131,6 +206,9 @@ else
 
     echo "  Sysroot ready."
 fi
+
+# Stock SDK targets lack the -devel headers the WPE Qt5 plugin compiles against.
+ensure_sysroot_devel "${SYSROOT}"
 
 echo ""
 echo "--- [3] Cloning repositories ---"
