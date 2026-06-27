@@ -29,13 +29,18 @@ replace_sysroot_with_copy() {
 }
 
 # The public SFOS SDK target is a stock runtime image: it ships the runtime
-# libraries (libgbm, libsoup3, ...) but NOT their -devel headers, which the WPE
-# Qt5 plugin needs at compile time (gbm.h, libsoup/soup.h). Install them into the
-# sysroot using its own zypper (aarch64 host -> no QEMU needed). libsoup3-devel
-# lands headers under /usr/include/libsoup-3.0/; expose them at the bare
-# <libsoup/...> path too, because build-webkit.sh strips the libsoup-3.0 Requires
-# from wpe-webkit-2.0.pc so no -I .../libsoup-3.0 ever reaches the plugin.
-SYSROOT_DEVEL_PACKAGES="${SYSROOT_DEVEL_PACKAGES:-mesa-llvmpipe-libgbm-devel libsoup3-devel}"
+# libraries (libgbm, libsoup3, transfer engine, dsme, ...) but NOT their -devel
+# headers/.pc files, which the WPE Qt5 plugin and the browser UI need at compile
+# time. Install them into the sysroot using its own zypper (aarch64 host -> no
+# QEMU needed):
+#   mesa-llvmpipe-libgbm-devel    -> gbm.h               (WPE Qt5 plugin)
+#   libsoup3-devel                -> libsoup/soup.h      (WPE Qt5 plugin)
+#   libnemotransferengine-qt5-devel -> nemotransferengine-qt5.pc (browser apps/lib)
+#   libdsme-devel                 -> dsme_dbus_if.pc     (browser apps/lib)
+# libsoup3-devel lands headers under /usr/include/libsoup-3.0/; expose them at the
+# bare <libsoup/...> path too, because build-webkit.sh strips the libsoup-3.0
+# Requires from wpe-webkit-2.0.pc so no -I .../libsoup-3.0 reaches the plugin.
+SYSROOT_DEVEL_PACKAGES="${SYSROOT_DEVEL_PACKAGES:-mesa-llvmpipe-libgbm-devel libsoup3-devel libnemotransferengine-qt5-devel libdsme-devel}"
 
 ensure_sysroot_devel() {
     local root="$1"
@@ -45,7 +50,9 @@ ensure_sysroot_devel() {
     local arch="aarch64"
     local m
 
-    if [ -f "${root}/usr/include/gbm.h" ] && [ -e "${root}/usr/include/libsoup/soup.h" ]; then
+    if [ -f "${root}/usr/include/gbm.h" ] && [ -e "${root}/usr/include/libsoup/soup.h" ] \
+       && [ -f "${root}/usr/lib64/pkgconfig/nemotransferengine-qt5.pc" ] \
+       && [ -f "${root}/usr/lib64/pkgconfig/dsme_dbus_if.pc" ]; then
         echo "  Sysroot dev headers already present."
         return 0
     fi
