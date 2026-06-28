@@ -295,6 +295,19 @@ void WPEChromeOverlay::renderFrame()
         return;
     m_dirty = false;
 
+    // Ensure the chrome sits ABOVE the web. lipstick honours sibling place_above (proven)
+    // but not the web's place_below(chrome), so assert it from here once the web surface
+    // exists. Latches on the shell (parent) commit.
+    if (!m_placedAboveWeb) {
+        if (void* web = WPEWaylandSubsurface::webSurface()) {
+            wl_subsurface_place_above(m_subsurface, static_cast<wl_surface*>(web));
+            wl_surface_commit(m_parentSurface);
+            wl_display_flush(m_display);
+            m_placedAboveWeb = true;
+            qWarning("[WPE-DC-OVERLAY] placed chrome above web surface");
+        }
+    }
+
     // 1) Render the scene into the Qt FBO (Qt context current on the offscreen surface).
     if (!m_glContext->makeCurrent(m_offscreenSurface))
         return;
