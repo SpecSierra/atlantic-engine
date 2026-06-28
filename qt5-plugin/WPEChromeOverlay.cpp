@@ -415,6 +415,14 @@ bool WPEChromeOverlay::create(wl_display* display, wl_surface* parentSurface,
     m_subsurface = wl_subcompositor_get_subsurface(m_subcompositor, m_surface, m_parentSurface);
     if (!m_surface || !m_subsurface)
         return false;
+    // Empty input region: this overlay is an output-only raw surface (no Qt window), so it
+    // must NOT capture touch — otherwise the on-top chrome surface swallows all input and
+    // nothing reaches the shell window where the input forwarder lives. With it empty, the
+    // compositor routes all touch to the shell, which forwards it into the overlay scene.
+    if (struct wl_region* empty = wl_compositor_create_region(m_compositor)) {
+        wl_surface_set_input_region(m_surface, empty);
+        wl_region_destroy(empty);
+    }
     wl_subsurface_set_desync(m_subsurface);
     wl_subsurface_set_position(m_subsurface, 0, 0);
     // Publish our surface so the web subsurface (created later by the WPEView) can
