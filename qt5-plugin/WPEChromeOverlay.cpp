@@ -260,12 +260,16 @@ bool WPEChromeOverlay::ensureFbo()
 
 void WPEChromeOverlay::scheduleRender()
 {
-    QTimer::singleShot(0, [this]() { renderFrame(); });
-    // M1 robustness: also re-render shortly after, in case the very first render fired
-    // before the scene graph was fully ready. (A later milestone drives renders purely
-    // from sceneChanged/renderRequested.)
-    QTimer::singleShot(150, [this]() { renderFrame(); });
-    QTimer::singleShot(500, [this]() { renderFrame(); });
+    // Coalesce: an animating scene (e.g. a spinner) fires sceneChanged continuously; a
+    // 0-delay render-per-signal loop starves the GUI event loop → ANR. Render at most
+    // once per ~16ms and drop duplicate requests in between.
+    if (m_renderPending)
+        return;
+    m_renderPending = true;
+    QTimer::singleShot(16, [this]() {
+        m_renderPending = false;
+        renderFrame();
+    });
 }
 
 void WPEChromeOverlay::renderFrame()

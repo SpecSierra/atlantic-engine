@@ -113,6 +113,7 @@ private:
 
     unsigned m_blitProgram { 0 };
     int m_blitTexUniform { -1 };
+    bool m_renderPending { false };
 
     void onRegistryGlobal(wl_registry* registry, uint32_t name, const char* interface);
     bool bindGlobals();
