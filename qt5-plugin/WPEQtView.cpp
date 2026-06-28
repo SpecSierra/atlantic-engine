@@ -133,10 +133,15 @@ void WPEQtView::createChromeOverlayNow()
         return;
 
     m_chromeOverlay = new WPEChromeOverlay();
-    if (!m_chromeOverlay->create(display, parentSurface, webSurface, sz)) {
+    if (!m_chromeOverlay->create(display, parentSurface, sz)) {
         delete m_chromeOverlay;
         m_chromeOverlay = nullptr;
+        return;
     }
+    // Test path: the web subsurface was created before the overlay, so assert chrome
+    // above it explicitly.
+    if (webSurface)
+        m_chromeOverlay->setWebSurface(webSurface);
 }
 
 void WPEQtView::updateSubsurfaceGeometry()

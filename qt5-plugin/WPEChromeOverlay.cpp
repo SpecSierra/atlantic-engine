@@ -4,6 +4,7 @@
  */
 
 #include "WPEChromeOverlay.h"
+#include "WPEWaylandSubsurface.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -161,41 +162,8 @@ bool WPEChromeOverlay::setupScene()
     if (!m_qmlEngine->incubationController())
         m_qmlEngine->setIncubationController(m_quickWindow->incubationController());
 
-    // M2a de-risk: a minimal *Silica* scene (Theme singleton + Label + Silica colors) to
-    // confirm Silica components render correctly via QQuickRenderControl before hosting the
-    // full browser.qml. Opaque toolbar-style bar at the bottom, transparent above (web
-    // shows through). If Silica's Theme/Label/Rectangle paint here, the full chrome will.
-    static const char* kTestQml =
-        "import QtQuick 2.2\n"
-        "import Sailfish.Silica 1.0\n"
-        "Item {\n"
-        "  Rectangle { anchors { left: parent.left; right: parent.right; bottom: parent.bottom }\n"
-        "    height: parent.height/4\n"
-        "    color: Theme.rgba(Theme.highlightBackgroundColor, 0.92)\n"
-        "    Label { anchors.centerIn: parent; text: 'SILICA OVERLAY OK'\n"
-        "            color: Theme.highlightColor; font.pixelSize: Theme.fontSizeLarge } }\n"
-        "}\n";
-    m_qmlComponent = new QQmlComponent(m_qmlEngine);
-    m_qmlComponent->setData(kTestQml, QUrl(QStringLiteral("dc-overlay-test.qml")));
-    if (m_qmlComponent->isError()) {
-        qWarning("[WPE-DC-OVERLAY] QML error: %s",
-                 qPrintable(m_qmlComponent->errorString()));
-        return false;
-    }
-    QObject* obj = m_qmlComponent->create();
-    m_rootItem = qobject_cast<QQuickItem*>(obj);
-    if (!m_rootItem) {
-        qWarning("[WPE-DC-OVERLAY] QML root is not a QQuickItem");
-        delete obj;
-        return false;
-    }
-    m_rootItem->setParentItem(m_quickWindow->contentItem());
-    m_rootItem->setWidth(m_size.width());
-    m_rootItem->setHeight(m_size.height());
-
     // Initialise the render control against Qt's GL context (current on the offscreen
     // surface). QQuickRenderControl::initialize must be called with the context current.
-    qWarning("[WPE-DC-OVERLAY] scene: QML root created, initializing render control");
     if (!m_glContext->makeCurrent(m_offscreenSurface)) {
         qWarning("[WPE-DC-OVERLAY] makeCurrent(offscreen) failed");
         return false;
@@ -204,12 +172,67 @@ bool WPEChromeOverlay::setupScene()
     m_glContext->doneCurrent();
     qWarning("[WPE-DC-OVERLAY] scene: render control initialized");
 
-    // Re-render whenever the scene changes.
+    // Re-render whenever the scene changes (the browser parenting browser.qml in, plus
+    // any later UI change, triggers sceneChanged).
     QObject::connect(m_renderControl, &QQuickRenderControl::renderRequested,
                      m_quickWindow, [this]() { scheduleRender(); });
     QObject::connect(m_renderControl, &QQuickRenderControl::sceneChanged,
                      m_quickWindow, [this]() { scheduleRender(); });
+
+    // Test mode: load a self-contained Silica scene so the overlay can be validated
+    // standalone. Real mode leaves the scene empty — the browser parents browser.qml into
+    // quickWindow()->contentItem() and calls contentReady().
+    if (testEnabled()) {
+        static const char* kTestQml =
+            "import QtQuick 2.2\n"
+            "import Sailfish.Silica 1.0\n"
+            "Item {\n"
+            "  Rectangle { anchors { left: parent.left; right: parent.right; bottom: parent.bottom }\n"
+            "    height: parent.height/4\n"
+            "    color: Theme.rgba(Theme.highlightBackgroundColor, 0.92)\n"
+            "    Label { anchors.centerIn: parent; text: 'SILICA OVERLAY OK'\n"
+            "            color: Theme.highlightColor; font.pixelSize: Theme.fontSizeLarge } }\n"
+            "}\n";
+        m_qmlComponent = new QQmlComponent(m_qmlEngine);
+        m_qmlComponent->setData(kTestQml, QUrl(QStringLiteral("dc-overlay-test.qml")));
+        if (m_qmlComponent->isError()) {
+            qWarning("[WPE-DC-OVERLAY] QML error: %s", qPrintable(m_qmlComponent->errorString()));
+            return false;
+        }
+        m_rootItem = qobject_cast<QQuickItem*>(m_qmlComponent->create());
+        if (!m_rootItem) {
+            qWarning("[WPE-DC-OVERLAY] QML root is not a QQuickItem");
+            return false;
+        }
+        m_rootItem->setParentItem(m_quickWindow->contentItem());
+        m_rootItem->setWidth(m_size.width());
+        m_rootItem->setHeight(m_size.height());
+    }
     return true;
+}
+
+void WPEChromeOverlay::contentReady()
+{
+    if (!m_valid)
+        return;
+    // Size whatever the browser parented in to the window, then start rendering.
+    const QList<QQuickItem*> kids = m_quickWindow->contentItem()->childItems();
+    for (QQuickItem* it : kids) {
+        it->setWidth(m_size.width());
+        it->setHeight(m_size.height());
+    }
+    qWarning("[WPE-DC-OVERLAY] contentReady: %d root item(s)", kids.size());
+    scheduleRender();
+}
+
+void WPEChromeOverlay::setWebSurface(void* wlWebSurface)
+{
+    if (!m_valid || !m_subsurface || !wlWebSurface)
+        return;
+    // Re-assert chrome above the web sibling (backup; the web also place_below us).
+    wl_subsurface_place_above(m_subsurface, static_cast<wl_surface*>(wlWebSurface));
+    wl_surface_commit(m_parentSurface);
+    wl_display_flush(m_display);
 }
 
 bool WPEChromeOverlay::ensureFbo()
@@ -301,7 +324,7 @@ void WPEChromeOverlay::renderFrame()
 }
 
 bool WPEChromeOverlay::create(wl_display* display, wl_surface* parentSurface,
-                              wl_surface* webSurface, const QSize& sizeDevicePx)
+                              const QSize& sizeDevicePx)
 {
     if (m_valid)
         return true;
@@ -323,9 +346,10 @@ bool WPEChromeOverlay::create(wl_display* display, wl_surface* parentSurface,
     if (!m_surface || !m_subsurface)
         return false;
     wl_subsurface_set_desync(m_subsurface);
-    if (webSurface)
-        wl_subsurface_place_above(m_subsurface, webSurface);
     wl_subsurface_set_position(m_subsurface, 0, 0);
+    // Publish our surface so the web subsurface (created later by the WPEView) can
+    // place_below it — that gives chrome-above-web stacking under the shared shell parent.
+    WPEWaylandSubsurface::setChromeSurface(m_surface);
     // place_above/set_position are double-buffered on the parent surface; commit it so
     // the placement latches (the parent's own frames come from a separate thread).
     wl_surface_commit(m_parentSurface);
@@ -400,7 +424,10 @@ bool WPEChromeOverlay::create(wl_display* display, wl_surface* parentSurface,
     m_valid = true;
     qWarning("[WPE-DC-OVERLAY] active: chrome overlay subsurface above web (%dx%d)",
              m_size.width(), m_size.height());
-    scheduleRender();
+    // Test mode rendered its own scene in setupScene — kick it off. Real mode renders
+    // once the browser has parented browser.qml and called contentReady().
+    if (testEnabled())
+        scheduleRender();
     return true;
 }
 

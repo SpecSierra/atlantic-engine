@@ -38,6 +38,13 @@ bool WPEWaylandSubsurface::enabled()
     return on;
 }
 
+static QWindow* s_shellWindow = nullptr;
+static void* s_chromeSurface = nullptr;
+void WPEWaylandSubsurface::setShellWindow(QWindow* shell) { s_shellWindow = shell; }
+QWindow* WPEWaylandSubsurface::shellWindow() { return s_shellWindow; }
+void WPEWaylandSubsurface::setChromeSurface(void* s) { s_chromeSurface = s; }
+void* WPEWaylandSubsurface::chromeSurface() { return s_chromeSurface; }
+
 WPEWaylandSubsurface::WPEWaylandSubsurface() = default;
 
 WPEWaylandSubsurface::~WPEWaylandSubsurface()
@@ -187,7 +194,10 @@ bool WPEWaylandSubsurface::ensureCreated(QQuickWindow* window)
     if (!m_display)
         m_display = static_cast<wl_display*>(ni->nativeResourceForIntegration(QByteArrayLiteral("wl_display")));
 
-    m_parentSurface = static_cast<wl_surface*>(ni->nativeResourceForWindow(QByteArrayLiteral("surface"), window));
+    // In layered mode the WPEView lives in an offscreen render-control window (no
+    // wl_surface), so parent the web subsurface to the on-screen SHELL window instead.
+    QWindow* parentWindow = s_shellWindow ? s_shellWindow : static_cast<QWindow*>(window);
+    m_parentSurface = static_cast<wl_surface*>(ni->nativeResourceForWindow(QByteArrayLiteral("surface"), parentWindow));
     if (!m_display || !m_parentSurface) {
         qWarning("[WPE-DIRECT-COMPOSITE] no wayland display/surface; falling back to QSG path");
         return false;
@@ -213,10 +223,15 @@ bool WPEWaylandSubsurface::ensureCreated(QQuickWindow* window)
         wl_region_destroy(empty);
     }
 
-    // Desync so web frames commit independently of the Qt window's frames; place
-    // below the chrome surface, which is transparent where the web content shows.
+    // Desync so web frames commit independently of the Qt window's frames.
     wl_subsurface_set_desync(m_subsurface);
-    wl_subsurface_place_below(m_subsurface, m_parentSurface);
+    // Layered mode: place the web BELOW the chrome subsurface (a sibling under the same
+    // shell parent) so the offscreen-rendered chrome composites on top. Legacy mode:
+    // place below the parent's own content.
+    if (s_chromeSurface)
+        wl_subsurface_place_below(m_subsurface, static_cast<wl_surface*>(s_chromeSurface));
+    else
+        wl_subsurface_place_below(m_subsurface, m_parentSurface);
     if (m_geometry.width() > 0)
         wl_subsurface_set_position(m_subsurface, m_geometry.x(), m_geometry.y());
 

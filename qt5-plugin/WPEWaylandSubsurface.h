@@ -36,6 +36,17 @@ public:
     // Honoured once at process start.
     static bool enabled();
 
+    // Direct-composite layered mode: the chrome runs in an offscreen render-control
+    // window, so the WPEView's own window has no wl_surface. The browser sets the
+    // on-screen SHELL window here; the web subsurface parents to it (a sibling below the
+    // chrome subsurface) instead of to the WPEView's window. And the chrome subsurface
+    // (set by WPEChromeOverlay) is the sibling the web places itself BELOW. Both null in
+    // legacy single-window mode (web parents to its own window, place_below parent).
+    static void setShellWindow(QWindow* shell);
+    static QWindow* shellWindow();
+    static void setChromeSurface(void* wlSurface);
+    static void* chromeSurface();
+
     WPEWaylandSubsurface();
     ~WPEWaylandSubsurface();
 

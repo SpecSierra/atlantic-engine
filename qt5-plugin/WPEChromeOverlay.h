@@ -44,21 +44,32 @@ class QOffscreenSurface;
 class QOpenGLContext;
 class QOpenGLFramebufferObject;
 
-class WPEChromeOverlay {
+class Q_DECL_EXPORT WPEChromeOverlay {
 public:
     static bool testEnabled(); // ATLANTIC_DC_OVERLAY_TEST
 
     WPEChromeOverlay();
     ~WPEChromeOverlay();
 
-    // Create the overlay subsurface above webSurface (a wl_surface*, from
-    // WPEWaylandSubsurface::webContentSurface()), as a child of parentSurface
-    // (a wl_surface*, the app window's surface). display is the shared wl_display.
-    // Returns false and stays inert on any failure.
-    bool create(wl_display* display, wl_surface* parentSurface, wl_surface* webSurface,
-                const QSize& sizeDevicePx);
+    // Create the chrome overlay subsurface as a child of parentSurface (the on-screen
+    // shell window's wl_surface), sized sizeDevicePx, on the shared wl_display. Sets up
+    // the offscreen render-control QQuickWindow + EGL + blit. Does NOT load QML content
+    // unless ATLANTIC_DC_OVERLAY_TEST is set (then it loads a self-test scene); in real
+    // mode the browser loads browser.qml into quickWindow() and calls contentReady().
+    // Returns false and stays inert on failure.
+    bool create(wl_display* display, wl_surface* parentSurface, const QSize& sizeDevicePx);
 
     bool isValid() const { return m_valid; }
+
+    // Accessors so the browser can host browser.qml in the overlay's scene.
+    QQuickWindow* quickWindow() const { return m_quickWindow; }
+    QQmlEngine* qmlEngine() const { return m_qmlEngine; }
+    void* surface() const { return m_surface; }   // chrome wl_surface (for web place_below)
+
+    // Call after parenting content into quickWindow()->contentItem(): sizes the root and
+    // starts rendering. Place the chrome above the web once the web subsurface exists.
+    void contentReady();
+    void setWebSurface(void* wlWebSurface); // re-assert place_above(web) as a backup
 
 private:
     void destroy();
