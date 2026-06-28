@@ -225,7 +225,11 @@ void WPEChromeOverlay::contentReady()
         it->setWidth(m_size.width());
         it->setHeight(m_size.height());
     }
-    qWarning("[WPE-DC-OVERLAY] contentReady: %d root item(s)", kids.size());
+    for (QQuickItem* it : kids)
+        qWarning("[WPE-DC-OVERLAY] contentReady: child %gx%g visible=%d opacity=%g enabled=%d",
+                 it->width(), it->height(), it->isVisible(), it->opacity(), it->isEnabled());
+    qWarning("[WPE-DC-OVERLAY] contentReady: %d root item(s), contentItem %gx%g",
+             kids.size(), m_quickWindow->contentItem()->width(), m_quickWindow->contentItem()->height());
     scheduleRender();
 }
 
@@ -277,7 +281,7 @@ void WPEChromeOverlay::renderFrame()
     m_glContext->functions()->glFlush();
     const GLuint texId = m_fbo->texture();
     static int frame = 0;
-    if (frame++ < 6) {
+    if (frame++ < 20) {
         // Read back two pixels FROM THE FBO to see whether the scene actually drew:
         // center (should be the faint green tint) and lower-third (the blue bar).
         m_fbo->bind();
