@@ -414,20 +414,32 @@ LAUNCHER
 chmod 755 "${S}/usr/bin/atlantic-browser-env"
 
 # WPE launcher wrapper (/usr/bin/atlantic-browser), used by the D-Bus
-# activation services (org.atlantic.browser[.ui]).
+# activation services (org.atlantic.browser[.ui]) and the .desktop entry.
 #
-# Primary confinement is Sailjail, applied by the .desktop entry
-# (Exec=sailjail --profile=atlantic-browser ...) — that is the default launch
-# path. bwrap is NOT used: it is incompatible with the libhybris/Adreno GPU
-# stack. This wrapper additionally offers OPTIONAL firejail confinement for
-# launches that do not go through Sailjail; it is OFF by default. Opt in with
-# ATLANTIC_ENABLE_SAILJAIL=1.
+# Confinement is selected by ATLANTIC_SANDBOX (bwrap is NOT used — incompatible
+# with the libhybris/Adreno GPU stack):
+#   none      direct, unconfined (DEFAULT — known-good daily use / dev)
+#   sailjail  sailjail --profile=atlantic-browser  (SFOS sandbox, Base+perms)
+#   firejail  firejail --profile=/etc/firejail/atlantic-browser.profile
+# ATLANTIC_ENABLE_SAILJAIL=1 is kept as a back-compat alias for "firejail".
+# ATLANTIC_IN_SANDBOX guards against double-wrapping (set once we re-exec).
 cat > "${S}/usr/bin/atlantic-browser" <<LAUNCHER
 #!/bin/sh
-if [ "\${ATLANTIC_ENABLE_SAILJAIL:-0}" = "1" ] && [ -z "\${ATLANTIC_IN_SAILJAIL:-}" ] && command -v firejail >/dev/null 2>&1; then
-    export ATLANTIC_IN_SAILJAIL=1
-    exec firejail --quiet --profile=/etc/firejail/atlantic-browser.profile -- /usr/bin/atlantic-browser-env "\$@"
-fi
+MODE="\${ATLANTIC_SANDBOX:-none}"
+if [ "\${ATLANTIC_ENABLE_SAILJAIL:-0}" = "1" ] && [ "\$MODE" = "none" ]; then MODE=firejail; fi
+if [ -n "\${ATLANTIC_IN_SANDBOX:-}" ]; then MODE=none; fi
+case "\$MODE" in
+    sailjail)
+        if command -v sailjail >/dev/null 2>&1; then
+            export ATLANTIC_IN_SANDBOX=1
+            exec sailjail --profile=atlantic-browser -- /usr/bin/atlantic-browser-env "\$@"
+        fi ;;
+    firejail)
+        if command -v firejail >/dev/null 2>&1; then
+            export ATLANTIC_IN_SANDBOX=1
+            exec firejail --quiet --profile=/etc/firejail/atlantic-browser.profile -- /usr/bin/atlantic-browser-env "\$@"
+        fi ;;
+esac
 exec /usr/bin/atlantic-browser-env "\$@"
 LAUNCHER
 chmod 755 "${S}/usr/bin/atlantic-browser"
@@ -510,12 +522,34 @@ Name=Atlantic
 X-MeeGo-Logical-Id=atlantic-browser-ap-name
 X-MeeGo-Translation-Catalog=atlantic-browser
 Icon=icon-launcher-atlantic
-Exec=sailjail --profile=atlantic-browser -- /usr/bin/atlantic-browser-env %U
+Exec=/usr/bin/atlantic-browser %U
 Comment=Atlantic Browser (WPE WebKit)
 MimeType=text/html;application/xhtml+xml;application/xml;text/xml;x-scheme-handler/http;x-scheme-handler/https;
 X-Maemo-Service=org.atlantic.browser.ui
 X-Maemo-Object-Path=/ui
 X-Maemo-Method=org.atlantic.browser.ui.openUrl
+
+[X-Sailjail]
+Permissions=Internet;Audio;WebView;UserDirs;atlantic-browser
+OrganizationName=org.sailfishos
+ApplicationName=browser
+DESKTOP
+
+# Second desktop entry: launch the SAME browser but confined by Sailjail, as a
+# distinct tappable app ("Atlantic (Sailjail)"). It deliberately OMITS
+# X-Maemo-Service so lipstick actually runs Exec (sailjail) instead of
+# D-Bus-activating the single instance (which would bypass sailjail). The main
+# "Atlantic" icon stays direct/unconfined for daily use; this one is for
+# exercising/debugging the sandbox. To test, close the running direct instance
+# first (single-instance D-Bus name org.atlantic.browser.ui).
+cat > "${S}/usr/share/applications/atlantic-browser-sailjail.desktop" << 'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Atlantic (Sailjail)
+Icon=icon-launcher-atlantic
+Exec=sailjail --profile=atlantic-browser -- /usr/bin/atlantic-browser-env %U
+Comment=Atlantic Browser — Sailjail sandbox (test/debug)
+MimeType=text/html;application/xhtml+xml;application/xml;text/xml;x-scheme-handler/http;x-scheme-handler/https;
 
 [X-Sailjail]
 Permissions=Internet;Audio;WebView;UserDirs;atlantic-browser
@@ -544,13 +578,15 @@ cp -a "${BROWSER_SRC}/build_browser/atlantic-browser_eng_en.qm" "${S}/usr/share/
 mkdir -p "${S}/etc/sailjail/applications"
 cat > "${S}/etc/sailjail/applications/atlantic-browser.profile" << 'EOF'
 [sailfish]
-# Sailjail is the default launch path (.desktop Exec=sailjail). Sandbox
-# ENFORCEMENT is enabled: the custom atlantic-browser permission supplies the
-# GPU/hybris noblacklists + Downloads whitelist on top of Base/Internet/WebView
-# (which cover SSL/DNS/fonts/transferengine). Base uses no private-dev, so the
-# /dev/kgsl|ion|binder noblacklists apply. If WPE rendering/launch breaks,
-# discover denied paths on device with `firejail --debug` / journalctl and add
-# them to sailjail/atlantic-browser.permission.
+# Sandbox profile applied when the browser is launched via sailjail, i.e. the
+# "Atlantic (Sailjail)" desktop entry or ATLANTIC_SANDBOX=sailjail. (The main
+# "Atlantic" icon is single-instance D-Bus-activated and runs the wrapper
+# direct/unconfined for daily use.) ENFORCEMENT enabled: the custom
+# atlantic-browser permission supplies the GPU/hybris noblacklists + Downloads
+# whitelist on top of Base/Internet/WebView (SSL/DNS/fonts/transferengine).
+# Base uses no private-dev, so the /dev/kgsl|ion|binder noblacklists apply. If
+# WPE rendering/launch breaks, discover denied paths on device with
+# `firejail --debug` / journalctl and add them to sailjail/atlantic-browser.permission.
 Sandboxing=enabled
 
 # Keep in sync with the .desktop [X-Sailjail] block. "atlantic-browser" pulls in
