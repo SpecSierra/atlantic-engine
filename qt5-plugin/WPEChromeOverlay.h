@@ -114,6 +114,15 @@ private:
     unsigned m_blitProgram { 0 };
     int m_blitTexUniform { -1 };
     bool m_renderPending { false };
+    // Frame-callback pacing: hybris eglSwapBuffers blocks in queueBuffer/sync_wait once
+    // the wl_egl_window buffer pool is exhausted, so only swap after the compositor's
+    // frame callback (it consumed the previous buffer). m_throttled = a swap is awaiting
+    // its frame callback; m_dirty = content changed and needs a render.
+    bool m_throttled { false };
+    bool m_dirty { false };
+public:
+    void onFrameDone(); // wl_surface frame callback (public so the C callback can reach it)
+private:
 
     void onRegistryGlobal(wl_registry* registry, uint32_t name, const char* interface);
     bool bindGlobals();

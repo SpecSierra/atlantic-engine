@@ -258,15 +258,30 @@ bool WPEChromeOverlay::ensureFbo()
     return m_fbo->isValid();
 }
 
+static void chromeFrameDone(void* data, wl_callback* cb, uint32_t)
+{
+    wl_callback_destroy(cb);
+    static_cast<WPEChromeOverlay*>(data)->onFrameDone();
+}
+static const wl_callback_listener s_chromeFrameListener = { chromeFrameDone };
+
+void WPEChromeOverlay::onFrameDone()
+{
+    m_throttled = false;
+    if (m_dirty)
+        scheduleRender();
+}
+
 void WPEChromeOverlay::scheduleRender()
 {
-    // Coalesce: an animating scene (e.g. a spinner) fires sceneChanged continuously; a
-    // 0-delay render-per-signal loop starves the GUI event loop → ANR. Render at most
-    // once per ~16ms and drop duplicate requests in between.
-    if (m_renderPending)
+    // Mark dirty and render on the next event-loop turn. renderFrame() itself enforces
+    // frame-callback pacing (won't swap while awaiting the compositor), so we never queue
+    // buffers faster than lipstick releases them (avoids the queueBuffer/sync_wait hang).
+    m_dirty = true;
+    if (m_renderPending || m_throttled)
         return;
     m_renderPending = true;
-    QTimer::singleShot(16, [this]() {
+    QTimer::singleShot(0, [this]() {
         m_renderPending = false;
         renderFrame();
     });
@@ -274,8 +289,9 @@ void WPEChromeOverlay::scheduleRender()
 
 void WPEChromeOverlay::renderFrame()
 {
-    if (!m_valid)
+    if (!m_valid || m_throttled)
         return;
+    m_dirty = false;
 
     // 1) Render the scene into the Qt FBO (Qt context current on the offscreen surface).
     if (!m_glContext->makeCurrent(m_offscreenSurface))
@@ -337,7 +353,15 @@ void WPEChromeOverlay::renderFrame()
     glEnableVertexAttribArray(1);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
+    // Request a frame callback BEFORE the commit (eglSwapBuffers commits the surface), and
+    // throttle further renders until it fires — so we never swap faster than lipstick
+    // releases buffers (the hybris queueBuffer/sync_wait hang).
+    if (wl_callback* cb = wl_surface_frame(m_surface)) {
+        wl_callback_add_listener(cb, &s_chromeFrameListener, this);
+        m_throttled = true;
+    }
     eglSwapBuffers(dpy, static_cast<EGLSurface>(m_eglSurface));
+    wl_display_flush(m_display);
 }
 
 bool WPEChromeOverlay::create(wl_display* display, wl_surface* parentSurface,
