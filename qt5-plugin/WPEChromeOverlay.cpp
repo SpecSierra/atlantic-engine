@@ -267,6 +267,8 @@ static const wl_callback_listener s_chromeFrameListener = { chromeFrameDone };
 
 void WPEChromeOverlay::onFrameDone()
 {
+    static int n = 0;
+    if (n++ < 6) qWarning("[WPE-DC-OVERLAY] frame callback #%d", n);
     m_throttled = false;
     if (m_dirty)
         scheduleRender();
@@ -306,7 +308,7 @@ void WPEChromeOverlay::renderFrame()
     m_glContext->functions()->glFlush();
     const GLuint texId = m_fbo->texture();
     static int frame = 0;
-    if (frame++ < 3) {
+    if (frame++ < 40 && (frame < 6 || frame % 10 == 0)) {
         // Read back two pixels FROM THE FBO to see whether the scene actually drew:
         // center (should be the faint green tint) and lower-third (the blue bar).
         m_fbo->bind();
@@ -359,6 +361,19 @@ void WPEChromeOverlay::renderFrame()
     if (wl_callback* cb = wl_surface_frame(m_surface)) {
         wl_callback_add_listener(cb, &s_chromeFrameListener, this);
         m_throttled = true;
+        // Safety net: if the frame callback never arrives (e.g. lipstick doesn't pace this
+        // surface), un-throttle after a bounded delay so rendering can't stall forever —
+        // which would freeze the chrome at a stale (often blank) frame. Capped rate also
+        // keeps us well clear of the queueBuffer/sync_wait hang.
+        QTimer::singleShot(100, [this]() {
+            if (m_throttled) {
+                m_throttled = false;
+                // Force a render (not only if dirty): guarantees UI changes — e.g. the URL
+                // bar appearing — show within ~100ms even if sceneChanged was missed. ~10fps
+                // floor; refined to render-on-change in M4.
+                scheduleRender();
+            }
+        });
     }
     eglSwapBuffers(dpy, static_cast<EGLSurface>(m_eglSurface));
     wl_display_flush(m_display);
