@@ -423,8 +423,18 @@ chmod 755 "${S}/usr/bin/atlantic-browser-env"
 #   firejail  firejail --profile=/etc/firejail/atlantic-browser.profile
 # ATLANTIC_ENABLE_SAILJAIL=1 is kept as a back-compat alias for "firejail".
 # ATLANTIC_IN_SANDBOX guards against double-wrapping (set once we re-exec).
+# IMPORTANT: sailjail only launches ELF binaries (it rejects shell scripts with
+# "is not elf binary"), so the sandbox modes must target /usr/bin/atlantic-
+# browser.bin directly — NOT the atlantic-browser-env script. The runtime env
+# (LD_PRELOAD compat shims, WEBKIT_*/GST_* tuning) is therefore exported HERE,
+# before entering the sandbox, so it is inherited by the jailed .bin.
 cat > "${S}/usr/bin/atlantic-browser" <<LAUNCHER
 #!/bin/sh
+. "${PACKAGE_RUNTIME_PREFIX}/libexec/atlantic/runtime-common.sh"
+ATLANTIC_LD_PRELOAD='${WPE_COMPAT_PRELOAD}'
+ATLANTIC_LD_LIBRARY_PATH='${WPE_HELPER_LIBRARY_PATH}'
+atlantic_export_browser_env
+
 MODE="\${ATLANTIC_SANDBOX:-none}"
 if [ "\${ATLANTIC_ENABLE_SAILJAIL:-0}" = "1" ] && [ "\$MODE" = "none" ]; then MODE=firejail; fi
 if [ -n "\${ATLANTIC_IN_SANDBOX:-}" ]; then MODE=none; fi
@@ -432,15 +442,21 @@ case "\$MODE" in
     sailjail)
         if command -v sailjail >/dev/null 2>&1; then
             export ATLANTIC_IN_SANDBOX=1
-            exec sailjail --profile=atlantic-browser -- /usr/bin/atlantic-browser-env "\$@"
+            exec sailjail --profile=atlantic-browser -- /usr/bin/atlantic-browser.bin "\$@"
         fi ;;
     firejail)
         if command -v firejail >/dev/null 2>&1; then
             export ATLANTIC_IN_SANDBOX=1
-            exec firejail --quiet --profile=/etc/firejail/atlantic-browser.profile -- /usr/bin/atlantic-browser-env "\$@"
+            exec firejail --quiet --profile=/etc/firejail/atlantic-browser.profile -- /usr/bin/atlantic-browser.bin "\$@"
         fi ;;
 esac
-exec /usr/bin/atlantic-browser-env "\$@"
+
+# direct (unconfined): pin to big cores like atlantic-browser-env does.
+if command -v taskset >/dev/null 2>&1; then
+    exec taskset -c 4-7 /usr/bin/atlantic-browser.bin "\$@"
+else
+    exec /usr/bin/atlantic-browser.bin "\$@"
+fi
 LAUNCHER
 chmod 755 "${S}/usr/bin/atlantic-browser"
 cp -a "${BROWSER_SRC}/build_browser/atlantic-browser" "${S}/usr/bin/atlantic-browser.bin"
@@ -547,15 +563,14 @@ cat > "${S}/usr/share/applications/atlantic-browser-sailjail.desktop" << 'DESKTO
 Type=Application
 Name=Atlantic (Sailjail)
 Icon=icon-launcher-atlantic
-Exec=sailjail --profile=atlantic-browser -- /usr/bin/atlantic-browser-env %U
+Exec=/usr/bin/env ATLANTIC_SANDBOX=sailjail /usr/bin/atlantic-browser %U
 Comment=Atlantic Browser — Sailjail sandbox (test/debug)
 MimeType=text/html;application/xhtml+xml;application/xml;text/xml;x-scheme-handler/http;x-scheme-handler/https;
-
-[X-Sailjail]
-Permissions=Internet;Audio;WebView;UserDirs;atlantic-browser
-OrganizationName=org.sailfishos
-ApplicationName=browser
 DESKTOP
+# NB: no [X-Sailjail] block here on purpose. The wrapper invokes
+# `sailjail --profile=atlantic-browser` explicitly, and sailjail reads the
+# Permissions from /etc/sailjail/applications/atlantic-browser.profile. Adding
+# [X-Sailjail] here could make lipstick auto-wrap the launch, double-sandboxing.
 
 # DBus service files
 mkdir -p "${S}/usr/share/dbus-1/services"
