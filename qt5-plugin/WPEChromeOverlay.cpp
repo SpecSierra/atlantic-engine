@@ -248,11 +248,21 @@ void WPEChromeOverlay::renderFrame()
     m_glContext->functions()->glFlush();
     const GLuint texId = m_fbo->texture();
     static int frame = 0;
-    if (frame++ < 6)
-        qWarning("[WPE-DC-OVERLAY] renderFrame #%d: fboValid=%d tex=%u fboSize=%dx%d rootItem=%gx%g",
+    if (frame++ < 6) {
+        // Read back two pixels FROM THE FBO to see whether the scene actually drew:
+        // center (should be the faint green tint) and lower-third (the blue bar).
+        m_fbo->bind();
+        unsigned char center[4] = {0,0,0,0}, lower[4] = {0,0,0,0};
+        glReadPixels(m_size.width()/2, m_size.height()/2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, center);
+        glReadPixels(m_size.width()/2, m_size.height()/6, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, lower);
+        m_fbo->release();
+        qWarning("[WPE-DC-OVERLAY] renderFrame #%d: fboValid=%d tex=%u fboSize=%dx%d rootItem=%gx%g "
+                 "center=[%d,%d,%d,%d] lower=[%d,%d,%d,%d]",
                  frame, m_fbo ? m_fbo->isValid() : 0, texId,
                  m_fbo ? m_fbo->width() : 0, m_fbo ? m_fbo->height() : 0,
-                 m_rootItem ? m_rootItem->width() : -1.0, m_rootItem ? m_rootItem->height() : -1.0);
+                 m_rootItem ? m_rootItem->width() : -1.0, m_rootItem ? m_rootItem->height() : -1.0,
+                 center[0],center[1],center[2],center[3], lower[0],lower[1],lower[2],lower[3]);
+    }
     m_glContext->doneCurrent();
 
     // 2) Blit the FBO texture into the subsurface's EGL window surface (same EGLContext),
