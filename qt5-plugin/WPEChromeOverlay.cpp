@@ -161,6 +161,11 @@ bool WPEChromeOverlay::setupScene()
     m_quickWindow = new QQuickWindow(m_renderControl);
     m_quickWindow->setColor(Qt::transparent);
     m_quickWindow->setGeometry(0, 0, m_size.width(), m_size.height());
+    // An offscreen render-control window gets no resize event, so its contentItem stays
+    // 0x0 — Silica's ApplicationWindow binds its layout to the window/contentItem and then
+    // paints nothing. Size the contentItem explicitly so the hosted UI lays out.
+    m_quickWindow->contentItem()->setWidth(m_size.width());
+    m_quickWindow->contentItem()->setHeight(m_size.height());
 
     m_qmlEngine = new QQmlEngine();
     if (!m_qmlEngine->incubationController())
@@ -281,7 +286,7 @@ void WPEChromeOverlay::renderFrame()
     m_glContext->functions()->glFlush();
     const GLuint texId = m_fbo->texture();
     static int frame = 0;
-    if (frame++ < 20) {
+    if (frame++ < 3) {
         // Read back two pixels FROM THE FBO to see whether the scene actually drew:
         // center (should be the faint green tint) and lower-third (the blue bar).
         m_fbo->bind();
@@ -405,6 +410,10 @@ bool WPEChromeOverlay::create(wl_display* display, wl_surface* parentSurface,
         destroy();
         return false;
     }
+    // Don't block the GUI thread on vsync at eglSwapBuffers — the compositor frame
+    // callbacks pace us. With the default interval (1) the swap blocks every render and,
+    // with renders firing often, hangs the GUI thread (ANR). Matches the web subsurface.
+    eglSwapInterval(static_cast<EGLDisplay>(m_eglDisplay), 0);
     static const char* vs =
         "attribute vec2 pos; attribute vec2 tc; varying vec2 v;\n"
         "void main(){ v = tc; gl_Position = vec4(pos,0.,1.); }\n";
