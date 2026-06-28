@@ -57,6 +57,14 @@ whitelist ${HOME}/.cache/org.sailfishos/browser
 mkdir     ${HOME}/.config/atlantic-browser
 whitelist ${HOME}/.config/atlantic-browser
 
+# ── Downloads (save downloaded files) ───────────────────────────────────────
+# Without this whitelist the sandbox blocks WebKit from writing the destination
+# file, so downloads never finish. Mirrors the system Downloads.permission.
+mkdir       ${HOME}/Downloads
+noblacklist ${HOME}/Downloads
+whitelist   ${HOME}/Downloads
+whitelist   ${HOME}/android_storage/Download
+
 # D-Bus (browser UI service)
 dbus-user.own org.atlantic.browser.ui
 dbus-user.talk org.atlantic.browser.ui

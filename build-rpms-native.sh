@@ -439,6 +439,15 @@ mkdir -p "${S}/etc/firejail"
 cp -a "${SCRIPT_DIR}/deploy/atlantic-browser.firejail.profile" \
       "${S}/etc/firejail/atlantic-browser.profile"
 
+# Sailjail custom permission. The .desktop [X-Sailjail] Permissions list
+# references "atlantic-browser", which sailjaild resolves from
+# /etc/sailjail/permissions/atlantic-browser.permission. Without installing it
+# the permission is unresolved (and the GPU/hybris noblacklists + Downloads
+# whitelist it carries are missing) once sandboxing is enabled.
+mkdir -p "${S}/etc/sailjail/permissions"
+cp -a "${SCRIPT_DIR}/sailjail/atlantic-browser.permission" \
+      "${S}/etc/sailjail/permissions/atlantic-browser.permission"
+
 # libsailfishbrowser (versioned + symlinks — SONAME is libsailfishbrowser.so.1)
 mkdir -p "${S}/usr/lib64"
 cp -a "${BROWSER_SRC}/build_wpe/libsailfishbrowser.so.1.0.0" "${S}/usr/lib64/"
