@@ -653,6 +653,8 @@ void WPEQtView::runJavaScript(const QString& script, const QJSValue& callback)
 
 void WPEQtView::mousePressEvent(QMouseEvent* event)
 {
+    static int n = 0;
+    if (n++ < 8) qWarning("[WPE-INPUT] WPEQtView mousePress (%g,%g)", event->localPos().x(), event->localPos().y());
     forceActiveFocus();
     if (m_backend)
         m_backend->dispatchMousePressEvent(event);
