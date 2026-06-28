@@ -32,6 +32,10 @@
 #include <wayland-client.h>
 #include <wayland-egl.h>
 
+static WPEChromeOverlay* s_primaryOverlay = nullptr;
+WPEChromeOverlay* WPEChromeOverlay::primary() { return s_primaryOverlay; }
+void WPEChromeOverlay::setPrimary(WPEChromeOverlay* o) { s_primaryOverlay = o; }
+
 bool WPEChromeOverlay::testEnabled()
 {
     static const bool on = [] {
@@ -433,6 +437,7 @@ bool WPEChromeOverlay::create(wl_display* display, wl_surface* parentSurface,
 
 void WPEChromeOverlay::destroy()
 {
+    if (s_primaryOverlay == this) s_primaryOverlay = nullptr;
     delete m_qmlComponent; m_qmlComponent = nullptr;
     if (m_rootItem) { m_rootItem->deleteLater(); m_rootItem = nullptr; }
     delete m_renderControl; m_renderControl = nullptr;

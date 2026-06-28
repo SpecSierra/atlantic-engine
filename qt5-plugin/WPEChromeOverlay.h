@@ -48,6 +48,12 @@ class Q_DECL_EXPORT WPEChromeOverlay {
 public:
     static bool testEnabled(); // ATLANTIC_DC_OVERLAY_TEST
 
+    // The real-mode overlay that hosts browser.qml, so the browser (Browser ctor) can
+    // find it and load the UI scene into it. Set by the runtime after create(); null in
+    // legacy/test mode (then the UI loads into the on-screen view as usual).
+    static WPEChromeOverlay* primary();
+    static void setPrimary(WPEChromeOverlay*);
+
     WPEChromeOverlay();
     ~WPEChromeOverlay();
 
