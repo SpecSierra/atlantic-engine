@@ -161,17 +161,19 @@ bool WPEChromeOverlay::setupScene()
     if (!m_qmlEngine->incubationController())
         m_qmlEngine->setIncubationController(m_quickWindow->incubationController());
 
-    // M1 test scene: a semi-transparent magenta bar over the bottom third with a label,
-    // plus a translucent tint over the rest, so we can see BOTH that the overlay
-    // composites above the web AND that its transparent areas let the web show through.
+    // M2a de-risk: a minimal *Silica* scene (Theme singleton + Label + Silica colors) to
+    // confirm Silica components render correctly via QQuickRenderControl before hosting the
+    // full browser.qml. Opaque toolbar-style bar at the bottom, transparent above (web
+    // shows through). If Silica's Theme/Label/Rectangle paint here, the full chrome will.
     static const char* kTestQml =
         "import QtQuick 2.2\n"
+        "import Sailfish.Silica 1.0\n"
         "Item {\n"
-        "  Rectangle { anchors.fill: parent; color: '#22008800' }\n"
         "  Rectangle { anchors { left: parent.left; right: parent.right; bottom: parent.bottom }\n"
-        "    height: parent.height/3; color: '#cc00aaff'\n"
-        "    Text { anchors.centerIn: parent; text: 'RENDER-CONTROL OVERLAY';\n"
-        "           color: 'white'; font.pixelSize: 44 } }\n"
+        "    height: parent.height/4\n"
+        "    color: Theme.rgba(Theme.highlightBackgroundColor, 0.92)\n"
+        "    Label { anchors.centerIn: parent; text: 'SILICA OVERLAY OK'\n"
+        "            color: Theme.highlightColor; font.pixelSize: Theme.fontSizeLarge } }\n"
         "}\n";
     m_qmlComponent = new QQmlComponent(m_qmlEngine);
     m_qmlComponent->setData(kTestQml, QUrl(QStringLiteral("dc-overlay-test.qml")));
