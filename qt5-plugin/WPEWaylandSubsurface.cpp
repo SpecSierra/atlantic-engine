@@ -46,6 +46,9 @@ QWindow* WPEWaylandSubsurface::shellWindow() { return s_shellWindow; }
 void WPEWaylandSubsurface::setChromeSurface(void* s) { s_chromeSurface = s; }
 void* WPEWaylandSubsurface::chromeSurface() { return s_chromeSurface; }
 void* WPEWaylandSubsurface::webSurface() { return s_webSurface; }
+// The ACTIVE tab's web surface (multi-tab): set when a tab becomes visible, so the chrome
+// overlay can place_above the currently-shown web (not just the first/newest created).
+void WPEWaylandSubsurface::setActiveWebSurface(void* s) { s_webSurface = s; }
 
 WPEWaylandSubsurface::WPEWaylandSubsurface() = default;
 
@@ -215,7 +218,6 @@ bool WPEWaylandSubsurface::ensureCreated(QQuickWindow* window)
     m_subsurface = wl_subcompositor_get_subsurface(m_subcompositor, m_surface, m_parentSurface);
     if (!m_surface || !m_subsurface)
         return false;
-    s_webSurface = m_surface; // so the chrome overlay can place_above it
 
     // The web content surface is output-only: give it an empty input region so the
     // compositor routes all touches/pointer events to the chrome (parent) surface

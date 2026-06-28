@@ -290,6 +290,16 @@ void WPEQtView::applyWebKitVisibility()
         wpe_view_backend_add_activity_state(m_backend->backend(), flags);
     else
         wpe_view_backend_remove_activity_state(m_backend->backend(), flags);
+
+    // Direct-composite multi-tab: a tab's web subsurface must only show when it is the
+    // visible (active, foreground) tab — otherwise every live tab composites at once and
+    // they overlap. Move inactive tabs' web surface off-screen, and publish the visible
+    // tab as the active web surface so the chrome overlay places_above the right one.
+    if (m_subsurface) {
+        m_subsurface->setVisible(m_webKitVisible);
+        if (m_webKitVisible)
+            WPEWaylandSubsurface::setActiveWebSurface(m_subsurface->webContentSurface());
+    }
 }
 
 void WPEQtView::notifyUrlChangedCallback(WPEQtView* view)

@@ -120,7 +120,7 @@ private:
     // its frame callback; m_dirty = content changed and needs a render.
     bool m_throttled { false };
     bool m_dirty { false };
-    bool m_placedAboveWeb { false };
+    void* m_lastPlacedWeb { nullptr };
 public:
     void onFrameDone(); // wl_surface frame callback (public so the C callback can reach it)
 private:

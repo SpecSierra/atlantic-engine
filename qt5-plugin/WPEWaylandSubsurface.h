@@ -46,7 +46,8 @@ public:
     static QWindow* shellWindow();
     static void setChromeSurface(void* wlSurface);
     static void* chromeSurface();
-    static void* webSurface(); // the web content surface, for the chrome overlay to place_above
+    static void* webSurface(); // the ACTIVE tab's web surface, for the chrome overlay to place_above
+    static void setActiveWebSurface(void* wlSurface);
 
     WPEWaylandSubsurface();
     ~WPEWaylandSubsurface();

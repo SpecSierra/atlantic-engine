@@ -295,16 +295,17 @@ void WPEChromeOverlay::renderFrame()
         return;
     m_dirty = false;
 
-    // Ensure the chrome sits ABOVE the web. lipstick honours sibling place_above (proven)
-    // but not the web's place_below(chrome), so assert it from here once the web surface
-    // exists. Latches on the shell (parent) commit.
-    if (!m_placedAboveWeb) {
-        if (void* web = WPEWaylandSubsurface::webSurface()) {
+    // Ensure the chrome sits ABOVE the active web surface. lipstick honours sibling
+    // place_above (proven) but not the web's place_below(chrome). Re-assert whenever the
+    // active web surface CHANGES (tab switch / new tab creates a fresh subsurface that
+    // would otherwise land on top after its page loads). Latches on the shell commit.
+    if (void* web = WPEWaylandSubsurface::webSurface()) {
+        if (web != m_lastPlacedWeb) {
             wl_subsurface_place_above(m_subsurface, static_cast<wl_surface*>(web));
             wl_surface_commit(m_parentSurface);
             wl_display_flush(m_display);
-            m_placedAboveWeb = true;
-            qWarning("[WPE-DC-OVERLAY] placed chrome above web surface");
+            m_lastPlacedWeb = web;
+            qWarning("[WPE-DC-OVERLAY] placed chrome above active web surface %p", web);
         }
     }
 
