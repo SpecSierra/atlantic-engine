@@ -545,10 +545,13 @@ mkdir -p "${S}/etc/sailjail/applications"
 cat > "${S}/etc/sailjail/applications/atlantic-browser.profile" << 'EOF'
 [sailfish]
 # Sailjail is the default launch path (.desktop Exec=sailjail). Sandbox
-# ENFORCEMENT is currently disabled pending on-device validation of the full
-# path whitelist (see sailjail/atlantic-browser.permission). Flip to
-# Sandboxing=enabled once that is verified on device.
-Sandboxing=disabled
+# ENFORCEMENT is enabled: the custom atlantic-browser permission supplies the
+# GPU/hybris noblacklists + Downloads whitelist on top of Base/Internet/WebView
+# (which cover SSL/DNS/fonts/transferengine). Base uses no private-dev, so the
+# /dev/kgsl|ion|binder noblacklists apply. If WPE rendering/launch breaks,
+# discover denied paths on device with `firejail --debug` / journalctl and add
+# them to sailjail/atlantic-browser.permission.
+Sandboxing=enabled
 
 # Keep in sync with the .desktop [X-Sailjail] block. "atlantic-browser" pulls in
 # the custom permission (GPU/hybris noblacklists) needed once sandboxing is on.
