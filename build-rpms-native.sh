@@ -586,6 +586,13 @@ noblacklist /dev/dri
 # QML/assets (Base whitelist-locks /usr/share).
 whitelist /usr/share/atlantic-browser
 
+# Ambience wallpaper for the UI chrome / start page. Background.qml opens the
+# active ambience image FILE directly (screen-pinned blurred wallpaper), and
+# Base whitelist-locks /usr/share, so expose the stock ambiences plus a
+# user-picked custom image cached in home. Without this the UI renders on black.
+whitelist /usr/share/ambience
+whitelist ${HOME}/.cache/ambienced
+
 # Browser data (the fork persists under org.sailfishos/browser) + config.
 mkdir     ${HOME}/.local/share/org.sailfishos/browser
 whitelist ${HOME}/.local/share/org.sailfishos/browser
