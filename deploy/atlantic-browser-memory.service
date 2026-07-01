@@ -1,0 +1,15 @@
+[Unit]
+Description=Atlantic: enlarge compressed swap + memory-contain the browser
+Documentation=https://github.com/SpecSierra/atlantic-engine
+# Run after the vendor swap/zram and droid-hal-init have settled.
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/atlantic/atlantic-browser-memory.sh
+RemainAfterExit=yes
+# Don't fail the boot transaction if zram/cgroup sysfs is laid out differently.
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=multi-user.target

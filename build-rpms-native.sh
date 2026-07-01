@@ -366,11 +366,22 @@ install -d -m 755 "${S}/usr/lib/systemd/system"
 install -m 644 "${SCRIPT_DIR}/deploy/atlantic-cpu-governor.service" \
     "${S}/usr/lib/systemd/system/atlantic-cpu-governor.service"
 
-# Enable + start the governor service on install (idempotent; tolerant on a
+# Boot-time oneshot: enlarge compressed swap (extra zram) + create a
+# memory-contained cgroup for the browser so a heavy page (reddit) can't
+# OOM-crash the phone. Device profiling proved reddit is memory-bound, not
+# paint-bound (system MemAvailable cratered to ~344 MB on scroll).
+install -m 755 "${SCRIPT_DIR}/deploy/atlantic-browser-memory.sh" \
+    "${S}/usr/libexec/atlantic/atlantic-browser-memory.sh"
+install -m 644 "${SCRIPT_DIR}/deploy/atlantic-browser-memory.service" \
+    "${S}/usr/lib/systemd/system/atlantic-browser-memory.service"
+
+# Enable + start both boot oneshots on install (idempotent; tolerant on a
 # host without the unit running, e.g. during image builds).
 FPM_POST_EXTRA="systemctl daemon-reload >/dev/null 2>&1 || :
 systemctl enable atlantic-cpu-governor.service >/dev/null 2>&1 || :
-systemctl start atlantic-cpu-governor.service >/dev/null 2>&1 || :" \
+systemctl start atlantic-cpu-governor.service >/dev/null 2>&1 || :
+systemctl enable atlantic-browser-memory.service >/dev/null 2>&1 || :
+systemctl start atlantic-browser-memory.service >/dev/null 2>&1 || :" \
 fpm_rpm wpe-sfos-compat "$WPE_SFOS_COMPAT_VERSION" "SFOS compatibility shims for WPE WebKit" "$S"
 
 # ===========================================================================
