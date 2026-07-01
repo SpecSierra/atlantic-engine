@@ -377,12 +377,17 @@ atlantic_export_browser_env() {
     # WEBKIT_SKIA_ENABLE_CPU_RENDERING and WEBKIT_SKIA_GPU_PAINTING_THREADS are
     # intentionally NOT set here. The browser auto-selects the painting backend
     # from a GPU capability probe in main.cpp (configureGpuModeFromCapabilities):
-    # CPU painting on conservative stacks — e.g. the libhybris Adreno 610, where
-    # GPU tile painting corrupts tiles at ANY thread count because the driver
-    # does not honour cross-context EGL fence server-waits (black/stale/
-    # misplaced tiles on image-heavy pages) — and multi-threaded GPU painting on
-    # surfaceless-capable stacks (Mali, desktop). Export either variable before
-    # launch to override the auto-selection (the probe honours explicit values).
+    # CPU painting on conservative stacks — e.g. the libhybris Adreno 610 — and
+    # multi-threaded GPU painting on surfaceless-capable stacks (Mali, desktop).
+    # CPU raster is the conservative default for two reasons: (1) the driver does
+    # not honour cross-context EGL fence server-waits, so GPU tile painting can
+    # corrupt tiles; (2) device A/B showed the synchronous cross-context GPU tile
+    # submit is the scroll bottleneck, and all-CPU raster is ~2x faster (MDN
+    # 4.2->8.2 fps) with better worst-frame on image grids and no corruption.
+    # Fallbacks are env-gated in main.cpp: ATLANTIC_GPU_FORCE_GPU_PAINT=1
+    # (gpu-explicit, the pre-build-316 default) and ATLANTIC_GPU_FORCE_GLFINISH=1
+    # (gpu-sync). Export the WEBKIT_SKIA_* variables before launch to override
+    # the auto-selection directly (the probe honours explicit values).
     # The CPU painting thread count below applies whenever CPU painting is in
     # effect (2 raster workers; tiles upload from the compositor context).
     export WEBKIT_SKIA_CPU_PAINTING_THREADS="${WEBKIT_SKIA_CPU_PAINTING_THREADS:-2}"
