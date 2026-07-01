@@ -41,17 +41,21 @@ fi
 
 # ── 2. Memory-contained cgroup for the browser (v1 memory controller) ─────────
 CG=/sys/fs/cgroup/memory/atlantic
-if [ -d /sys/fs/cgroup/memory ] && [ ! -d "${CG}" ]; then
-    if mkdir -p "${CG}" 2>/dev/null; then
+if [ -d /sys/fs/cgroup/memory ]; then
+    mkdir -p "${CG}" 2>/dev/null || true
+    if [ -d "${CG}" ]; then
         # 2.0 GB physical before swapping; 2.75 GB RAM+swap hard ceiling. Beyond
         # the ceiling the cgroup OOM-killer reclaims a process INSIDE the cgroup.
+        # All writes below are idempotent and run every boot — NOT gated on dir
+        # creation — so a cgroup left over from a prior run still gets its limits
+        # and (critically) its cgroup.procs made writable for the browser join.
         echo 2147483648 > "${CG}/memory.limit_in_bytes" 2>/dev/null || true
         echo 2952790016 > "${CG}/memory.memsw.limit_in_bytes" 2>/dev/null || true
         # charge anon+file pages on immigrate so the cap reflects real usage
         echo 3 > "${CG}/memory.move_charge_at_immigrate" 2>/dev/null || true
-        # let the (non-root, possibly sandboxed) browser add itself
+        # let the (non-root) browser add itself (unconfined launch path)
         chmod 0666 "${CG}/cgroup.procs" "${CG}/tasks" 2>/dev/null || true
-        echo "atlantic-browser-memory: created cgroup ${CG} (2.0G RAM / 2.75G RAM+swap)"
+        echo "atlantic-browser-memory: cgroup ${CG} ready (2.0G RAM / 2.75G RAM+swap)"
     fi
 fi
 
