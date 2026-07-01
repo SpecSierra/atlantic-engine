@@ -256,33 +256,24 @@ mkdir -p "${S}${PACKAGE_RUNTIME_PREFIX}/libexec/atlantic"
 install -m 755 "${SCRIPT_DIR}/deploy/runtime-common.sh" \
     "${S}${PACKAGE_RUNTIME_PREFIX}/libexec/atlantic/runtime-common.sh"
 
-# Wrapper scripts for helper processes (set runtime env and launch the real helper).
+# Helper process launchers at ${PACKAGE_RUNTIME_PREFIX}/libexec/wpe-webkit-2.0 —
+# the path WebKit spawns (libexecdir is baked to /opt/wpe-sfos). These USED to be
+# shell-script wrappers (source runtime-common.sh + taskset, then exec the real
+# ELF at ${ATLANTIC_WPE_HELPER_DIR}). That is INCOMPATIBLE with the Sailjail
+# sandbox: firejail's --private-bin=<app> strips /usr/bin (and /bin) down to just
+# the browser binary, so the wrapper's #!/bin/sh interpreter is gone and the
+# spawn fails ENOENT (device-verified). Make them symlinks to the real ELFs so
+# WebKit execs an ELF directly. The runtime env + big-core pinning that the
+# wrappers used to apply now come from the environment they inherit:
+#   - sandboxed (default): the per-app firejail profile's `env` + `cpu 4,5,6,7`
+#     directives (see the atlantic-browser.profile generated below);
+#   - unconfined (dev/ATLANTIC_SANDBOX=none): the /usr/bin/atlantic-browser
+#     wrapper sets the env + taskset on the UI process; helpers inherit both.
 mkdir -p "${S}${PACKAGE_RUNTIME_PREFIX}/libexec/wpe-webkit-2.0"
 for helper in WPEWebProcess WPENetworkProcess WPEGPUProcess; do
-    # Only wrap helpers that were actually staged (WPEGPUProcess absent when the
-    # GPU process is disabled).
     [ -e "${S}/usr/libexec/wpe-webkit-2.0/${helper}" ] || continue
-    cat > "${S}${PACKAGE_RUNTIME_PREFIX}/libexec/wpe-webkit-2.0/${helper}" <<WRAPPER
-#!/bin/sh
-. "${PACKAGE_RUNTIME_PREFIX}/libexec/atlantic/runtime-common.sh"
-ATLANTIC_LD_PRELOAD='${WPE_COMPAT_PRELOAD}'
-ATLANTIC_LD_LIBRARY_PATH='${WPE_HELPER_LIBRARY_PATH}'
-atlantic_export_helper_env
-# Pin the WPE helpers (WebProcess/NetworkProcess/GPUProcess) to the big cores.
-# The WebProcess runs the compositor/paint threads, so letting them drift onto
-# the little cluster (cores 0-3 on the Snapdragon 665) causes visible scroll
-# jank — device-verified. An earlier "unpin to all cores for heavy-page
-# throughput" assumed the scheduler keeps hot threads on the big cluster by
-# itself; it does not, and scrolling regressed. Big cores = upper half of the
-# CPU range (Kryo 260 Gold 4-7 here), derived from nproc so the future
-# Mali/Dimensity device is handled too. ATLANTIC_HELPER_CPUSET overrides.
-if command -v taskset >/dev/null 2>&1 && command -v nproc >/dev/null 2>&1; then
-    cpuset="\${ATLANTIC_HELPER_CPUSET:-\$(( \$(nproc) / 2 ))-\$(( \$(nproc) - 1 ))}"
-    exec taskset -c "\${cpuset}" "${ATLANTIC_WPE_HELPER_DIR}/${helper}" "\$@"
-fi
-exec "${ATLANTIC_WPE_HELPER_DIR}/${helper}" "\$@"
-WRAPPER
-    chmod 755 "${S}${PACKAGE_RUNTIME_PREFIX}/libexec/wpe-webkit-2.0/${helper}"
+    ln -sfn "${ATLANTIC_WPE_HELPER_DIR}/${helper}" \
+        "${S}${PACKAGE_RUNTIME_PREFIX}/libexec/wpe-webkit-2.0/${helper}"
 done
 
 # Inspector resource (not MiniBrowser)
@@ -413,45 +404,20 @@ fi
 LAUNCHER
 chmod 755 "${S}/usr/bin/atlantic-browser-env"
 
-# WPE launcher wrapper (/usr/bin/atlantic-browser), used by the D-Bus
-# activation services (org.atlantic.browser[.ui]) and the .desktop entry.
-#
-# Confinement is selected by ATLANTIC_SANDBOX (bwrap is NOT used — incompatible
-# with the libhybris/Adreno GPU stack):
-#   none      direct, unconfined (DEFAULT — known-good daily use / dev)
-#   sailjail  sailjail --profile=atlantic-browser  (SFOS sandbox, Base+perms)
-#   firejail  firejail --profile=/etc/firejail/atlantic-browser.profile
-# ATLANTIC_ENABLE_SAILJAIL=1 is kept as a back-compat alias for "firejail".
-# ATLANTIC_IN_SANDBOX guards against double-wrapping (set once we re-exec).
-# IMPORTANT: sailjail only launches ELF binaries (it rejects shell scripts with
-# "is not elf binary"), so the sandbox modes must target /usr/bin/atlantic-
-# browser.bin directly — NOT the atlantic-browser-env script. The runtime env
-# (LD_PRELOAD compat shims, WEBKIT_*/GST_* tuning) is therefore exported HERE,
-# before entering the sandbox, so it is inherited by the jailed .bin.
+# WPE launcher wrapper (/usr/bin/atlantic-browser) — UNCONFINED dev/fallback
+# entry only. The shipped launch path is sandboxed: the .desktop and the D-Bus
+# .service files invoke `sailjail -p atlantic-browser.desktop
+# /usr/bin/atlantic-browser.bin` directly (sailjail rejects shell scripts, so it
+# cannot go through this wrapper), and the runtime env is supplied inside the
+# jail by the generated per-app profile. This wrapper is kept so a developer can
+# still run the browser unconfined (`/usr/bin/atlantic-browser`) — it sets the
+# same env and big-core pin; the helper ELFs inherit both.
 cat > "${S}/usr/bin/atlantic-browser" <<LAUNCHER
 #!/bin/sh
 . "${PACKAGE_RUNTIME_PREFIX}/libexec/atlantic/runtime-common.sh"
 ATLANTIC_LD_PRELOAD='${WPE_COMPAT_PRELOAD}'
 ATLANTIC_LD_LIBRARY_PATH='${WPE_HELPER_LIBRARY_PATH}'
 atlantic_export_browser_env
-
-MODE="\${ATLANTIC_SANDBOX:-none}"
-if [ "\${ATLANTIC_ENABLE_SAILJAIL:-0}" = "1" ] && [ "\$MODE" = "none" ]; then MODE=firejail; fi
-if [ -n "\${ATLANTIC_IN_SANDBOX:-}" ]; then MODE=none; fi
-case "\$MODE" in
-    sailjail)
-        if command -v sailjail >/dev/null 2>&1; then
-            export ATLANTIC_IN_SANDBOX=1
-            exec sailjail --profile=atlantic-browser -- /usr/bin/atlantic-browser.bin "\$@"
-        fi ;;
-    firejail)
-        if command -v firejail >/dev/null 2>&1; then
-            export ATLANTIC_IN_SANDBOX=1
-            exec firejail --quiet --profile=/etc/firejail/atlantic-browser.profile -- /usr/bin/atlantic-browser.bin "\$@"
-        fi ;;
-esac
-
-# direct (unconfined): pin to big cores like atlantic-browser-env does.
 if command -v taskset >/dev/null 2>&1; then
     exec taskset -c 4-7 /usr/bin/atlantic-browser.bin "\$@"
 else
@@ -460,21 +426,6 @@ fi
 LAUNCHER
 chmod 755 "${S}/usr/bin/atlantic-browser"
 cp -a "${BROWSER_SRC}/build_browser/atlantic-browser" "${S}/usr/bin/atlantic-browser.bin"
-
-# firejail profile for the optional wrapper confinement above (used only when
-# ATLANTIC_ENABLE_SAILJAIL=1, which is not the default). Installed to /etc/firejail.
-mkdir -p "${S}/etc/firejail"
-cp -a "${SCRIPT_DIR}/deploy/atlantic-browser.firejail.profile" \
-      "${S}/etc/firejail/atlantic-browser.profile"
-
-# Sailjail custom permission. The .desktop [X-Sailjail] Permissions list
-# references "atlantic-browser", which sailjaild resolves from
-# /etc/sailjail/permissions/atlantic-browser.permission. Without installing it
-# the permission is unresolved (and the GPU/hybris noblacklists + Downloads
-# whitelist it carries are missing) once sandboxing is enabled.
-mkdir -p "${S}/etc/sailjail/permissions"
-cp -a "${SCRIPT_DIR}/sailjail/atlantic-browser.permission" \
-      "${S}/etc/sailjail/permissions/atlantic-browser.permission"
 
 # libsailfishbrowser (versioned + symlinks — SONAME is libsailfishbrowser.so.1)
 mkdir -p "${S}/usr/lib64"
@@ -529,7 +480,29 @@ mkdir -p "${S}/usr/share/icons/hicolor/86x86/apps"
 cp -a "${BROWSER_SRC}/data/icon-launcher-browser.png" \
     "${S}/usr/share/icons/hicolor/86x86/apps/icon-launcher-atlantic.png"
 
-# Desktop file
+# Desktop file — launches the browser INSIDE the Sailjail sandbox, boosterless.
+# The Exec self-references this desktop (like stock jolla-gallery/jolla-notes):
+# `sailjail -p <desktop> <elf>`. sailjail validates that the launched ELF appears
+# in this desktop's Exec line and reads the [X-Sailjail] block for permissions;
+# the whole browser (UI + WPEWebProcess + WPENetworkProcess) then runs confined
+# (device-verified: seccomp + nonewprivs + cpu 4-7). Design notes:
+#  - Exec MUST target the ELF /usr/bin/atlantic-browser.bin. sailjail rejects
+#    shell scripts ("is not elf binary"), so the /usr/bin/atlantic-browser env
+#    wrapper CANNOT be the sandbox entry. The runtime env is injected by the
+#    per-app firejail profile below instead (firejail scrubs inherited LD_* and
+#    --private-bin strips /bin/sh, so no wrapper can carry env into the jail).
+#  - NO X-Maemo-Service: that key makes lipstick D-Bus-ACTIVATE the browser, so
+#    dbus-daemon runs the .service Exec UNCONFINED, bypassing sailjail — this was
+#    the "only the booster got isolated" bug. Removed so lipstick runs Exec
+#    (= sailjail) directly.
+#  - OrganizationName=org.atlantic + a UNIQUE ApplicationName (NOT "browser",
+#    which stock sailfish-browser already claims — the collision makes sailjaild
+#    silently force OrganizationName back to org.sailfishos). This lets the
+#    sandbox dbus filter permit the browser to own org.atlantic.browser[.ui]
+#    (added via dbus-user.own in the profile) → single-instance + openUrl work.
+#  - The custom "atlantic-browser" permission is gone from Permissions: sailjaild
+#    strips unknown permissions anyway; its GPU/hybris noblacklists + Downloads
+#    whitelist moved into the per-app profile.
 mkdir -p "${S}/usr/share/applications"
 cat > "${S}/usr/share/applications/atlantic-browser.desktop" << 'DESKTOP'
 [Desktop Entry]
@@ -538,79 +511,104 @@ Name=Atlantic
 X-MeeGo-Logical-Id=atlantic-browser-ap-name
 X-MeeGo-Translation-Catalog=atlantic-browser
 Icon=icon-launcher-atlantic
-Exec=/usr/bin/atlantic-browser %U
+Exec=/usr/bin/sailjail -p atlantic-browser.desktop /usr/bin/atlantic-browser.bin %U
 Comment=Atlantic Browser (WPE WebKit)
 MimeType=text/html;application/xhtml+xml;application/xml;text/xml;x-scheme-handler/http;x-scheme-handler/https;
-X-Maemo-Service=org.atlantic.browser.ui
-X-Maemo-Object-Path=/ui
-X-Maemo-Method=org.atlantic.browser.ui.openUrl
 
 [X-Sailjail]
-Permissions=Internet;Audio;WebView;UserDirs;atlantic-browser
-OrganizationName=org.sailfishos
-ApplicationName=browser
+Permissions=Internet;Audio;WebView;UserDirs
+OrganizationName=org.atlantic
+ApplicationName=atlanticbrowser
 DESKTOP
 
-# Second desktop entry: launch the SAME browser but confined by Sailjail, as a
-# distinct tappable app ("Atlantic (Sailjail)"). It deliberately OMITS
-# X-Maemo-Service so lipstick actually runs Exec (sailjail) instead of
-# D-Bus-activating the single instance (which would bypass sailjail). The main
-# "Atlantic" icon stays direct/unconfined for daily use; this one is for
-# exercising/debugging the sandbox. To test, close the running direct instance
-# first (single-instance D-Bus name org.atlantic.browser.ui).
-cat > "${S}/usr/share/applications/atlantic-browser-sailjail.desktop" << 'DESKTOP'
-[Desktop Entry]
-Type=Application
-Name=Atlantic (Sailjail)
-Icon=icon-launcher-atlantic
-Exec=/usr/bin/env ATLANTIC_SANDBOX=sailjail /usr/bin/atlantic-browser %U
-Comment=Atlantic Browser — Sailjail sandbox (test/debug)
-MimeType=text/html;application/xhtml+xml;application/xml;text/xml;x-scheme-handler/http;x-scheme-handler/https;
-DESKTOP
-# NB: no [X-Sailjail] block here on purpose. The wrapper invokes
-# `sailjail --profile=atlantic-browser` explicitly, and sailjail reads the
-# Permissions from /etc/sailjail/applications/atlantic-browser.profile. Adding
-# [X-Sailjail] here could make lipstick auto-wrap the launch, double-sandboxing.
-
-# DBus service files
+# DBus service files — external "open link in browser" activations. Route the
+# cold start through sailjail so an activation when no instance is running still
+# lands confined; a running instance owns org.atlantic.browser.ui and handles
+# the call in-process (permissions must already be granted via the launcher tap).
 mkdir -p "${S}/usr/share/dbus-1/services"
 cat > "${S}/usr/share/dbus-1/services/org.atlantic.browser.service" << 'DBUS'
 [D-BUS Service]
 Name=org.atlantic.browser
-Exec=/usr/bin/atlantic-browser
+Exec=/usr/bin/sailjail -p atlantic-browser.desktop /usr/bin/atlantic-browser.bin
 DBUS
 cat > "${S}/usr/share/dbus-1/services/org.atlantic.browser.ui.service" << 'DBUS'
 [D-BUS Service]
 Name=org.atlantic.browser.ui
-Exec=/usr/bin/atlantic-browser
+Exec=/usr/bin/sailjail -p atlantic-browser.desktop /usr/bin/atlantic-browser.bin
 DBUS
 
 # Translation
 mkdir -p "${S}/usr/share/translations"
 cp -a "${BROWSER_SRC}/build_browser/atlantic-browser_eng_en.qm" "${S}/usr/share/translations/"
 
-# Sailjail profile
-mkdir -p "${S}/etc/sailjail/applications"
-cat > "${S}/etc/sailjail/applications/atlantic-browser.profile" << 'EOF'
-[sailfish]
-# Sandbox profile applied when the browser is launched via sailjail, i.e. the
-# "Atlantic (Sailjail)" desktop entry or ATLANTIC_SANDBOX=sailjail. (The main
-# "Atlantic" icon is single-instance D-Bus-activated and runs the wrapper
-# direct/unconfined for daily use.) ENFORCEMENT enabled: the custom
-# atlantic-browser permission supplies the GPU/hybris noblacklists + Downloads
-# whitelist on top of Base/Internet/WebView (SSL/DNS/fonts/transferengine).
-# Base uses no private-dev, so the /dev/kgsl|ion|binder noblacklists apply. If
-# WPE rendering/launch breaks, discover denied paths on device with
-# `firejail --debug` / journalctl and add them to sailjail/atlantic-browser.permission.
-Sandboxing=enabled
+# Per-app Sailjail/firejail profile. sailjail auto-includes
+# /etc/sailjail/permissions/<desktop-basename>.profile (atlantic-browser) as a
+# firejail --profile. This carries everything the WPE runtime needs now that the
+# shell wrappers can't cross the sandbox boundary:
+#   - env <NAME=VALUE>: the full runtime env, GENERATED from runtime-common.sh
+#     (single source of truth) so it never drifts. LD_LIBRARY_PATH here resolves
+#     the wpe-compat libs incl. libjpeg.so.8 — no /usr/lib64 copy / ld.so.conf.
+#   - cpu 4,5,6,7: big-core pin (replaces the helper wrappers' taskset; applies
+#     to the whole jail incl. WPEWebProcess).
+#   - noblacklist: GPU/hybris nodes Base's disable-common.inc would hide.
+#   - whitelist /usr/share/atlantic-browser: Base whitelist-LOCKS /usr/share.
+#     (NEVER whitelist under /usr/lib64 — firejail then locks the whole dir and
+#     hides libQt5*.)
+#   - data dirs (the fork persists under org.sailfishos/browser) + Downloads.
+#   - dbus-user.own: the browser's real bus names (under org.atlantic, which the
+#     template's OrganizationName permits).
+PROFILE_ENV_LINES="$(env -i sh -c '. "'"${SCRIPT_DIR}"'/deploy/runtime-common.sh"
+export ATLANTIC_LD_PRELOAD="'"${WPE_COMPAT_PRELOAD}"'"
+export ATLANTIC_LD_LIBRARY_PATH="'"${WPE_HELPER_LIBRARY_PATH}"'"
+export XDG_RUNTIME_DIR=/run/user/100000
+export PULSE_SERVER=unix:/run/user/100000/pulse/native
+atlantic_export_browser_env
+env' 2>/dev/null | grep -vE '^(PWD|_|SHLVL|HOME|PATH|OLDPWD|ATLANTIC_LD_PRELOAD|ATLANTIC_LD_LIBRARY_PATH)=' | LC_ALL=C sort | sed 's/^/env /')"
 
-# Keep in sync with the .desktop [X-Sailjail] block. "atlantic-browser" pulls in
-# the custom permission (GPU/hybris noblacklists) needed once sandboxing is on.
-[X-Sailjail]
-Permissions=Internet;Audio;WebView;UserDirs;atlantic-browser
-OrganizationName=org.sailfishos
-ApplicationName=browser
-EOF
+mkdir -p "${S}/etc/sailjail/permissions"
+{
+cat << 'PROFHDR'
+# -*- mode: sh -*-
+# Atlantic Browser — per-app Sailjail/firejail profile (auto-included by sailjail
+# via the desktop basename). GENERATED by build-rpms-native.sh; the env block
+# mirrors deploy/runtime-common.sh. See atlantic-browser.desktop for the design.
+cpu 4,5,6,7
+
+# GPU / hybris / Wayland nodes Base's disable-common.inc would blacklist.
+noblacklist /opt/wpe-sfos
+noblacklist /usr/libexec/wpe-webkit-2.0
+noblacklist /usr/libexec/droid-hybris
+noblacklist /usr/lib64/wpe-compat
+noblacklist /dev/kgsl-3d0
+noblacklist /dev/ion
+noblacklist /dev/dri
+
+# QML/assets (Base whitelist-locks /usr/share).
+whitelist /usr/share/atlantic-browser
+
+# Browser data (the fork persists under org.sailfishos/browser) + config.
+mkdir     ${HOME}/.local/share/org.sailfishos/browser
+whitelist ${HOME}/.local/share/org.sailfishos/browser
+mkdir     ${HOME}/.cache/org.sailfishos/browser
+whitelist ${HOME}/.cache/org.sailfishos/browser
+mkdir     ${HOME}/.config/org.sailfishos/browser
+whitelist ${HOME}/.config/org.sailfishos/browser
+mkdir     ${HOME}/.config/atlantic-browser
+whitelist ${HOME}/.config/atlantic-browser
+
+# Downloads.
+mkdir     ${HOME}/Downloads
+whitelist ${HOME}/Downloads
+whitelist ${HOME}/android_storage/Download
+
+# Bus names the browser owns (single-instance + external openUrl).
+dbus-user.own org.atlantic.browser
+dbus-user.own org.atlantic.browser.ui
+
+# ── Runtime environment (generated — mirrors runtime-common.sh) ──────────────
+PROFHDR
+printf '%s\n' "${PROFILE_ENV_LINES}"
+} > "${S}/etc/sailjail/permissions/atlantic-browser.profile"
 
 # GPU performance udev rule — Snapdragon 665 Adreno 610
 # Power levels: 0=950 1=900 2=820 3=745 4=600 5=465 6=320 MHz
@@ -629,7 +627,7 @@ fpm_rpm atlantic-browser "$ATLANTIC_BROWSER_VERSION" "Atlantic Browser (WPE WebK
     --depends wpewebkit2 \
     --depends wpewebkit2-qt5 \
     --depends wpe-sfos-compat \
-    --depends bubblewrap \
+    --depends sailjail \
     --depends xdg-dbus-proxy \
     --depends firejail
 unset FPM_POST_EXTRA

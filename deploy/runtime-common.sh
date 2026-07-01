@@ -232,8 +232,11 @@ atlantic_export_browser_env() {
     # Adreno GPU stack on Sailfish OS: the user namespace strips supplementary
     # groups (graphics, video, audio) required by the Android GPU HAL, and the
     # mount namespace hides submounts (/odm, /vendor/firmware_mnt) on kernel
-    # 4.14.  Application-layer confinement is provided by sailjail/firejail
-    # instead (ATLANTIC_ENABLE_SAILJAIL, on by default).
+    # 4.14.  Application-layer confinement is provided by Sailjail/firejail
+    # instead: the shipped .desktop/.service launch the browser ELF via
+    # `sailjail -p atlantic-browser.desktop`, which confines the whole browser
+    # (UI + WPEWebProcess + WPENetworkProcess). See the per-app profile generated
+    # by build-rpms-native.sh (/etc/sailjail/permissions/atlantic-browser.profile).
     #
     # The bwrap sandbox remains compiled in (ENABLE_BUBBLEWRAP_SANDBOX=ON) so
     # that the browser can call webkit_web_context_add_path_to_sandbox()
