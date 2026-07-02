@@ -31,11 +31,19 @@ ATLANTIC_GSTREAMER_PLUGIN_DIR="${ATLANTIC_GSTREAMER_PLUGIN_DIR:-${ATLANTIC_RUNTI
 # droidvenc (encode) stays disabled: unused by the browser and historically less
 # stable.
 #
+# droidadec (HW audio decode) is disabled entirely: it errors out mid-preroll
+# ("stream stopped, reason not-linked", gstdroidadec.c data_available) on AAC
+# audio tracks of ordinary mp4/YouTube streams, killing the whole pipeline —
+# video keeps rendering but audio dies after the prebuffered fraction of a
+# second. Audio-only (radio) streams were unaffected because they don't hit
+# droidadec. Software audio decode (avdec_aac via libgstlibav) is cheap and
+# device-verified working.
+#
 # Set ATLANTIC_DISABLE_HW_DECODER=1 to force the all-software decode path.
 if [ "${ATLANTIC_DISABLE_HW_DECODER:-0}" = "1" ]; then
-    ATLANTIC_GST_PLUGIN_FEATURE_RANK="${ATLANTIC_GST_PLUGIN_FEATURE_RANK:-droidvdec:0,droidvenc:0}"
+    ATLANTIC_GST_PLUGIN_FEATURE_RANK="${ATLANTIC_GST_PLUGIN_FEATURE_RANK:-droidvdec:0,droidvenc:0,droidadec:0}"
 else
-    ATLANTIC_GST_PLUGIN_FEATURE_RANK="${ATLANTIC_GST_PLUGIN_FEATURE_RANK:-droidvdec:300,droidvenc:0,vp9dec:310,vp8dec:310}"
+    ATLANTIC_GST_PLUGIN_FEATURE_RANK="${ATLANTIC_GST_PLUGIN_FEATURE_RANK:-droidvdec:300,droidvenc:0,vp9dec:310,vp8dec:310,droidadec:0}"
 fi
 ATLANTIC_WEBKIT_HLS_SUPPORT="${ATLANTIC_WEBKIT_HLS_SUPPORT:-1}"
 ATLANTIC_BROWSER_RUNTIME_DELAY_MS="${ATLANTIC_BROWSER_RUNTIME_DELAY_MS:-2000}"
