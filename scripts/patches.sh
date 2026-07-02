@@ -163,6 +163,13 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # positions. Fixes sticky navbars lagging/jittering during fast flicks.
     # Applies on top of the fully patched tree; keep it last in this list.
     "patches/webkit/webkit-sticky-scroll-composite-sync-env.patch"
+    # webkit-composite-scroll-sync-stall-fix.patch: fixes the "renders once then
+    # freezes" regression of the composite-scroll-sync patch — the compositor-
+    # thread position re-apply must not set LayerTreeHost::m_compositionRequired
+    # (stale signal = scrolling tree waits forever for a platform rendering
+    # update), and the locked path only runs for RenderingUpdate/AsyncScrolling
+    # composites. Must come AFTER the sticky-scroll-composite-sync patch.
+    "patches/webkit/webkit-composite-scroll-sync-stall-fix.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

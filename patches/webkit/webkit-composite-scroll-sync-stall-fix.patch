@@ -1,0 +1,57 @@
+Fix rendering freeze after first frame introduced by
+webkit-sticky-scroll-composite-sync-env.patch (build 420).
+
+The compositor-thread applyLayerPositionsWhileLocked() call writes layer
+positions via setPositionForScrolling(), whose notifyCompositionRequired()
+reached LayerTreeHost::notifyCompositionRequired() from the COMPOSITOR
+thread and set the main-thread-owned m_compositionRequired flag. That left
+a stale "composition required" signal with no composite scheduled:
+ScrollingTreeCoordinated::didCompleteRenderingUpdate() then saw
+isCompositionRequiredOrOngoing() and waited forever for a
+didCompletePlatformRenderingUpdate() (which only fires after a real
+composite via didRenderFrame), so the rendering-update cycle never
+returned to Idle and the webview froze after the first frame.
+
+Two fixes:
+1. LayerTreeHost::notifyCompositionRequired(): ignore calls made on the
+   compositing run loop — such changes are consumed immediately by the
+   in-progress flush and must not request another composite.
+2. ThreadedCompositor::flushCompositingState(): only take the tree-locked
+   re-apply path for composites whose reasons consume Position/BoundsOrigin
+   (RenderingUpdate/AsyncScrolling); VideoFrame/Animation-only composites
+   leave position changes pending anyway.
+
+diff -u -r a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp c/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp	2026-07-02 10:42:37.956094912 +0000
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp	2026-07-02 12:03:06.709203783 +0000
+@@ -411,6 +411,15 @@
+         m_compositionRequiredInScrollingThread = true;
+         return;
+     }
++    // Layer position changes applied by the compositor thread itself right
++    // before its layer flush (WEBKIT_COMPOSITE_SCROLL_SYNC) are consumed by
++    // that very flush. Setting m_compositionRequired for them would leave a
++    // stale "composition required" signal with no composite scheduled, making
++    // ScrollingTreeCoordinated::didCompleteRenderingUpdate wait forever for a
++    // didCompletePlatformRenderingUpdate() that never comes — rendering
++    // freezes after the first frame.
++    if (m_compositor && m_compositor->runLoop() == &RunLoop::currentSingleton())
++        return;
+ #endif
+     m_compositionRequired = true;
+ }
+diff -u -r a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp c/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp	2026-07-02 10:42:37.956094912 +0000
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp	2026-07-02 12:03:06.710203790 +0000
+@@ -288,7 +288,10 @@
+     // thread's scroll-then-compensate walk and render a fresh scroll offset
+     // against stale position:fixed/sticky layer positions. This also
+     // overwrites stale positions committed by a desynchronized main thread.
+-    if (compositeScrollSyncEnabled()) {
++    // Only composites that consume Position/BoundsOrigin changes
++    // (RenderingUpdate/AsyncScrolling) need — or may — re-apply scroll
++    // positions; VideoFrame/Animation-only composites leave them pending.
++    if (compositeScrollSyncEnabled() && reasons.containsAny({ CompositionReason::RenderingUpdate, CompositionReason::AsyncScrolling })) {
+         RefPtr<WebCore::ScrollingTree> scrollingTree;
+         {
+             Locker locker { m_scrollingTreeLock };
