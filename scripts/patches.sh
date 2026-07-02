@@ -154,6 +154,15 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # the same autoaudiosink "child-added" hook.
     "patches/webkit/webkit-gst-audio-system-clock.patch"
     "patches/webkit/webkit-bubblewrap-sfos-sandbox.patch"
+    # webkit-sticky-scroll-composite-sync-env.patch: WEBKIT_COMPOSITE_SCROLL_SYNC
+    # (default on) — before flushing layer state for a composite, re-apply the
+    # scrolling tree's layer positions and hold the tree lock across the whole
+    # flush, so a composite can't interleave with the scrolling thread's
+    # scroll-then-compensate walk (or pick up stale main-thread commits) and
+    # render a fresh scroll offset against stale position:fixed/sticky layer
+    # positions. Fixes sticky navbars lagging/jittering during fast flicks.
+    # Applies on top of the fully patched tree; keep it last in this list.
+    "patches/webkit/webkit-sticky-scroll-composite-sync-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

@@ -1,0 +1,175 @@
+Compose every frame with a self-consistent async-scroll snapshot
+(WEBKIT_COMPOSITE_SCROLL_SYNC, default on; =0 disables).
+
+With async (threaded) scrolling, the scrolling thread first moves the
+scrolled content (boundsOrigin) and then walks related nodes to compensate
+position:fixed/sticky layers. Composites the scrolling thread requests
+itself are consistent (the request is deferred until the walk finishes,
+LayerTreeHost::m_compositionRequiredInScrollingThread), but composites
+triggered by anything else — tile-paint completions, main-thread rendering
+updates, video, animations — flush layer state under per-layer locks only,
+with no synchronization against that walk. A composite landing mid-walk
+renders the new scroll offset against a stale sticky/fixed compensation;
+a desynchronized main thread can also commit sticky positions computed
+from a scroll offset several frames old (GraphicsLayerCoordinated::
+updateGeometry). Either way sticky navbars visibly lag behind fast flicks
+and snap back, with the error proportional to per-frame scroll delta.
+
+Fix: before flushing layer state for a composite, take the scrolling tree
+lock, re-apply the tree's layer positions, and hold the lock across the
+whole flush. Every composed frame then carries an atomic snapshot of
+scroll offset + dependent fixed/sticky layer positions. The tree reference
+reaches the compositor via LayerTreeHost::updateRendering (thread-safe
+RefPtr handoff under m_scrollingTreeLock).
+
+diff -u -r a/Source/WebCore/page/scrolling/ScrollingTree.cpp b/Source/WebCore/page/scrolling/ScrollingTree.cpp
+--- a/Source/WebCore/page/scrolling/ScrollingTree.cpp	2026-07-02 10:41:08.032478328 +0000
++++ b/Source/WebCore/page/scrolling/ScrollingTree.cpp	2026-07-02 10:42:37.953094892 +0000
+@@ -589,6 +589,15 @@
+     applyLayerPositionsInternal();
+ }
+ 
++// The compositor re-applies layer positions with the tree lock held across
++// its whole layer-state flush, so each composed frame carries an atomic
++// snapshot of scroll offset + dependent fixed/sticky layer positions
++// (WEBKIT_COMPOSITE_SCROLL_SYNC; see ThreadedCompositor::flushCompositingState).
++void ScrollingTree::applyLayerPositionsWhileLocked()
++{
++    applyLayerPositionsInternal();
++}
++
+ void ScrollingTree::applyLayerPositionsInternal()
+ {
+     ASSERT(m_treeLock.isLocked());
+diff -u -r a/Source/WebCore/page/scrolling/ScrollingTree.h b/Source/WebCore/page/scrolling/ScrollingTree.h
+--- a/Source/WebCore/page/scrolling/ScrollingTree.h	2026-07-02 10:41:08.029478307 +0000
++++ b/Source/WebCore/page/scrolling/ScrollingTree.h	2026-07-02 10:42:37.952094885 +0000
+@@ -114,6 +114,7 @@
+ 
+     WEBCORE_EXPORT virtual void applyLayerPositions();
+     WEBCORE_EXPORT void applyLayerPositionsAfterCommit();
++    WEBCORE_EXPORT void applyLayerPositionsWhileLocked() WTF_REQUIRES_LOCK(m_treeLock);
+ 
+     virtual Ref<ScrollingTreeNode> createScrollingTreeNode(ScrollingNodeType, ScrollingNodeID) = 0;
+     
+diff -u -r a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp	2026-07-02 10:41:08.040478383 +0000
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp	2026-07-02 10:42:37.956094912 +0000
+@@ -234,6 +234,19 @@
+     if (RefPtr drawingArea = m_webPage.drawingArea())
+         drawingArea->dispatchPendingCallbacksAfterEnsuringDrawing();
+ 
++#if ENABLE(SCROLLING_THREAD)
++    // Keep the compositor's scrolling tree reference current so composites can
++    // snapshot scroll-adjusted layer positions atomically (see
++    // ThreadedCompositor::flushCompositingState, WEBKIT_COMPOSITE_SCROLL_SYNC).
++    if (ThreadedCompositor::compositeScrollSyncEnabled()) {
++        RefPtr<WebCore::ScrollingTree> scrollingTree;
++        if (auto* scrollingCoordinator = m_webPage.corePage()->scrollingCoordinator()) {
++            if (is<AsyncScrollingCoordinator>(*scrollingCoordinator))
++                scrollingTree = downcast<AsyncScrollingCoordinator>(*scrollingCoordinator).scrollingTree();
++        }
++        m_compositor->setScrollingTree(WTF::move(scrollingTree));
++    }
++#endif
+     bool didChangeSceneState = m_sceneState->flush();
+     if (m_compositionRequired || m_pendingResize || m_forceFrameSync || didChangeSceneState)
+         requestCompositionForRenderingUpdate();
+diff -u -r a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp	2026-07-02 10:41:08.037478362 +0000
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp	2026-07-02 10:42:37.956094912 +0000
+@@ -36,6 +36,7 @@
+ #include <WebCore/CoordinatedPlatformLayer.h>
+ #include <WebCore/Damage.h>
+ #include <WebCore/PlatformDisplay.h>
++#include <WebCore/ScrollingTree.h>
+ #include <WebCore/TextureMapperLayer.h>
+ #include <WebCore/TransformationMatrix.h>
+ #include <cstdlib>
+@@ -280,6 +281,29 @@
+         ASSERT(!reasons.contains(CompositionReason::RenderingUpdate) || !m_state.isWaitingForTiles);
+     }
+ #endif
++#if ENABLE(SCROLLING_THREAD)
++    // WEBKIT_COMPOSITE_SCROLL_SYNC (default on): re-apply the scrolling
++    // tree's layer positions under the tree lock, holding it across the whole
++    // layer flush, so a composite can never interleave with the scrolling
++    // thread's scroll-then-compensate walk and render a fresh scroll offset
++    // against stale position:fixed/sticky layer positions. This also
++    // overwrites stale positions committed by a desynchronized main thread.
++    if (compositeScrollSyncEnabled()) {
++        RefPtr<WebCore::ScrollingTree> scrollingTree;
++        {
++            Locker locker { m_scrollingTreeLock };
++            scrollingTree = m_scrollingTree;
++        }
++        if (scrollingTree) {
++            Locker treeLocker { scrollingTree->treeLock() };
++            scrollingTree->applyLayerPositionsWhileLocked();
++            m_sceneState->rootLayer().flushCompositingState(reasons);
++            for (auto& layer : m_sceneState->committedLayers())
++                layer->flushCompositingState(reasons);
++            return;
++        }
++    }
++#endif
+     m_sceneState->rootLayer().flushCompositingState(reasons);
+     for (auto& layer : m_sceneState->committedLayers())
+         layer->flushCompositingState(reasons);
+@@ -479,6 +503,23 @@
+     scheduleUpdateLocked();
+ }
+ 
++#if ENABLE(SCROLLING_THREAD)
++void ThreadedCompositor::setScrollingTree(RefPtr<WebCore::ScrollingTree>&& scrollingTree)
++{
++    Locker locker { m_scrollingTreeLock };
++    m_scrollingTree = WTF::move(scrollingTree);
++}
++
++bool ThreadedCompositor::compositeScrollSyncEnabled()
++{
++    static bool enabled = [] {
++        const char* env = getenv("WEBKIT_COMPOSITE_SCROLL_SYNC");
++        return !env || !*env || strcmp(env, "0");
++    }();
++    return enabled;
++}
++#endif
++
+ ASCIILiteral ThreadedCompositor::stateToString(ThreadedCompositor::State state)
+ {
+     switch (state) {
+diff -u -r a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.h b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.h
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.h	2026-07-02 10:41:08.035478349 +0000
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.h	2026-07-02 10:42:37.955094905 +0000
+@@ -44,6 +44,7 @@
+ #include <wtf/WorkQueue.h>
+ 
+ namespace WebCore {
++class ScrollingTree;
+ class TextureMapper;
+ class TransformationMatrix;
+ }
+@@ -74,6 +75,10 @@
+     void setSize(const WebCore::IntSize&, float);
+     void requestCompositionForRenderingUpdate(Function<void()>&&);
+     void requestComposition(WebCore::CompositionReason);
++#if ENABLE(SCROLLING_THREAD)
++    void setScrollingTree(RefPtr<WebCore::ScrollingTree>&&);
++    static bool compositeScrollSyncEnabled();
++#endif
+     RunLoop* runLoop();
+ 
+     void invalidate();
+@@ -120,6 +125,10 @@
+     RefPtr<AcceleratedSurface> m_surface;
+     RefPtr<CoordinatedSceneState> m_sceneState;
+     std::unique_ptr<WebCore::GLContext> m_context;
++#if ENABLE(SCROLLING_THREAD)
++    Lock m_scrollingTreeLock;
++    RefPtr<WebCore::ScrollingTree> m_scrollingTree WTF_GUARDED_BY_LOCK(m_scrollingTreeLock);
++#endif
+ 
+     bool m_flipY { false };
+     int m_maxTextureSize { 0 };
