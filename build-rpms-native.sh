@@ -488,6 +488,10 @@ cp -a "${BROWSER_SRC}/apps/shared/"*.js              "${S}/usr/share/atlantic-br
 mkdir -p "${S}/usr/share/atlantic-browser/data"
 cp -a "${BROWSER_SRC}/data/icon-launcher-browser.png" "${S}/usr/share/atlantic-browser/data/"
 
+# Search engines shipped by the browser (beyond the mozembedlite system set)
+mkdir -p "${S}/usr/share/atlantic-browser/searchEngines"
+cp -a "${BROWSER_SRC}/data/searchEngines/"*.xml "${S}/usr/share/atlantic-browser/searchEngines/"
+
 # Launcher icon
 mkdir -p "${S}/usr/share/icons/hicolor/86x86/apps"
 cp -a "${BROWSER_SRC}/data/icon-launcher-browser.png" \
