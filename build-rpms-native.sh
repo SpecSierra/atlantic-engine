@@ -630,6 +630,14 @@ PROFHDR
 printf '%s\n' "${PROFILE_ENV_LINES}"
 } > "${S}/etc/sailjail/permissions/atlantic-browser.profile"
 
+# SFOS PulseAudio policy classification for WebKit audio streams — without it
+# OHM corks browser audio ~0.5 s after each stream starts (see the file's
+# header). Read by module-policy-enforcement at PA startup only, so first
+# install needs a PulseAudio restart or reboot.
+mkdir -p "${S}/etc/pulse/xpolicy.conf.d"
+install -m 644 "${SCRIPT_DIR}/deploy/atlantic-audio-policy.conf" \
+    "${S}/etc/pulse/xpolicy.conf.d/atlantic-audio.conf"
+
 # GPU performance udev rule — Snapdragon 665 Adreno 610
 # Power levels: 0=950 1=900 2=820 3=745 4=600 5=465 6=320 MHz
 # Without a floor the GPU idles at 320 MHz; Skia tile rendering stalls on
