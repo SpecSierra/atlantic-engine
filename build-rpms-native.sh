@@ -670,18 +670,24 @@ for pkg in libwpe libepoxy wpebackend-fdo wpewebkit2 wpewebkit2-qt5 \
     cp -a "${STAGING}/${pkg}/." "$B/"
 done
 
+# Public-beta safety: the boot oneshots are Xperia 10 II-specific system
+# tweaks (big-cluster governor repair; extra zram swap + browser memory
+# cgroup). Don't ship them to unknown devices — dropped from the bundle
+# entirely; the split wpe-sfos-compat (dev channel) keeps them.
+rm -f "$B/usr/lib/systemd/system/atlantic-cpu-governor.service" \
+      "$B/usr/lib/systemd/system/atlantic-browser-memory.service" \
+      "$B/usr/libexec/atlantic/atlantic-cpu-governor.sh" \
+      "$B/usr/libexec/atlantic/atlantic-browser-memory.sh"
+rmdir "$B/usr/lib/systemd/system" "$B/usr/libexec/atlantic" 2>/dev/null || :
+
 mkdir -p "${OUT}/bundle"
-# Merged post-install: compat boot oneshots + immediate GPU boost.
+# Merged post-install: immediate GPU boost only (udev rule handles reboots;
+# both are Adreno-gated so they no-op on other SoCs).
 # Subshell keeps the OUT/RPM_ITERATION overrides from leaking out.
 (
 OUT="${OUT}/bundle"
 RPM_ITERATION="${RPM_ITERATION:-1}.aio"
-FPM_POST_EXTRA="systemctl daemon-reload >/dev/null 2>&1 || :
-systemctl enable atlantic-cpu-governor.service >/dev/null 2>&1 || :
-systemctl start atlantic-cpu-governor.service >/dev/null 2>&1 || :
-systemctl enable atlantic-browser-memory.service >/dev/null 2>&1 || :
-systemctl start atlantic-browser-memory.service >/dev/null 2>&1 || :
-[ -w /sys/class/kgsl/kgsl-3d0/min_pwrlevel ] && echo 2 > /sys/class/kgsl/kgsl-3d0/min_pwrlevel || :"
+FPM_POST_EXTRA="[ -w /sys/class/kgsl/kgsl-3d0/min_pwrlevel ] && echo 2 > /sys/class/kgsl/kgsl-3d0/min_pwrlevel || :"
 fpm_rpm atlantic-browser "$ATLANTIC_BROWSER_VERSION" "Atlantic Browser (WPE WebKit engine, all-in-one)" "$B" \
     --depends sailjail \
     --depends firejail \
