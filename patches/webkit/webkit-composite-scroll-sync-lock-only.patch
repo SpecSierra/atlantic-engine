@@ -1,0 +1,65 @@
+Composite-scroll-sync v3: lock-only.
+
+Build 421 still stalled (rendering-update cycle went quiescent after the
+first scroll: updateRendering / requestComposition / displayDidRefresh all
+stopped firing). Two lessons from 420/421:
+ - Walking the scrolling tree (applyLayerPositions) from the COMPOSITOR
+   thread pokes thread-owned machinery and stalls the rendering-update
+   cycle; don't do it.
+ - LayerTreeHost::notifyCompositionRequired IS legitimately called on the
+   compositor thread upstream (CoordinatedPlatformLayer::updateBackingStore
+   "tiles changed"); the 421 suppression ate that signal. Restore upstream
+   behaviour.
+
+What remains — and what actually fixes the sticky-navbar jitter — is
+holding ScrollingTree::treeLock() across the compositor's layer-state
+flush: the scrolling thread's scroll-then-compensate walk (scroll
+boundsOrigin first, then fixed/sticky position compensation, both under
+the tree lock) becomes atomic with respect to composites, so no frame can
+render a fresh scroll offset against a stale sticky position. Stale
+main-thread sticky commits are already corrected upstream by
+Page::finalizeRenderingUpdate(ApplyScrollingTreeLayerPositions) before the
+composite is requested, inside the same lock discipline.
+
+Applies on top of webkit-sticky-scroll-composite-sync-env.patch +
+webkit-composite-scroll-sync-stall-fix.patch.
+ScrollingTree::applyLayerPositionsWhileLocked() becomes unused but is kept.
+
+diff -u -r a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp /tmp/claude-0/-root/f7982d7a-a9a3-4363-bf41-0bd830f80d10/scratchpad/patchwork/d/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp	2026-07-02 12:03:06.709203783 +0000
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp	2026-07-02 12:26:40.871227752 +0000
+@@ -411,15 +411,6 @@
+         m_compositionRequiredInScrollingThread = true;
+         return;
+     }
+-    // Layer position changes applied by the compositor thread itself right
+-    // before its layer flush (WEBKIT_COMPOSITE_SCROLL_SYNC) are consumed by
+-    // that very flush. Setting m_compositionRequired for them would leave a
+-    // stale "composition required" signal with no composite scheduled, making
+-    // ScrollingTreeCoordinated::didCompleteRenderingUpdate wait forever for a
+-    // didCompletePlatformRenderingUpdate() that never comes — rendering
+-    // freezes after the first frame.
+-    if (m_compositor && m_compositor->runLoop() == &RunLoop::currentSingleton())
+-        return;
+ #endif
+     m_compositionRequired = true;
+ }
+diff -u -r a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp /tmp/claude-0/-root/f7982d7a-a9a3-4363-bf41-0bd830f80d10/scratchpad/patchwork/d/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp	2026-07-02 12:03:06.710203790 +0000
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp	2026-07-02 12:26:40.871227752 +0000
+@@ -298,8 +298,14 @@
+             scrollingTree = m_scrollingTree;
+         }
+         if (scrollingTree) {
++            // Hold the tree lock only — do NOT re-apply layer positions from
++            // this thread: walking the scrolling tree off the scrolling/main
++            // threads pokes thread-owned machinery (notifyCompositionRequired
++            // signals, scroller delegates) and stalled the rendering-update
++            // cycle. The lock alone is what fixes sticky jitter: it makes the
++            // scrolling thread's scroll-then-compensate walk atomic with
++            // respect to this flush.
+             Locker treeLocker { scrollingTree->treeLock() };
+-            scrollingTree->applyLayerPositionsWhileLocked();
+             m_sceneState->rootLayer().flushCompositingState(reasons);
+             for (auto& layer : m_sceneState->committedLayers())
+                 layer->flushCompositingState(reasons);

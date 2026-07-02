@@ -170,6 +170,14 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # update), and the locked path only runs for RenderingUpdate/AsyncScrolling
     # composites. Must come AFTER the sticky-scroll-composite-sync patch.
     "patches/webkit/webkit-composite-scroll-sync-stall-fix.patch"
+    # webkit-composite-scroll-sync-lock-only.patch: v3 — drop the compositor-
+    # thread applyLayerPositions walk (stalled the rendering-update cycle,
+    # builds 420/421) and restore upstream notifyCompositionRequired (the 421
+    # suppression ate the legitimate compositor-thread "tiles changed" signal).
+    # Keeps only the treeLock hold across the flush, which is the part that
+    # makes scroll+sticky positions atomic per composed frame. Must come AFTER
+    # the two patches above.
+    "patches/webkit/webkit-composite-scroll-sync-lock-only.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(
