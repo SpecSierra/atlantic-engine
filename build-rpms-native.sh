@@ -255,6 +255,8 @@ done
 mkdir -p "${S}${PACKAGE_RUNTIME_PREFIX}/libexec/atlantic"
 install -m 755 "${SCRIPT_DIR}/deploy/runtime-common.sh" \
     "${S}${PACKAGE_RUNTIME_PREFIX}/libexec/atlantic/runtime-common.sh"
+install -m 644 "${SCRIPT_DIR}/deploy/pulse-client.conf" \
+    "${S}${PACKAGE_RUNTIME_PREFIX}/libexec/atlantic/pulse-client.conf"
 
 # Helper process launchers at ${PACKAGE_RUNTIME_PREFIX}/libexec/wpe-webkit-2.0 —
 # the path WebKit spawns (libexecdir is baked to /opt/wpe-sfos). These USED to be

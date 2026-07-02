@@ -113,6 +113,18 @@ atlantic_export_helper_env() {
             export PULSE_SERVER="${pulse_server}"
         fi
     fi
+    # Force the plain-socket PulseAudio data path (enable-shm=no). The SHM/memfd
+    # transport jams on this device right after a stream starts, so audio dies
+    # after the ~0.5 s prebuffer while video keeps playing, and the unmute/uncork
+    # commands sent later on the jammed connection are silently lost. See
+    # deploy/pulse-client.conf for the full analysis. Device-verified fix.
+    # (No file-existence guard: the Sailjail profile env block is generated from
+    # this function on the build host, where the installed path doesn't exist.
+    # The conf ships in the same rpm as this script, so it's always present at
+    # runtime.)
+    if [ -z "${PULSE_CLIENTCONFIG:-}" ]; then
+        export PULSE_CLIENTCONFIG="${ATLANTIC_RUNTIME_PREFIX}/libexec/atlantic/pulse-client.conf"
+    fi
     export GST_PLUGIN_SYSTEM_PATH_1_0="${ATLANTIC_GSTREAMER_PLUGIN_DIR}"
     export GST_PLUGIN_PATH="${ATLANTIC_GSTREAMER_PLUGIN_DIR}"
     export GST_PLUGIN_FEATURE_RANK="${ATLANTIC_GST_PLUGIN_FEATURE_RANK}"
