@@ -25,7 +25,7 @@ if git -C "${BUILD_TOOLS}" rev-parse HEAD >/dev/null 2>&1; then
     BUILD_TOOLS_COMMIT="$(git -C "${BUILD_TOOLS}" rev-parse HEAD)"
 fi
 
-rm -rf "${ARTIFACT_ROOT}/rpms" "${ARTIFACT_ROOT}/build-config"
+rm -rf "${ARTIFACT_ROOT}/rpms" "${ARTIFACT_ROOT}/rpms-bundle" "${ARTIFACT_ROOT}/build-config"
 mkdir -p "${ARTIFACT_ROOT}" "${OUT}" "${STAGING}"
 
 cat > "${SUMMARY_PATH}" <<EOF
@@ -114,6 +114,14 @@ if [ "${#rpms[@]}" -eq 0 ]; then
 fi
 
 cp -a "${rpms[@]}" "${ARTIFACT_ROOT}/rpms/"
+
+# All-in-one bundle rpm (OpenRepos) — kept OUT of rpms/ so it is signed and
+# uploaded as an artifact but never indexed into the zypper repo.
+bundle_rpms=("${OUT}/bundle"/*.rpm)
+if [ "${#bundle_rpms[@]}" -gt 0 ]; then
+    mkdir -p "${ARTIFACT_ROOT}/rpms-bundle"
+    cp -a "${bundle_rpms[@]}" "${ARTIFACT_ROOT}/rpms-bundle/"
+fi
 
 if [ -d "${WPE_PREFIX}/share/wpe-webkit-2.0/build-config" ]; then
     cp -a "${WPE_PREFIX}/share/wpe-webkit-2.0/build-config" "${ARTIFACT_ROOT}/build-config"

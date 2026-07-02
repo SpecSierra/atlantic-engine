@@ -150,7 +150,14 @@ jobs:
           sudo chmod 600 /root/.rpmmacros
           sudo chown "$(id -u)":"$(id -g)" "${ARTIFACT_ROOT}/rpms/"*.rpm
           sudo chmod 644 "${ARTIFACT_ROOT}/rpms/"*.rpm
-          rpms=("${ARTIFACT_ROOT}/rpms/"*.rpm)
+          # Also sign the all-in-one bundle (kept outside rpms/ so it stays
+          # out of the zypper repo; published manually to OpenRepos).
+          bundle=("${ARTIFACT_ROOT}/rpms-bundle/"*.rpm)
+          if [ "${#bundle[@]}" -gt 0 ]; then
+            sudo chown "$(id -u)":"$(id -g)" "${bundle[@]}"
+            sudo chmod 644 "${bundle[@]}"
+          fi
+          rpms=("${ARTIFACT_ROOT}/rpms/"*.rpm "${bundle[@]}")
           if [ "${#rpms[@]}" -eq 0 ]; then
             echo "No RPMs found under ${ARTIFACT_ROOT}/rpms to sign" >&2
             exit 1

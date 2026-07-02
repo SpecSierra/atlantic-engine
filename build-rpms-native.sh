@@ -651,6 +651,50 @@ fpm_rpm atlantic-browser "$ATLANTIC_BROWSER_VERSION" "Atlantic Browser (WPE WebK
 unset FPM_POST_EXTRA
 
 # ===========================================================================
+# 8. atlantic-browser all-in-one bundle (OpenRepos single-RPM distribution)
+# ===========================================================================
+# Merges every Atlantic-built package into ONE rpm so OpenRepos users install
+# a single file (300 MB size limit there — we're well under). Deliberately
+# excludes bubblewrap and xdg-dbus-proxy: the bwrap sandbox is permanently
+# disabled at runtime (Sailjail/firejail confines instead), and xdg-dbus-proxy
+# exists as a stock Jolla package.
+#
+# The bundle goes to ${OUT}/bundle/ so CI signs/uploads it as an artifact but
+# does NOT index it into the zypper repo (the dev channel keeps the split
+# packages). Release gets a ".aio" suffix so its NEVRA differs from the split
+# atlantic-browser rpm and rpm can tell the two apart.
+echo "--- Staging atlantic-browser bundle (single-RPM, OpenRepos) ---"
+B="${STAGING}/atlantic-bundle"; rm -rf "$B"; mkdir -p "$B"
+for pkg in libwpe libepoxy wpebackend-fdo wpewebkit2 wpewebkit2-qt5 \
+           wpe-sfos-compat atlantic-browser; do
+    cp -a "${STAGING}/${pkg}/." "$B/"
+done
+
+mkdir -p "${OUT}/bundle"
+# Merged post-install: compat boot oneshots + immediate GPU boost.
+# Subshell keeps the OUT/RPM_ITERATION overrides from leaking out.
+(
+OUT="${OUT}/bundle"
+RPM_ITERATION="${RPM_ITERATION:-1}.aio"
+FPM_POST_EXTRA="systemctl daemon-reload >/dev/null 2>&1 || :
+systemctl enable atlantic-cpu-governor.service >/dev/null 2>&1 || :
+systemctl start atlantic-cpu-governor.service >/dev/null 2>&1 || :
+systemctl enable atlantic-browser-memory.service >/dev/null 2>&1 || :
+systemctl start atlantic-browser-memory.service >/dev/null 2>&1 || :
+[ -w /sys/class/kgsl/kgsl-3d0/min_pwrlevel ] && echo 2 > /sys/class/kgsl/kgsl-3d0/min_pwrlevel || :"
+fpm_rpm atlantic-browser "$ATLANTIC_BROWSER_VERSION" "Atlantic Browser (WPE WebKit engine, all-in-one)" "$B" \
+    --depends sailjail \
+    --depends firejail \
+    --depends libseccomp \
+    --provides wpewebkit2 --replaces wpewebkit2 \
+    --provides wpewebkit2-qt5 --replaces wpewebkit2-qt5 \
+    --provides wpe-sfos-compat --replaces wpe-sfos-compat \
+    --provides libwpe --replaces libwpe \
+    --provides libepoxy --replaces libepoxy \
+    --provides wpebackend-fdo --replaces wpebackend-fdo
+)
+
+# ===========================================================================
 echo ""
 echo "All RPMs built successfully:"
-ls -lh "$OUT"/*.rpm
+ls -lh "$OUT"/*.rpm "$OUT"/bundle/*.rpm
