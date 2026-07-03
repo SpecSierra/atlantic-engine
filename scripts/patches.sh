@@ -153,6 +153,14 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # cuts out, picture freezes). Must come AFTER the media-role patch — it extends
     # the same autoaudiosink "child-added" hook.
     "patches/webkit/webkit-gst-audio-system-clock.patch"
+    # webkit-wpe-dark-mode-runtime.patch: runtime prefers-color-scheme switch.
+    # The legacy libwpe build hardwires SystemSettings darkMode to false, so
+    # websites always saw prefers-color-scheme: light. Exports
+    # wpe_sfos_set_dark_mode(int) for the embedder (browser wires it to the
+    # color_scheme dconf setting / Sailfish ambience) and gives ViewLegacy the
+    # ViewPlatform SystemSettings observer so live pages re-evaluate their
+    # color scheme without a reload.
+    "patches/webkit/webkit-wpe-dark-mode-runtime.patch"
     "patches/webkit/webkit-bubblewrap-sfos-sandbox.patch"
     # webkit-sticky-scroll-composite-sync-env.patch: WEBKIT_COMPOSITE_SCROLL_SYNC
     # (default on) — before flushing layer state for a composite, re-apply the
