@@ -380,9 +380,53 @@ void WPEQtViewBackend::dispatchWheelEvent(QWheelEvent* event)
     wpe_view_backend_dispatch_axis_event(backend(), &wpeEvent.base);
 }
 
+// Map a QKeyEvent to an XKB keysym when the event carries no native one.
+// Software-keyboard (Maliit) and synthesized events have nativeVirtualKey()==0,
+// and the old fallback passed the Qt keycode to
+// wpe_input_xkb_context_get_key_code — which expects a HARDWARE keycode, so
+// every such key (Enter included) dissolved into keysym 0 and WebKit never saw
+// it. Special keys get their XKB_KEY_* values; printable characters use the
+// standard XKB Unicode rule (Latin-1 maps directly, others are 0x01000000|cp).
+static uint32_t keysymForQtKey(const QKeyEvent* event)
+{
+    switch (event->key()) {
+    case Qt::Key_Return:
+    case Qt::Key_Enter:     return 0xff0d; // XKB_KEY_Return
+    case Qt::Key_Backspace: return 0xff08; // XKB_KEY_BackSpace
+    case Qt::Key_Tab:       return 0xff09; // XKB_KEY_Tab
+    case Qt::Key_Backtab:   return 0xfe20; // XKB_KEY_ISO_Left_Tab
+    case Qt::Key_Escape:    return 0xff1b; // XKB_KEY_Escape
+    case Qt::Key_Delete:    return 0xffff; // XKB_KEY_Delete
+    case Qt::Key_Insert:    return 0xff63; // XKB_KEY_Insert
+    case Qt::Key_Left:      return 0xff51; // XKB_KEY_Left
+    case Qt::Key_Up:        return 0xff52; // XKB_KEY_Up
+    case Qt::Key_Right:     return 0xff53; // XKB_KEY_Right
+    case Qt::Key_Down:      return 0xff54; // XKB_KEY_Down
+    case Qt::Key_PageUp:    return 0xff55; // XKB_KEY_Page_Up
+    case Qt::Key_PageDown:  return 0xff56; // XKB_KEY_Page_Down
+    case Qt::Key_Home:      return 0xff50; // XKB_KEY_Home
+    case Qt::Key_End:       return 0xff57; // XKB_KEY_End
+    default:
+        break;
+    }
+    const QString text = event->text();
+    if (!text.isEmpty()) {
+        const uint32_t cp = text.at(0).isHighSurrogate() && text.size() > 1
+            ? QChar::surrogateToUcs4(text.at(0), text.at(1))
+            : text.at(0).unicode();
+        if (cp >= 0x20 && cp < 0x100)
+            return cp;
+        if (cp >= 0x100)
+            return 0x01000000 | cp;
+    }
+    return 0;
+}
+
 void WPEQtViewBackend::dispatchKeyEvent(QKeyEvent* event, bool state)
 {
     uint32_t keysym = event->nativeVirtualKey();
+    if (!keysym)
+        keysym = keysymForQtKey(event);
     if (!keysym)
         keysym = wpe_input_xkb_context_get_key_code(wpe_input_xkb_context_get_default(), event->key(), state);
 
