@@ -609,6 +609,10 @@ whitelist /usr/share/atlantic-browser
 # user-picked custom image cached in home. Without this the UI renders on black.
 whitelist /usr/share/ambience
 whitelist ${HOME}/.cache/ambienced
+# Custom (photo-based) ambiences: ambienced copies the picked photo here and
+# Ambience.source points straight at that jpg.
+mkdir     ${HOME}/.local/share/ambienced/wallpapers
+whitelist ${HOME}/.local/share/ambienced/wallpapers
 
 # Browser data (the fork persists under org.sailfishos/browser) + config.
 mkdir     ${HOME}/.local/share/org.sailfishos/browser
