@@ -186,6 +186,10 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # makes scroll+sticky positions atomic per composed frame. Must come AFTER
     # the two patches above.
     "patches/webkit/webkit-composite-scroll-sync-lock-only.patch"
+
+    # WPE has no TextChecker backend upstream (spellcheck is GTK-only); port
+    # the GTK enchant-backed implementation so ENABLE_SPELLCHECK builds/works.
+    "patches/webkit/webkit-wpe-spellcheck-enchant.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(
