@@ -393,6 +393,14 @@ atlantic_export_browser_env() {
     export WEBKIT_CHECKERBOARD_SETTLE_MS="${WEBKIT_CHECKERBOARD_SETTLE_MS:-100}"
     export WEBKIT_COVER_AREA_MULTIPLIER="${WEBKIT_COVER_AREA_MULTIPLIER:-2}"
 
+    # ── Overlay scrollbar size ────────────────────────────────────────────────
+    # Honoured by webkit-adwaita-scrollbar-scale-env.patch. Atlantic's 3x UI
+    # scale is implemented as page zoom (webkit_web_view_set_zoom_level), which
+    # the native overlay scrollbar ignores — unscaled, the Adwaita thumb paints
+    # 3 physical px wide on the 1080px screen. Scale the scrollbar metrics by
+    # the same factor as the zoom level.
+    export WEBKIT_SCROLLBAR_SCALE="${WEBKIT_SCROLLBAR_SCALE:-3}"
+
     # ── Skia painting backend ────────────────────────────────────────────────
     # WEBKIT_SKIA_ENABLE_CPU_RENDERING and WEBKIT_SKIA_GPU_PAINTING_THREADS are
     # intentionally NOT set here. The browser auto-selects the painting backend

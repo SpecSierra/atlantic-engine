@@ -120,6 +120,12 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # tuning; a lower value gives the longer, smoother glide phone flicking expects.
     # Browser sets the device default in apps/browser/main.cpp.
     "patches/webkit/webkit-kinetic-decel-friction-env.patch"
+    # webkit-adwaita-scrollbar-scale-env.patch: scale the Adwaita overlay-scrollbar
+    # metrics (WEBKIT_SCROLLBAR_SCALE, integer 1..8, default 1 = upstream). Atlantic's
+    # 3x UI scale is page zoom, which the native scrollbar widget ignores, so the
+    # overlay thumb painted 3 physical px wide on the 1080px screen. runtime-common.sh
+    # sets 3 to match the browser zoom factor.
+    "patches/webkit/webkit-adwaita-scrollbar-scale-env.patch"
     # webkit-kinetic-jank-resilient-end.patch: keep the kinetic fling alive across
     # main-thread jank stalls (the "lag spikes kill scroll inertia" on reddit). A
     # catch-up tick after a stall has near-zero dt, so the per-tick "moved <1px"

@@ -1,0 +1,70 @@
+Make the Adwaita overlay-scrollbar metrics scalable for phone screens.
+
+Device-measured root cause of "the scrollbar is tiny": Atlantic implements its
+3x UI scale as webkit_web_view_set_zoom_level(3) (page zoom), not a WebKit
+deviceScaleFactor. Page content zooms, but the frame's overlay scrollbar is a
+native ScrollView widget painted by AdwaitaScrollbarPainter with hardcoded
+desktop metrics in raw physical pixels — so the overlay thumb renders 3 px wide
+on a 1080-px-wide screen (verified by pixel-measuring a device screenshot:
+thumb at x 1074-1076).
+
+All scrollbar geometry (thickness, thumb size, margins, minimum thumb length)
+derives from the constants in AdwaitaScrollbarPainter.h, and every consumer
+(the painter, ScrollbarThemeAdwaita, the async ScrollerCoordinated path) reads
+them from here — so scaling the constants scales the whole scrollbar
+coherently. Make them tunable via WEBKIT_SCROLLBAR_SCALE (integer 1..8,
+default 1 = upstream); deploy/runtime-common.sh sets 3 to match the browser's
+zoom factor. See webkit-adwaita-scrollbar-scale-env.patch.
+
+--- a/Source/WebCore/platform/adwaita/AdwaitaScrollbarPainter.h
++++ b/Source/WebCore/platform/adwaita/AdwaitaScrollbarPainter.h
+@@ -29,6 +29,7 @@
+ 
+ #include "IntRect.h"
+ #include "ScrollTypes.h"
++#include <cstdlib>
+ 
+ namespace WebCore {
+ 
+@@ -36,14 +37,33 @@
+ 
+ namespace AdwaitaScrollbarPainter {
+ 
+-static const unsigned scrollbarSize = 21;
+-static const unsigned scrollbarBorderSize = 1;
+-static const unsigned thumbBorderSize = 1;
+-static const unsigned overlayThumbSize = 3;
+-static const unsigned minimumThumbSize = 40;
+-static const unsigned horizThumbMargin = 6;
+-static const unsigned horizOverlayThumbMargin = 3;
+-static const unsigned vertThumbMargin = 7;
++// The scrollbar is painted with desktop metrics in physical pixels. On builds
++// that implement UI scaling as page zoom (not deviceScaleFactor), the page
++// content scales but the scrollbar does not, leaving a hairline thumb on a
++// high-DPI phone screen. WEBKIT_SCROLLBAR_SCALE (integer, 1..8, default 1 =
++// upstream) multiplies all scrollbar metrics; set it to the same factor as the
++// zoom level. See webkit-adwaita-scrollbar-scale-env.patch.
++static inline unsigned scrollbarUIScale()
++{
++    static const unsigned scale = [] {
++        if (const char* env = std::getenv("WEBKIT_SCROLLBAR_SCALE")) {
++            int value = std::atoi(env);
++            if (value >= 1 && value <= 8)
++                return static_cast<unsigned>(value);
++        }
++        return 1u;
++    }();
++    return scale;
++}
++
++static const unsigned scrollbarSize = 21 * scrollbarUIScale();
++static const unsigned scrollbarBorderSize = 1 * scrollbarUIScale();
++static const unsigned thumbBorderSize = 1 * scrollbarUIScale();
++static const unsigned overlayThumbSize = 3 * scrollbarUIScale();
++static const unsigned minimumThumbSize = 40 * scrollbarUIScale();
++static const unsigned horizThumbMargin = 6 * scrollbarUIScale();
++static const unsigned horizOverlayThumbMargin = 3 * scrollbarUIScale();
++static const unsigned vertThumbMargin = 7 * scrollbarUIScale();
+ 
+ static constexpr auto scrollbarBackgroundColorLight = Color::white;
+ static constexpr auto scrollbarBorderColorLight = Color::black.colorWithAlphaByte(38);
