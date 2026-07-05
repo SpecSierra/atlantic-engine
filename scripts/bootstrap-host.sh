@@ -142,6 +142,7 @@ apt-get install -y \
     libpng-dev libjpeg-dev libwebp-dev zlib1g-dev \
     libdrm-dev libgbm-dev libcap-dev \
     libsoup-3.0-dev libsystemd-dev \
+    libgstreamer-plugins-bad1.0-dev libnice-dev hunspell-en-us libenchant-2-dev \
     libgcrypt20-dev libgpg-error-dev \
     libtasn1-6-dev \
     libwoff-dev libopenjp2-7-dev \

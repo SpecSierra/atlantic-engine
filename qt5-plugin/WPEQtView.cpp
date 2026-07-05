@@ -225,6 +225,27 @@ void WPEQtView::createWebView()
     g_signal_connect(m_webView, "load-changed", G_CALLBACK(notifyLoadChangedCallback), this);
     g_signal_connect(m_webView, "load-failed", G_CALLBACK(notifyLoadFailedCallback), this);
 
+    // Allow camera/microphone, device enumeration and geolocation requests.
+    // Unhandled requests are auto-denied, which silently breaks WebRTC capture.
+    // TODO: surface these as user-facing prompts in the browser UI.
+    g_signal_connect(m_webView, "permission-request",
+        G_CALLBACK(+[](WebKitWebView*, WebKitPermissionRequest* request, gpointer) -> gboolean {
+            if (WEBKIT_IS_USER_MEDIA_PERMISSION_REQUEST(request)
+                || WEBKIT_IS_DEVICE_INFO_PERMISSION_REQUEST(request)
+                || WEBKIT_IS_GEOLOCATION_PERMISSION_REQUEST(request)) {
+                webkit_permission_request_allow(request);
+                return TRUE;
+            }
+            return FALSE;
+        }), nullptr);
+
+    // Spellcheck (compiled in via enchant + bundled hunspell backend).
+    if (WebKitWebContext* webContext = webkit_web_view_get_context(m_webView)) {
+        webkit_web_context_set_spell_checking_enabled(webContext, TRUE);
+        const gchar* spellLanguages[] = { "en_US", nullptr };
+        webkit_web_context_set_spell_checking_languages(webContext, spellLanguages);
+    }
+
     if (m_pendingDeviceScaleFactor != 1.0)
         webkit_web_view_set_zoom_level(m_webView, m_pendingDeviceScaleFactor);
 
@@ -251,7 +272,10 @@ void WPEQtView::createWebView()
             WebKitFeature* feature = webkit_feature_list_get(features, i);
             const char* identifier = webkit_feature_get_identifier(feature);
             if (!g_strcmp0(identifier, "HiddenPageDOMTimerThrottling")
-                || !g_strcmp0(identifier, "HiddenPageCSSAnimationSuspension")) {
+                || !g_strcmp0(identifier, "HiddenPageCSSAnimationSuspension")
+                // WebRTC: compiled in (GstWebRTC) but the runtime prefs default off.
+                || !g_strcmp0(identifier, "PeerConnection")
+                || !g_strcmp0(identifier, "MediaDevices")) {
                 webkit_settings_set_feature_enabled(attachedSettings, feature, TRUE);
                 qDebug() << "[WPE-FEAT]" << identifier << "set, readback="
                          << webkit_settings_get_feature_enabled(attachedSettings, feature);

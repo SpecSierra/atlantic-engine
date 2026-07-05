@@ -73,13 +73,22 @@ for lib in \
     libbrotlicommon.so.1.1.0 \
     libatomic.so.1.2.0 \
     libjpeg.so.8.2.2 \
-    libgbm.so.1.0.0; do
+    libgbm.so.1.0.0 \
+    libenchant-2.so.2.3.3 \
+    libhunspell-1.7.so.0.0.1; do
     cp "${UBUNTU_LIBS}/${lib}" "${COMPAT_BUILD}/${lib}"
 done
 
+# Spellcheck: enchant loads its hunspell backend from the Ubuntu-baked module
+# path (/usr/lib/aarch64-linux-gnu/enchant-2), so the rpm installs it there on
+# the device; hunspell dictionaries go to /usr/share/hunspell.
+mkdir -p "${COMPAT_BUILD}/enchant-2" "${COMPAT_BUILD}/hunspell"
+cp "${UBUNTU_LIBS}/enchant-2/enchant_hunspell.so" "${COMPAT_BUILD}/enchant-2/"
+cp /usr/share/hunspell/en_US.aff /usr/share/hunspell/en_US.dic "${COMPAT_BUILD}/hunspell/"
+
 # Patch glibc version symbols in all compat shims and bundled libs
 if [ "${PATCH_GLIBC_VERSIONS}" = "1" ]; then
-    for f in "${COMPAT_BUILD}"/*.so "${COMPAT_BUILD}"/*.so.[0-9]*; do
+    for f in "${COMPAT_BUILD}"/*.so "${COMPAT_BUILD}"/*.so.[0-9]* "${COMPAT_BUILD}"/enchant-2/*.so; do
         [ -f "$f" ] && maybe_patch_glibc_versions "$f"
     done
 fi

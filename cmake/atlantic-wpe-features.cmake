@@ -21,9 +21,20 @@ set(ENABLE_MEDIA_STREAM ON CACHE BOOL "" FORCE)
 set(ENABLE_MEDIA_RECORDER ON CACHE BOOL "" FORCE)
 set(ENABLE_WEB_CODECS ON CACHE BOOL "" FORCE)
 set(ENABLE_WEB_AUDIO ON CACHE BOOL "" FORCE)
-set(ENABLE_GEOLOCATION OFF CACHE BOOL "" FORCE)
+# WebRTC via GstWebRTC. Build deps: libgstreamer-plugins-bad1.0-dev + libnice-dev
+# on the host (bootstrap-host.sh); device already ships the gst 1.26 runtime
+# plugins (webrtcbin, nice, dtls, srtp). Runtime prefs PeerConnection/MediaDevices
+# default off — the qt5 plugin enables them.
+set(ENABLE_WEB_RTC ON CACHE BOOL "" FORCE)
+set(USE_GSTREAMER_WEBRTC ON CACHE BOOL "" FORCE)
+# Geolocation compiles against GDBus only, but at runtime WebKit's provider
+# talks to org.freedesktop.GeoClue2 — SFOS only ships geoclue-0.x, so positions
+# won't resolve until a GeoClue2 bridge exists. API surface is still worth having.
+set(ENABLE_GEOLOCATION ON CACHE BOOL "" FORCE)
 set(ENABLE_GAMEPAD OFF CACHE BOOL "" FORCE)
-set(ENABLE_SPELLCHECK OFF CACHE BOOL "" FORCE)
+# Spellcheck links host libenchant-2; enchant + hunspell backend + en_US dicts
+# are bundled for the device by stage-compat-shims.sh (SFOS has no enchant).
+set(ENABLE_SPELLCHECK ON CACHE BOOL "" FORCE)
 set(ENABLE_SPEECH_SYNTHESIS OFF CACHE BOOL "" FORCE)
 set(ENABLE_SAMPLING_PROFILER OFF CACHE BOOL "" FORCE)
 set(ENABLE_INTROSPECTION OFF CACHE BOOL "" FORCE)

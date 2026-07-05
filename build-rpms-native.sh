@@ -353,7 +353,17 @@ done
     ln -sfn libatomic.so.1.2.0      libatomic.so.1
     ln -sfn libjpeg.so.8.2.2        libjpeg.so.8
     ln -sfn libgbm.so.1.0.0         libgbm.so.1
+    ln -sfn libenchant-2.so.2.3.3   libenchant-2.so.2
+    ln -sfn libhunspell-1.7.so.0.0.1 libhunspell-1.7.so.0
 )
+
+# Spellcheck support files: enchant loads its backend from the Ubuntu-baked
+# module path, and hunspell finds dictionaries under /usr/share/hunspell.
+install -d -m 755 "${S}/usr/lib/aarch64-linux-gnu/enchant-2" "${S}/usr/share/hunspell"
+install -m 755 "${COMPAT_BUILD}/enchant-2/enchant_hunspell.so" \
+    "${S}/usr/lib/aarch64-linux-gnu/enchant-2/enchant_hunspell.so"
+install -m 644 "${COMPAT_BUILD}/hunspell/en_US.aff" "${COMPAT_BUILD}/hunspell/en_US.dic" \
+    "${S}/usr/share/hunspell/"
 
 # Keep shim preload/library-path scoped to Atlantic launcher/helper wrappers only.
 # Global nemo session injection breaks unrelated services (e.g. PulseAudio).
