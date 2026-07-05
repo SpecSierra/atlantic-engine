@@ -400,6 +400,13 @@ atlantic_export_browser_env() {
     # 3 physical px wide on the 1080px screen. Scale the scrollbar metrics by
     # the same factor as the zoom level.
     export WEBKIT_SCROLLBAR_SCALE="${WEBKIT_SCROLLBAR_SCALE:-3}"
+    # Honoured by webkit-scrollbar-sprite-and-smoothing.patch. Sprite mode
+    # paints the thumb once (CPU raster) and moves it as compositor geometry —
+    # fixes the blink/teleport from unsynchronized per-frame Ganesh repaints
+    # into reused pooled GL textures on this driver. Smoothing (0..1, 1 = off)
+    # low-pass filters the displayed position so residual data jumps glide.
+    export WEBKIT_SCROLLBAR_SPRITE="${WEBKIT_SCROLLBAR_SPRITE:-1}"
+    export WEBKIT_SCROLLBAR_SMOOTHING="${WEBKIT_SCROLLBAR_SMOOTHING:-0.4}"
 
     # ── Skia painting backend ────────────────────────────────────────────────
     # WEBKIT_SKIA_ENABLE_CPU_RENDERING and WEBKIT_SKIA_GPU_PAINTING_THREADS are

@@ -126,6 +126,12 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # overlay thumb painted 3 physical px wide on the 1080px screen. runtime-common.sh
     # sets 3 to match the browser zoom factor.
     "patches/webkit/webkit-adwaita-scrollbar-scale-env.patch"
+    # webkit-scrollbar-sprite-and-smoothing.patch: fix overlay-scrollbar blinking/
+    # teleporting. WEBKIT_SCROLLBAR_SPRITE=1 paints the thumb once (CPU raster)
+    # and moves it via setContentsRect instead of Ganesh-repainting a pooled GL
+    # texture per scroll tick (unordered on this driver = stale/blank frames);
+    # WEBKIT_SCROLLBAR_SMOOTHING low-pass filters the displayed position.
+    "patches/webkit/webkit-scrollbar-sprite-and-smoothing.patch"
     # webkit-kinetic-jank-resilient-end.patch: keep the kinetic fling alive across
     # main-thread jank stalls (the "lag spikes kill scroll inertia" on reddit). A
     # catch-up tick after a stall has near-zero dt, so the per-tick "moved <1px"
