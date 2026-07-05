@@ -212,6 +212,11 @@ readonly WEBKIT_SOURCE_PATCHES=(
     #    (WEBKIT_PARSER_TIME_LIMIT_MS)
     "patches/webkit/webkit-loading-timer-alignment-env.patch"
     "patches/webkit/webkit-parser-time-limit-env.patch"
+    #  - touch-ack-timeout: UIProcess-side gesture recognition when the
+    #    WebProcess doesn't ack touch events in time + stop dropping late-reply
+    #    gesture events; makes scrolling work DURING page load
+    #    (WEBKIT_TOUCH_ACK_TIMEOUT_MS)
+    "patches/webkit/webkit-touch-ack-timeout-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

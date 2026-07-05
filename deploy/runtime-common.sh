@@ -406,6 +406,11 @@ atlantic_export_browser_env() {
     # restores stock (parser) for A/B.
     export WEBKIT_LOADING_TIMER_ALIGNMENT_MS="${WEBKIT_LOADING_TIMER_ALIGNMENT_MS:-50}"
     export WEBKIT_PARSER_TIME_LIMIT_MS="${WEBKIT_PARSER_TIME_LIMIT_MS:-100}"
+    # Touch-ack timeout (webkit-touch-ack-timeout-env.patch): if the WebProcess
+    # doesn't ack touch events within this many ms, the UIProcess recognizes the
+    # gesture itself and scrolls via the scrolling thread — flicks work during
+    # page load instead of being silently dropped. =0 disables for A/B.
+    export WEBKIT_TOUCH_ACK_TIMEOUT_MS="${WEBKIT_TOUCH_ACK_TIMEOUT_MS:-100}"
 
     # ── Overlay scrollbar size ────────────────────────────────────────────────
     # Honoured by webkit-adwaita-scrollbar-scale-env.patch. Atlantic's 3x UI
