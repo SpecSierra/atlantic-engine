@@ -393,6 +393,20 @@ atlantic_export_browser_env() {
     export WEBKIT_CHECKERBOARD_SETTLE_MS="${WEBKIT_CHECKERBOARD_SETTLE_MS:-100}"
     export WEBKIT_COVER_AREA_MULTIPLIER="${WEBKIT_COVER_AREA_MULTIPLIER:-2}"
 
+    # ── Load-time responsiveness ─────────────────────────────────────────────
+    # Honoured by webkit-loading-timer-alignment-env.patch and
+    # webkit-parser-time-limit-env.patch. During a heavy page load the
+    # WebProcess main thread is saturated (measured ~91% CPU, mostly site JS)
+    # and queued touch events starve — the page can't scroll until the load
+    # event fires. Align maximally-nested DOM timers to a coarse grid while
+    # the top document is loading (batches setTimeout storms from
+    # ads/analytics into bursts with input-sized gaps between them), and
+    # yield the HTML parser every 100 ms instead of 500 ms. Both revert to
+    # stock behavior once the load event fires; =0 disables (timer) /
+    # restores stock (parser) for A/B.
+    export WEBKIT_LOADING_TIMER_ALIGNMENT_MS="${WEBKIT_LOADING_TIMER_ALIGNMENT_MS:-50}"
+    export WEBKIT_PARSER_TIME_LIMIT_MS="${WEBKIT_PARSER_TIME_LIMIT_MS:-100}"
+
     # ── Overlay scrollbar size ────────────────────────────────────────────────
     # Honoured by webkit-adwaita-scrollbar-scale-env.patch. Atlantic's 3x UI
     # scale is implemented as page zoom (webkit_web_view_set_zoom_level), which

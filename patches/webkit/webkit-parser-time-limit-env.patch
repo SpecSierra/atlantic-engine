@@ -1,0 +1,42 @@
+Yield the HTML parser every 100 ms instead of 500 ms
+(WEBKIT_PARSER_TIME_LIMIT_MS, default 100; =0 restores stock 500).
+
+During the parse phase of a page load the parser pumps tokens for up to
+500 ms before yielding to the run loop; queued touch events can only be
+serviced in those yields, so the page feels frozen in 500 ms steps on a
+phone. Cut the slice to 100 ms so input gets a service window 5x more
+often. Each yield is a single zero-delay run-loop turn, so parse
+throughput is essentially unchanged. Pairs with
+webkit-loading-timer-alignment-env.patch.
+
+--- a/Source/WebCore/html/parser/HTMLParserScheduler.cpp	2026-07-05 17:04:47.847899780 +0000
++++ b/Source/WebCore/html/parser/HTMLParserScheduler.cpp	2026-07-05 17:05:52.735200038 +0000
+@@ -35,6 +35,7 @@
+ #include "LocalFrameView.h"
+ #include "ScriptController.h"
+ #include "ScriptElement.h"
++#include <cstdlib>
+ #include <wtf/TZoneMallocInlines.h>
+ #include "FrameDestructionObserverInlines.h"
+ 
+@@ -44,8 +45,18 @@
+ 
+ static Seconds parserTimeLimit(Page* page)
+ {
+-    // Always yield after exceeding this.
+-    constexpr auto defaultParserTimeLimit = 500_ms;
++    // Always yield after exceeding this. The stock 500 ms slice leaves the
++    // main thread input-dead for up to half a second at a time during the
++    // HTML-parsing phase of a page load; on a phone that reads as a frozen,
++    // unscrollable page. Yield more often so queued touch events get
++    // serviced between parser chunks -- each yield is just one run-loop
++    // turn, so parse throughput barely changes.
++    // WEBKIT_PARSER_TIME_LIMIT_MS overrides (default 100; 0 = stock 500).
++    static const Seconds defaultParserTimeLimit = []() -> Seconds {
++        const char* env = getenv("WEBKIT_PARSER_TIME_LIMIT_MS");
++        double ms = env ? atof(env) : 100.0;
++        return ms > 0 ? Seconds::fromMilliseconds(ms) : Seconds::fromMilliseconds(500);
++    }();
+ 
+     // We're using the poorly named customHTMLTokenizerTimeDelay setting.
+     if (page && page->hasCustomHTMLTokenizerTimeDelay())

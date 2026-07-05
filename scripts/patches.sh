@@ -202,6 +202,16 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # WPE has no TextChecker backend upstream (spellcheck is GTK-only); port
     # the GTK enchant-backed implementation so ENABLE_SPELLCHECK builds/works.
     "patches/webkit/webkit-wpe-spellcheck-enchant.patch"
+    # Load-time responsiveness pair: during a heavy page load the WebProcess
+    # main thread is saturated and queued touch events starve (page cannot
+    # scroll until the load event fires). These two shrink the main-thread
+    # task granularity during load so input gets service windows:
+    #  - loading-timer-alignment: align maximally-nested DOM timers to a 50ms
+    #    grid while the top document is loading (WEBKIT_LOADING_TIMER_ALIGNMENT_MS)
+    #  - parser-time-limit: yield the HTML parser every 100ms instead of 500ms
+    #    (WEBKIT_PARSER_TIME_LIMIT_MS)
+    "patches/webkit/webkit-loading-timer-alignment-env.patch"
+    "patches/webkit/webkit-parser-time-limit-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(
