@@ -21,6 +21,7 @@
 #include "config.h"
 #include "WPEQtView.h"
 
+#include "WPEGeolocationBridge.h"
 #include "WPEQtViewBackend.h"
 #include "WPEQtViewLoadRequest.h"
 #include "WPEQtViewLoadRequestPrivate.h"
@@ -244,6 +245,10 @@ void WPEQtView::createWebView()
         webkit_web_context_set_spell_checking_enabled(webContext, TRUE);
         const gchar* spellLanguages[] = { "en_US", nullptr };
         webkit_web_context_set_spell_checking_languages(webContext, spellLanguages);
+
+        // Geolocation: feed positions from Qt Positioning (SFOS GPS stack);
+        // WebKit's own provider needs GeoClue2, which SFOS doesn't ship.
+        WPEGeolocationBridge::ensure(webContext);
     }
 
     if (m_pendingDeviceScaleFactor != 1.0)

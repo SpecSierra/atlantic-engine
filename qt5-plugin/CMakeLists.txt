@@ -3,7 +3,7 @@ project(qtwpe LANGUAGES CXX)
 
 include(GNUInstallDirs)
 
-find_package(Qt5 REQUIRED COMPONENTS Core Quick Gui)
+find_package(Qt5 REQUIRED COMPONENTS Core Quick Gui Positioning)
 find_package(Qt5Test)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(Epoxy REQUIRED IMPORTED_TARGET epoxy)
@@ -26,6 +26,7 @@ add_library(qtwpe MODULE
     WPEQtViewLoadRequest.cpp
     WPEWaylandSubsurface.cpp
     WPEChromeOverlay.cpp
+    WPEGeolocationBridge.cpp
 )
 set_target_properties(qtwpe PROPERTIES
     OUTPUT_NAME qtwpe
@@ -43,6 +44,7 @@ target_link_libraries(qtwpe PRIVATE
     Qt5::Core
     Qt5::Quick
     Qt5::Gui
+    Qt5::Positioning
 )
 target_include_directories(qtwpe PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
