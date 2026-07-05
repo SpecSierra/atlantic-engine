@@ -15,8 +15,11 @@ set(ENABLE_GPU_PROCESS OFF CACHE BOOL "" FORCE)
 
 set(ENABLE_VIDEO ON CACHE BOOL "" FORCE)
 set(ENABLE_MEDIA_STREAM ON CACHE BOOL "" FORCE)
-set(ENABLE_MEDIA_RECORDER OFF CACHE BOOL "" FORCE)
-set(ENABLE_WEB_CODECS OFF CACHE BOOL "" FORCE)
+# MediaRecorder + WebCodecs: needed by WebRTC sites' capability detection
+# (vdo.ninja/codecs dies on an unguarded MediaRecorder reference). Both sit on
+# GStreamer encoders; encode paths on hybris are otherwise untested.
+set(ENABLE_MEDIA_RECORDER ON CACHE BOOL "" FORCE)
+set(ENABLE_WEB_CODECS ON CACHE BOOL "" FORCE)
 set(ENABLE_WEB_AUDIO ON CACHE BOOL "" FORCE)
 set(ENABLE_GEOLOCATION OFF CACHE BOOL "" FORCE)
 set(ENABLE_GAMEPAD OFF CACHE BOOL "" FORCE)
