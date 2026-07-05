@@ -390,3 +390,15 @@ diff -ruN a/Source/WebKit/UIProcess/wpe/TextCheckerWPE.cpp b/Source/WebKit/UIPro
 +} // namespace WebKit
 +
 +#endif // PLATFORM(WPE)
+diff -ruN a/Source/WTF/wtf/PlatformUse.h b/Source/WTF/wtf/PlatformUse.h
+--- a/Source/WTF/wtf/PlatformUse.h	2026-07-05 12:41:25.577098875 +0000
++++ b/Source/WTF/wtf/PlatformUse.h	2026-07-05 12:41:25.601099011 +0000
+@@ -186,7 +186,7 @@
+ #define USE_IMLANG_FONT_LINK2 1
+ #endif
+ 
+-#if PLATFORM(COCOA) || PLATFORM(GTK)
++#if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)
+ #define USE_UNIFIED_TEXT_CHECKING 1
+ #endif
+ 
