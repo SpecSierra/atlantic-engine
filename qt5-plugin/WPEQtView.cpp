@@ -226,15 +226,12 @@ void WPEQtView::createWebView()
     g_signal_connect(m_webView, "load-changed", G_CALLBACK(notifyLoadChangedCallback), this);
     g_signal_connect(m_webView, "load-failed", G_CALLBACK(notifyLoadFailedCallback), this);
 
-    // Allow camera/microphone and device enumeration requests. Unhandled
-    // requests are auto-denied, which silently breaks WebRTC capture.
-    // Geolocation is deliberately NOT handled here: the embedder (browser)
+    // Allow device-enumeration requests (harmless metadata). Camera/mic and
+    // geolocation are deliberately NOT handled here: the embedder (browser)
     // connects its own permission-request handler and prompts the user.
-    // TODO: surface camera/mic as user-facing prompts too.
     g_signal_connect(m_webView, "permission-request",
         G_CALLBACK(+[](WebKitWebView*, WebKitPermissionRequest* request, gpointer) -> gboolean {
-            if (WEBKIT_IS_USER_MEDIA_PERMISSION_REQUEST(request)
-                || WEBKIT_IS_DEVICE_INFO_PERMISSION_REQUEST(request)) {
+            if (WEBKIT_IS_DEVICE_INFO_PERMISSION_REQUEST(request)) {
                 webkit_permission_request_allow(request);
                 return TRUE;
             }
