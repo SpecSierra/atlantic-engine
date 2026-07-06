@@ -57,6 +57,7 @@ name = "atlantic-adblock"
 version = "0.1.0"
 dependencies = [
  "adblock",
+ "serde_json",
 ]
 
 [[package]]

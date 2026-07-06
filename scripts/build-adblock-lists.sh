@@ -60,6 +60,10 @@ fetch_content_blocker_list fanboy-social     "${FANBOY_SOCIAL_URL}"    "${FANBOY
 fetch_content_blocker_list anti-cv           "${ANTI_CV_URL}"          "${ANTI_CV_SHA256:-}"
 fetch_content_blocker_list fanboy-cookie     "${FANBOY_COOKIE_URL}"    "${FANBOY_COOKIE_SHA256:-}"
 
+# uBO scriptlet/redirect resources (JSON, not a filter list — NOT passed to the
+# builder; shipped as-is next to engine.dat and loaded at runtime)
+fetch_content_blocker_list adblock-resources "${ADBLOCK_RESOURCES_URL}" "${ADBLOCK_RESOURCES_SHA256:-}"
+
 # Regional Anti-CV language lists
 for region in ${REGIONAL_ANTI_CV_LISTS}; do
     fetch_content_blocker_list "anti-cv-${region}" "${ANTI_CV_REPO_RAW}/${region}.txt" ""

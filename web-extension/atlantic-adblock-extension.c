@@ -33,12 +33,15 @@ typedef struct {
 } MatchResult;
 
 extern AtlanticAdblockEngine *atlantic_adblock_create_from_cache(const uint8_t *data, size_t len);
+extern bool atlantic_adblock_use_resources_json(AtlanticAdblockEngine *engine,
+                                                const uint8_t *data, size_t len);
 extern MatchResult atlantic_adblock_match_network(AtlanticAdblockEngine *engine,
                                                   const char *src, const char *req,
                                                   const char *type, int third_party);
 extern void atlantic_adblock_free_match_result(MatchResult result);
 
 #define ATL_ENGINE_DAT "/usr/share/atlantic-browser/engine.dat"
+#define ATL_RESOURCES_JSON "/usr/share/atlantic-browser/adblock-resources.json"
 #define ATL_TOGGLE_MESSAGE "atlantic-adblock-set-enabled"
 
 static AtlanticAdblockEngine *g_engine = NULL;
@@ -196,6 +199,18 @@ webkit_web_process_extension_initialize_with_user_data(WebKitWebProcessExtension
     if (g_file_get_contents(ATL_ENGINE_DAT, &data, &len, NULL) && len > 0)
         g_engine = atlantic_adblock_create_from_cache((const uint8_t *)data, len);
     g_free(data);
+
+    /* Scriptlet/redirect resources are not part of the serialized cache; load
+     * them so redirect= rules resolve to their surrogates instead of no-ops. */
+    if (g_engine) {
+        char *res = NULL;
+        gsize rlen = 0;
+        if (g_file_get_contents(ATL_RESOURCES_JSON, &res, &rlen, NULL) && rlen > 0) {
+            if (!atlantic_adblock_use_resources_json(g_engine, (const uint8_t *)res, rlen))
+                fprintf(stderr, "[ATL-ADBLOCK-EXT] resources.json failed to load\n");
+        }
+        g_free(res);
+    }
 
     fprintf(stderr, "[ATL-ADBLOCK-EXT] initialized: engine=%s enabled=%d\n",
             g_engine ? "loaded" : "FAILED", g_enabled);

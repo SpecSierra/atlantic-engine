@@ -490,10 +490,14 @@ cp -a "${EXT_BUILD}/libatlantic-adblock-extension.so" \
       "${S}/usr/lib64/atlantic-browser/web-extensions/"
 maybe_patch_glibc_versions "${S}/usr/lib64/atlantic-browser/web-extensions/libatlantic-adblock-extension.so"
 
-# Adblock engine cache (FlatBuffers .dat)
+# Adblock engine cache (FlatBuffers .dat) + scriptlet/redirect resources
+# (resources are not part of the serialized engine; loaded at runtime by both
+# the UI-process AdBlockEngine and the WebProcess extension)
 mkdir -p "${S}/usr/share/atlantic-browser"
 cp -a "${CONTENT_BLOCKER_BUILD_DIR}/engine.dat" \
       "${S}/usr/share/atlantic-browser/engine.dat"
+cp -a "${CONTENT_BLOCKER_FETCH_DIR}/adblock-resources.txt" \
+      "${S}/usr/share/atlantic-browser/adblock-resources.json"
 
 # QML files
 mkdir -p "${S}/usr/share/atlantic-browser"

@@ -138,6 +138,80 @@ pub unsafe extern "C" fn atlantic_adblock_free_match_result(result: MatchResult)
     }
 }
 
+/// Load scriptlet/redirect resources (Brave `adblock-resources` dist/resources.json,
+/// a JSON array of Resource objects). Resources are NOT part of the serialized
+/// engine cache, so this must be called after create_from_cache in every process
+/// that needs `##+js(...)` scriptlets (UI cosmetics) or `redirect=` surrogates
+/// (WebProcess network extension).
+#[no_mangle]
+pub unsafe extern "C" fn atlantic_adblock_use_resources_json(
+    engine: *mut AtlanticAdblockEngine,
+    data: *const u8,
+    len: usize,
+) -> bool {
+    if engine.is_null() || data.is_null() || len == 0 {
+        return false;
+    }
+    let bytes = slice::from_raw_parts(data, len);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        match serde_json::from_slice::<Vec<adblock::resources::Resource>>(bytes) {
+            Ok(resources) => {
+                let count = resources.len();
+                (*engine).engine.use_resources(resources);
+                count > 0
+            }
+            Err(_) => false,
+        }
+    }));
+    result.unwrap_or(false)
+}
+
+/// Generic cosmetic filtering: given the classes and ids present in the page's
+/// DOM (newline-separated), return the newline-separated hide selectors from
+/// GENERIC rules (`##.ad-banner` etc.), honouring the site's exceptions.
+/// Complements atlantic_adblock_get_cosmetic, which only returns site-SPECIFIC
+/// selectors. Free the result with atlantic_adblock_free_string.
+#[no_mangle]
+pub unsafe extern "C" fn atlantic_adblock_get_generic_hides(
+    engine: *mut AtlanticAdblockEngine,
+    url: *const c_char,
+    classes: *const c_char,
+    ids: *const c_char,
+) -> *mut c_char {
+    if engine.is_null() || url.is_null() {
+        return std::ptr::null_mut();
+    }
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let eng = &(*engine).engine;
+        let url_str = str_from_c(url);
+        let class_list: Vec<&str> = str_from_c(classes)
+            .split('\n')
+            .filter(|s| !s.is_empty())
+            .collect();
+        let id_list: Vec<&str> = str_from_c(ids)
+            .split('\n')
+            .filter(|s| !s.is_empty())
+            .collect();
+        if class_list.is_empty() && id_list.is_empty() {
+            return std::ptr::null_mut();
+        }
+        let exceptions = eng.url_cosmetic_resources(url_str).exceptions;
+        let selectors = eng.hidden_class_id_selectors(class_list, id_list, &exceptions);
+        if selectors.is_empty() {
+            return std::ptr::null_mut();
+        }
+        to_c_string(&selectors.join("\n"))
+    }));
+    result.unwrap_or(std::ptr::null_mut())
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn atlantic_adblock_free_string(s: *mut c_char) {
+    if !s.is_null() {
+        drop(CString::from_raw(s));
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn atlantic_adblock_get_cosmetic(
     engine: *mut AtlanticAdblockEngine,
