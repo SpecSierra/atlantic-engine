@@ -228,6 +228,16 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # generated sailjail profile (build-rpms-native.sh) or the cache writes
     # vanish inside the jail.
     "patches/webkit/webkit-url-cache-disk-capacity-env.patch"
+    # webkit-sw-fallback-http-cache.patch: when a service worker's fetch handler
+    # does not respondWith() (pass-through, e.g. theverge's ad-block SW), the
+    # stock fallback restarts as a raw network load that neither reads nor
+    # stores the HTTP disk cache — every subresource of every SW-controlled
+    # page re-downloads on every visit. Route the pass-through case through the
+    # normal cache-aware startRequest() path instead (device-proven: 0 → 30/38
+    # disk-cache hits on theverge /_next/static). Complements the capacity
+    # patch above — without this, SW-controlled sites never benefit from the
+    # cache it enables. WEBKIT_SW_FALLBACK_HTTP_CACHE=0 = stock behaviour.
+    "patches/webkit/webkit-sw-fallback-http-cache.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(
