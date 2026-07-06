@@ -60,9 +60,11 @@ fetch_content_blocker_list fanboy-social     "${FANBOY_SOCIAL_URL}"    "${FANBOY
 fetch_content_blocker_list anti-cv           "${ANTI_CV_URL}"          "${ANTI_CV_SHA256:-}"
 fetch_content_blocker_list fanboy-cookie     "${FANBOY_COOKIE_URL}"    "${FANBOY_COOKIE_SHA256:-}"
 
-# uBO scriptlet/redirect resources (JSON, not a filter list — NOT passed to the
-# builder; shipped as-is next to engine.dat and loaded at runtime)
+# Adblock runtime resources (not filter lists — NOT passed to the engine
+# builder args): Brave redirect surrogates + uBO scriptlet bodies, merged below
+# by `builder --resources` into adblock-resources.json (loaded at runtime).
 fetch_content_blocker_list adblock-resources "${ADBLOCK_RESOURCES_URL}" "${ADBLOCK_RESOURCES_SHA256:-}"
+fetch_content_blocker_list ubo-scriptlets    "${UBO_SCRIPTLETS_URL}"    "${UBO_SCRIPTLETS_SHA256:-}"
 
 # Regional Anti-CV language lists
 for region in ${REGIONAL_ANTI_CV_LISTS}; do
@@ -103,3 +105,9 @@ if [ -s "${CONTENT_BLOCKER_DATA_DIR}/atlantic-extra.txt" ]; then
     BUILDER_ARGS+=("${CONTENT_BLOCKER_DATA_DIR}/atlantic-extra.txt")
 fi
 "${SCRIPT_DIR}/adblock-engine/target/release/builder" "${BUILDER_ARGS[@]}"
+
+echo "--- Assembling adblock runtime resources ---"
+"${SCRIPT_DIR}/adblock-engine/target/release/builder" --resources \
+    "${CONTENT_BLOCKER_BUILD_DIR}/adblock-resources.json" \
+    "${CONTENT_BLOCKER_FETCH_DIR}/ubo-scriptlets.txt" \
+    "${CONTENT_BLOCKER_FETCH_DIR}/adblock-resources.txt"

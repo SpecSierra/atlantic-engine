@@ -496,7 +496,7 @@ maybe_patch_glibc_versions "${S}/usr/lib64/atlantic-browser/web-extensions/libat
 mkdir -p "${S}/usr/share/atlantic-browser"
 cp -a "${CONTENT_BLOCKER_BUILD_DIR}/engine.dat" \
       "${S}/usr/share/atlantic-browser/engine.dat"
-cp -a "${CONTENT_BLOCKER_FETCH_DIR}/adblock-resources.txt" \
+cp -a "${CONTENT_BLOCKER_BUILD_DIR}/adblock-resources.json" \
       "${S}/usr/share/atlantic-browser/adblock-resources.json"
 
 # QML files
