@@ -344,6 +344,13 @@ for so in "${COMPAT_BUILD}"/*.so "${COMPAT_BUILD}"/*.so.[0-9]*; do
     [ -f "$so" ] && cp -a "$so" "${S}/usr/lib64/wpe-compat/"
 done
 
+# GStreamer droid camera device provider — must live in the scanned plugin
+# path (GST_PLUGIN_SYSTEM_PATH_1_0=/usr/lib64/gstreamer-1.0), not wpe-compat.
+mkdir -p "${S}/usr/lib64/gstreamer-1.0"
+cp -a "${COMPAT_BUILD}/gstreamer-1.0/libgstdroidcamdeviceprovider.so" \
+      "${S}/usr/lib64/gstreamer-1.0/"
+maybe_patch_glibc_versions "${S}/usr/lib64/gstreamer-1.0/libgstdroidcamdeviceprovider.so"
+
 # Create versioned symlinks for bundled runtime libs
 (cd "${S}/usr/lib64/wpe-compat"
     ln -sfn libsoup-3.0.so.0.7.1    libsoup-3.0.so.0
@@ -543,7 +550,7 @@ Comment=Atlantic Browser (WPE WebKit)
 MimeType=text/html;application/xhtml+xml;application/xml;text/xml;x-scheme-handler/http;x-scheme-handler/https;
 
 [X-Sailjail]
-Permissions=Internet;Audio;WebView;UserDirs
+Permissions=Internet;Audio;Camera;Microphone;WebView;UserDirs
 OrganizationName=org.atlantic
 ApplicationName=atlanticbrowser
 DESKTOP

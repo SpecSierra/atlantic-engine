@@ -65,6 +65,17 @@ $CC -O2 -march=armv8-a -mtune=cortex-a73.cortex-a53 -fPIC $SHARED \
     -o "${COMPAT_BUILD}/libharfbuzz-icu.so.0" "${COMPAT_SRC}/libharfbuzz_icu_stub.c"
 ln -sfn libharfbuzz-icu.so.0 "${COMPAT_BUILD}/libharfbuzz-icu.so"
 
+# GStreamer device provider exposing gst-droid cameras (droidcamsrc) to
+# WebKit's GstDeviceMonitor — without it getUserMedia({video}) finds no
+# camera. Built against host GStreamer headers (ABI-stable, links the
+# device's libgstreamer at runtime); staged to /usr/lib64/gstreamer-1.0.
+mkdir -p "${COMPAT_BUILD}/gstreamer-1.0"
+$CC -O2 -march=armv8-a -mtune=cortex-a73.cortex-a53 -fPIC $SHARED \
+    $(pkg-config --cflags gstreamer-1.0) \
+    -o "${COMPAT_BUILD}/gstreamer-1.0/libgstdroidcamdeviceprovider.so" \
+    "${SCRIPT_DIR}/shims/droidcam/gstdroidcamdeviceprovider.c" \
+    $(pkg-config --libs gstreamer-1.0)
+
 # Copy missing runtime libs from Ubuntu (not present on SFOS) into compat dir
 UBUNTU_LIBS=/usr/lib/aarch64-linux-gnu
 for lib in \
