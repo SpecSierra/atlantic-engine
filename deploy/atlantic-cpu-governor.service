@@ -1,5 +1,5 @@
 [Unit]
-Description=Atlantic: rev the big CPU cluster (fix vendor-init powersave lock)
+Description=Atlantic: repair the big CPU cluster governor (vendor init leaves it powersave-locked or schedutil floor-stuck)
 Documentation=https://github.com/SpecSierra/atlantic-engine
 # Run well after libhybris/droid-hal-init has applied the vendor power init.
 After=multi-user.target

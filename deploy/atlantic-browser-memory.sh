@@ -24,6 +24,18 @@ set -u
 MARKER=/run/atlantic-browser-memory.done
 [ -e "${MARKER}" ] && exit 0
 
+# Small-RAM devices only (the class this was measured and tuned on). On a
+# >= 6 GB device (e.g. the future 12 GB Mali target) the extra zram is pointless
+# resident overhead and the 2.0/2.75 GB cgroup ceilings would WRONGLY constrain
+# the browser — skip everything. This self-gate is what makes the service safe
+# to ship in the public all-in-one bundle for unknown devices.
+mem_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null || echo 0)
+if [ "${mem_kb:-0}" -ge 6291456 ] 2>/dev/null; then
+    echo "atlantic-browser-memory: ${mem_kb} kB RAM >= 6 GB — no swap/cgroup tuning needed"
+    : > "${MARKER}" 2>/dev/null || true
+    exit 0
+fi
+
 # ── 1. Add a 2 GB lz4 zram swap device ───────────────────────────────────────
 if [ -w /sys/class/zram-control/hot_add ]; then
     n=$(cat /sys/class/zram-control/hot_add 2>/dev/null || echo "")

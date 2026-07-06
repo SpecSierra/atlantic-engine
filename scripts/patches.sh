@@ -217,6 +217,17 @@ readonly WEBKIT_SOURCE_PATCHES=(
     #    gesture events; makes scrolling work DURING page load
     #    (WEBKIT_TOUCH_ACK_TIMEOUT_MS)
     "patches/webkit/webkit-touch-ack-timeout-env.patch"
+    # webkit-url-cache-disk-capacity-env.patch: WEBKIT_URL_CACHE_DISK_CAPACITY_MB
+    # overrides the cache-model-derived HTTP disk cache capacity (NetworkProcess).
+    # Lets the ship config keep ATLANTIC_CACHE_MODEL=viewer (smallest RAM caches,
+    # no bfcache — the OOM lever) while restoring a BOUNDED on-flash HTTP cache:
+    # DocumentViewer hardwires disk capacity to 0, so every repeat visit
+    # re-downloaded every subresource over the radio (device-verified: 8 KB
+    # ~/.cache after weeks of use). runtime-common.sh ships 100 MB; unset/0 =
+    # stock capacity for the model. Needs the ~/.cache/wpe whitelist in the
+    # generated sailjail profile (build-rpms-native.sh) or the cache writes
+    # vanish inside the jail.
+    "patches/webkit/webkit-url-cache-disk-capacity-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

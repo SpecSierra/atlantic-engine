@@ -376,6 +376,18 @@ atlantic_export_browser_env() {
     # browser (WPEWebContainer); env-tunable (web / document / viewer).
     export ATLANTIC_CACHE_MODEL="${ATLANTIC_CACHE_MODEL:-viewer}"
 
+    # ── HTTP disk cache (bounded) ─────────────────────────────────────────────
+    # Honoured by webkit-url-cache-disk-capacity-env.patch (read by the
+    # NetworkProcess). The viewer cache model above zeroes WebKit's HTTP DISK
+    # cache along with the RAM caches, so every repeat visit re-downloaded every
+    # subresource over the radio (device-verified: ~/.cache/org.atlantic held
+    # 8 KB after weeks of use) — a large share of perceived load slowness on
+    # revisits. This restores a bounded on-flash cache (NetworkCache evicts to
+    # stay under the cap) WITHOUT re-inflating any RAM cache; the OOM levers
+    # (viewer model, memory-pressure budget below) are unchanged. 0/unset =
+    # stock capacity for the cache model (viewer → no disk cache) for A/B.
+    export WEBKIT_URL_CACHE_DISK_CAPACITY_MB="${WEBKIT_URL_CACHE_DISK_CAPACITY_MB:-100}"
+
     # ── Scroll tile policy: low-resolution tiles during scroll ────────────────
     # Honoured by webkit-lowres-tiles-during-scroll-env.patch +
     # webkit-directional-tile-coverage-env.patch (read by the WebProcess).
