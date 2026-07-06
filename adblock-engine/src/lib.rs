@@ -157,7 +157,11 @@ pub unsafe extern "C" fn atlantic_adblock_get_cosmetic(
             std::ptr::null()
         } else {
             let combined: Vec<&str> = resources.hide_selectors.iter().map(|s| s.as_str()).collect();
-            let joined = combined.join(", ");
+            // Newline-separated: selectors can legitimately contain commas
+            // (":is(a, b)", attribute values), so a comma join cannot be split
+            // back apart by the consumer. The C++ side emits one CSS rule per
+            // line so an invalid selector only invalidates its own rule.
+            let joined = combined.join("\n");
             // to_c_string tolerates interior NUL bytes (downloaded filter lists are
             // untrusted); CString::new().unwrap() here would panic instead.
             to_c_string(&joined) as *const c_char
