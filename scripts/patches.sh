@@ -261,6 +261,14 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # (ProgressTracker window) so dirty regions coalesce and each batched
     # update paints the union once. runtime-common.sh ships 250 ms; =0 stock.
     "patches/webkit/webkit-load-rendering-throttle-env.patch"
+    # webkit-load-rendering-throttle-layertreehost.patch: part 2 — device A/B
+    # showed part 1 was inert (DCL/paint passes unchanged): this port paces
+    # rendering updates via the LayerTreeHost run-loop observer, not WebCore's
+    # RenderingUpdateScheduler/DisplayLink. Defer the observer with a one-shot
+    # timer so updates run at most once per WEBKIT_LOAD_RENDERING_INTERVAL_MS
+    # while the part-1 ProgressTracker load window is active. Must apply AFTER
+    # the env patch (Page.h context depends on it).
+    "patches/webkit/webkit-load-rendering-throttle-layertreehost.patch"
     # webkit-paint-log-diagnostic.patch: TEMPORARY env-gated paint/invalidation
     # logging (WEBKIT_PAINT_LOG=1, WebProcess stderr) for the load-time
     # paint-storm hunt — per-layer damage (GLC FULL/RECT), per-proxy dirty

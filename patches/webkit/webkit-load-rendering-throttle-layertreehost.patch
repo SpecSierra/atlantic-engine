@@ -1,0 +1,136 @@
+Load rendering throttle, part 2: hook the LayerTreeHost run-loop observer.
+
+Device A/B on build 465 showed the throttle was INERT (warm-cache
+franceinfo: DCL 4237ms off vs 4490ms on, tile-paint passes 394 vs 395):
+on this port rendering updates are NOT driven by WebCore's
+RenderingUpdateScheduler/DisplayLink fps machinery that part 1 clamps -
+WebChromeClient::scheduleRenderingUpdate() routes to the DrawingArea and
+LayerTreeHost schedules its run-loop observer directly, so the update
+cadence never consulted Page::preferredRenderingUpdateInterval().
+
+Apply the throttle where this port actually paces rendering updates:
+LayerTreeHost::scheduleRenderingUpdate() defers the run-loop observer
+with a one-shot timer until WEBKIT_LOAD_RENDERING_INTERVAL_MS has elapsed
+since the last update, while Page::isRenderingThrottledForLoad() (the
+ProgressTracker main-load window from part 1) is active. Dirty regions
+keep accumulating; the batched update paints the union once. Part 1's
+Page-side clamp stays (harmless, and correct for any future scheduler
+use); this adds the missing enforcement point. Applies ON TOP of
+webkit-load-rendering-throttle-env.patch.
+
+--- a/Source/WebCore/page/Page.h
++++ b/Source/WebCore/page/Page.h
+@@ -664,6 +664,7 @@
+     WEBCORE_EXPORT std::optional<FramesPerSecond> preferredRenderingUpdateFramesPerSecond(OptionSet<PreferredRenderingUpdateOption> = allPreferredRenderingUpdateOptions) const;
+     WEBCORE_EXPORT Seconds preferredRenderingUpdateInterval() const;
+     void setRenderingThrottledForLoad(bool);
++    bool isRenderingThrottledForLoad() const { return m_renderingThrottledForLoad; }
+ 
+     const FloatBoxExtent& contentInsets() const { return m_contentInsets; }
+     void setContentInsets(const FloatBoxExtent& insets) { m_contentInsets = insets; }
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
+@@ -44,6 +44,7 @@
+ #include <WebCore/LocalFrameView.h>
+ #include <WebCore/NativeImage.h>
+ #include <WebCore/PageOverlayController.h>
++#include <WebCore/Page.h>
+ #include <WebCore/PlatformDisplay.h>
+ #include <WebCore/ProcessCapabilities.h>
+ #include <WebCore/RenderLayerBacking.h>
+@@ -52,6 +53,7 @@
+ #include <WebCore/Settings.h>
+ #include <WebCore/ThreadedScrollingTree.h>
+ #include <WebCore/WindowEventLoop.h>
++#include <cstdlib>
+ #include <wtf/SetForScope.h>
+ #include <wtf/SystemTracing.h>
+ #include <wtf/TZoneMallocInlines.h>
+@@ -69,9 +71,24 @@
+ 
+ WTF_MAKE_TZONE_ALLOCATED_IMPL(LayerTreeHost);
+ 
++// See webkit-load-rendering-throttle-env.patch: cap rendering-update cadence while
++// the main load is in progress. On this port rendering updates are driven by the
++// LayerTreeHost run-loop observer (the WebCore RenderingUpdateScheduler/DisplayLink
++// machinery is bypassed), so the throttle must live here.
++static Seconds loadRenderingThrottleInterval()
++{
++    static Seconds interval = [] {
++        const char* v = getenv("WEBKIT_LOAD_RENDERING_INTERVAL_MS");
++        int ms = v ? atoi(v) : 0;
++        return Seconds::fromMilliseconds(std::max(ms, 0));
++    }();
++    return interval;
++}
++
+ LayerTreeHost::LayerTreeHost(WebPage& webPage)
+     : m_webPage(webPage)
+     , m_sceneState(CoordinatedSceneState::create())
++    , m_loadThrottledRenderingUpdateTimer(*this, &LayerTreeHost::loadThrottledRenderingUpdateTimerFired)
+ #if USE(CAIRO)
+     , m_paintingEngine(Cairo::PaintingEngine::create())
+ #elif USE(SKIA)
+@@ -164,9 +181,27 @@
+         return;
+     }
+ 
++    if (auto throttleInterval = loadRenderingThrottleInterval(); throttleInterval > 0_s) {
++        auto* corePage = m_webPage.corePage();
++        if (corePage && corePage->isRenderingThrottledForLoad()) {
++            auto now = MonotonicTime::now();
++            auto nextUpdateTime = m_lastRenderingUpdateTime + throttleInterval;
++            if (now < nextUpdateTime) {
++                if (!m_loadThrottledRenderingUpdateTimer.isActive())
++                    m_loadThrottledRenderingUpdateTimer.startOneShot(nextUpdateTime - now);
++                return;
++            }
++        }
++    }
++
+     scheduleRenderingUpdateRunLoopObserver();
+ }
+ 
++void LayerTreeHost::loadThrottledRenderingUpdateTimerFired()
++{
++    scheduleRenderingUpdate();
++}
++
+ void LayerTreeHost::scheduleRenderingUpdateRunLoopObserver()
+ {
+     if (m_renderingUpdateRunLoopObserver->isScheduled())
+@@ -190,6 +225,7 @@
+ 
+ void LayerTreeHost::updateRendering()
+ {
++    m_lastRenderingUpdateTime = MonotonicTime::now();
+     invalidateRenderingUpdateRunLoopObserver();
+ 
+     RELEASE_ASSERT(!m_isUpdatingRendering);
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.h
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.h
+@@ -37,6 +37,7 @@
+ #include <WebCore/GraphicsLayerFactory.h>
+ #include <WebCore/PlatformScreen.h>
+ #include <WebCore/RunLoopObserver.h>
++#include <WebCore/Timer.h>
+ #include <wtf/CheckedRef.h>
+ #include <wtf/Forward.h>
+ #include <wtf/Lock.h>
+@@ -125,6 +126,7 @@
+     void scheduleRenderingUpdateRunLoopObserver();
+     void invalidateRenderingUpdateRunLoopObserver();
+     void renderingUpdateRunLoopObserverFired();
++    void loadThrottledRenderingUpdateTimerFired();
+     void updateRendering();
+     void requestCompositionForRenderingUpdate();
+ 
+@@ -179,6 +181,8 @@
+         std::optional<uint32_t> compositionRequestID;
+     } m_forceRepaintAsync;
+     std::unique_ptr<WebCore::RunLoopObserver> m_renderingUpdateRunLoopObserver;
++    WebCore::Timer m_loadThrottledRenderingUpdateTimer;
++    MonotonicTime m_lastRenderingUpdateTime;
+ #if USE(CAIRO)
+     std::unique_ptr<WebCore::Cairo::PaintingEngine> m_paintingEngine;
+ #elif USE(SKIA)
