@@ -269,6 +269,14 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # while the part-1 ProgressTracker load window is active. Must apply AFTER
     # the env patch (Page.h context depends on it).
     "patches/webkit/webkit-load-rendering-throttle-layertreehost.patch"
+    # webkit-load-rendering-throttle-lossproof.patch: part 3 — fixes the
+    # reddit/onche freeze on 465/466: WebCore latches its rendering-update
+    # request and asks ONCE; the throttle's deferral windows widened existing
+    # LayerTreeHost races (observer fired while waiting = silent drop) into a
+    # permanent freeze. Adds m_renderingUpdatePending re-arming on every
+    # recovery path + WEBKIT_LOAD_RENDERING_THROTTLE_MAX_MS (10s) window cap.
+    # Must apply AFTER the layertreehost patch (same functions).
+    "patches/webkit/webkit-load-rendering-throttle-lossproof.patch"
     # webkit-paint-log-diagnostic.patch: TEMPORARY env-gated paint/invalidation
     # logging (WEBKIT_PAINT_LOG=1, WebProcess stderr) for the load-time
     # paint-storm hunt — per-layer damage (GLC FULL/RECT), per-proxy dirty
