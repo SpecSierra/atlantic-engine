@@ -251,6 +251,13 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # padding-box offset changes still repaint).
     # WEBKIT_REPAINT_ON_LAYER_RESIZE=1 = stock behaviour.
     "patches/webkit/webkit-no-full-repaint-on-layer-grow.patch"
+    # webkit-paint-log-diagnostic.patch: TEMPORARY env-gated paint/invalidation
+    # logging (WEBKIT_PAINT_LOG=1, WebProcess stderr) for the load-time
+    # paint-storm hunt — per-layer damage (GLC FULL/RECT), per-proxy dirty
+    # rects (INVAL), tile-paint passes (PAINT) and full tile drops (DROP-ALL
+    # with reason). Zero overhead when unset. Must apply AFTER the
+    # no-full-repaint patch (contexts overlap). Remove once the storm is fixed.
+    "patches/webkit/webkit-paint-log-diagnostic.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(
