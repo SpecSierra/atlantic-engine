@@ -251,6 +251,16 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # padding-box offset changes still repaint).
     # WEBKIT_REPAINT_ON_LAYER_RESIZE=1 = stock behaviour.
     "patches/webkit/webkit-no-full-repaint-on-layer-grow.patch"
+    # webkit-load-rendering-throttle-env.patch: the REAL paint-storm lever
+    # (device-proven via WEBKIT_PAINT_LOG + setNeedsDisplayInRect breakpoints):
+    # a heavy load issues ~8900 correct, precisely-sized repaint rects through
+    # repaintAfterLayoutIfNeeded — one restyle→layout→paint pass per landing
+    # script/stylesheet/image — re-rastering the visible tiles ~100× (~340 Mpx
+    # per franceinfo load). Cap rendering updates to one per
+    # WEBKIT_LOAD_RENDERING_INTERVAL_MS while the main load is in progress
+    # (ProgressTracker window) so dirty regions coalesce and each batched
+    # update paints the union once. runtime-common.sh ships 250 ms; =0 stock.
+    "patches/webkit/webkit-load-rendering-throttle-env.patch"
     # webkit-paint-log-diagnostic.patch: TEMPORARY env-gated paint/invalidation
     # logging (WEBKIT_PAINT_LOG=1, WebProcess stderr) for the load-time
     # paint-storm hunt — per-layer damage (GLC FULL/RECT), per-proxy dirty

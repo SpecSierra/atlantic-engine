@@ -418,6 +418,14 @@ atlantic_export_browser_env() {
     # restores stock (parser) for A/B.
     export WEBKIT_LOADING_TIMER_ALIGNMENT_MS="${WEBKIT_LOADING_TIMER_ALIGNMENT_MS:-50}"
     export WEBKIT_PARSER_TIME_LIMIT_MS="${WEBKIT_PARSER_TIME_LIMIT_MS:-100}"
+    # Load-time rendering-update throttle (webkit-load-rendering-throttle-env
+    # patch): while the main load is in progress, cap rendering updates
+    # (style/layout/paint/rAF batching) to one per this many ms. A heavy load
+    # otherwise re-rasters the visible tiles ~100x (device-measured ~340 Mpx
+    # = 130 screenfuls per franceinfo load) as each script/stylesheet/image
+    # landing triggers another restyle→layout→paint pass. Reverts to stock
+    # cadence when the load finishes; =0 disables for A/B.
+    export WEBKIT_LOAD_RENDERING_INTERVAL_MS="${WEBKIT_LOAD_RENDERING_INTERVAL_MS:-250}"
     # Touch-ack timeout (webkit-touch-ack-timeout-env.patch): if the WebProcess
     # doesn't ack touch events within this many ms, the UIProcess recognizes the
     # gesture itself and scrolls via the scrolling thread — flicks work during
