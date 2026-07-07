@@ -238,6 +238,19 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # patch above — without this, SW-controlled sites never benefit from the
     # cache it enables. WEBKIT_SW_FALLBACK_HTTP_CACHE=0 = stock behaviour.
     "patches/webkit/webkit-sw-fallback-http-cache.patch"
+    # webkit-no-full-repaint-on-layer-grow.patch: don't repaint a whole layer
+    # just because it changed size — the coordinated tiled backing store keeps
+    # existing tile content valid across resizes and only newly exposed tiles
+    # need painting. During a heavy load the page content layer grows every
+    # time an image/ad lands, and each growth full-repainted the page
+    # (device-proven on franceinfo.fr: 572 whole-layer invalidations, ~595 Mpx
+    # = 219 screenfuls CPU-rastered in ONE load). Covers both the generic
+    # GraphicsLayer::setSize() path (shouldRepaintOnSizeChange override) and
+    # the explicit scrolled-contents resize invalidation in
+    # RenderLayerBacking::updateGeometry() (grow-only skip; shrink and
+    # padding-box offset changes still repaint).
+    # WEBKIT_REPAINT_ON_LAYER_RESIZE=1 = stock behaviour.
+    "patches/webkit/webkit-no-full-repaint-on-layer-grow.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

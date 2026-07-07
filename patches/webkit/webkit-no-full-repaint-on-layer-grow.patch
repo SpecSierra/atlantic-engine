@@ -1,0 +1,106 @@
+Stop repainting entire layers when they merely change size.
+
+Root cause of the load-time paint storm (device-proven on franceinfo.fr,
+build ~459): one page load produced 598 Timeline Paint records totalling
+~595 Mpx - 219 screenfuls rastered on CPU for a single page view - and a
+gdb breakpoint on GraphicsLayerCoordinated::setNeedsDisplay() counted 572
+whole-layer invalidations during that load. The two dominant sources:
+
+1. GraphicsLayer::setSize() calls setNeedsDisplay() whenever
+   shouldRepaintOnSizeChange() is true, and the coordinated port never
+   overrides it (base impl: drawsContent()). But coordinated layers are
+   backed by a tiled backing store (CoordinatedBackingStoreProxy): on
+   resize, existing tiles keep valid content and only newly exposed tiles
+   need painting - exactly why Apple's tiled layers skip this repaint.
+   During a load the main content layer grows every time an image/ad/embed
+   lands, so every growth repainted the whole page (2.7-4 Mpx a pass,
+   dozens of passes).
+
+2. RenderLayerBacking::updateGeometry() explicitly full-invalidates the
+   scrolled-contents layer whenever the scrollable content size changes.
+   Same story: the main frame's scrolled contents grow all through the
+   load. Content whose rendering actually changed is already repainted by
+   renderer-level dirty rects (repaintAfterLayout); the blanket repaint is
+   redundant on grow. We keep it on shrink (edge tiles could hold stale
+   pixels beyond the new content edge) and on padding-box offset changes
+   (contents shift within the layer).
+
+WEBKIT_REPAINT_ON_LAYER_RESIZE=1 restores stock behaviour for A/B.
+
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp
+@@ -44,6 +44,7 @@
+ #include "GraphicsLayerKeyframeValueList.h"
+ #include "Image.h"
+ #include "NativeImage.h"
++#include <cstdlib>
+ #include <wtf/Locker.h>
+ 
+ namespace WebCore {
+@@ -81,6 +82,19 @@
+     return m_platformLayer->id();
+ }
+ 
++bool GraphicsLayerCoordinated::shouldRepaintOnSizeChange() const
++{
++    // The tiled backing store keeps existing tile content valid across
++    // resizes and paints only newly exposed tiles, so a whole-layer repaint
++    // on resize is redundant (renderer-level repaints cover content whose
++    // rendering actually changed).
++    static bool repaintOnResize = [] {
++        const char* v = getenv("WEBKIT_REPAINT_ON_LAYER_RESIZE");
++        return v && *v && *v != '0';
++    }();
++    return repaintOnResize && drawsContent();
++}
++
+ void GraphicsLayerCoordinated::setNeedsDisplay()
+ {
+     if (!m_drawsContent || !m_contentsVisible || m_size.isEmpty())
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.h
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.h
+@@ -119,6 +119,7 @@
+ 
+     void setNeedsDisplay() override;
+     void setNeedsDisplayInRect(const FloatRect&, ShouldClipToLayer = ShouldClipToLayer::Clip) override;
++    bool shouldRepaintOnSizeChange() const override;
+ 
+     FloatSize pixelAlignmentOffset() const override { return m_pixelAlignmentOffset; }
+ 
+--- a/Source/WebCore/rendering/RenderLayerBacking.cpp
++++ b/Source/WebCore/rendering/RenderLayerBacking.cpp
+@@ -126,6 +126,10 @@
+ #include "ModelContext.h"
+ #endif
+ 
++#if USE(COORDINATED_GRAPHICS)
++#include <cstdlib>
++#endif
++
+ namespace WebCore {
+ 
+ WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderLayerBacking);
+@@ -1689,7 +1693,22 @@
+         IntSize scrollSize;
+         if (scrollableArea)
+             scrollSize = IntSize(scrollableArea->scrollWidth(), scrollableArea->scrollHeight());
+-        if (scrollSize != m_scrolledContentsLayer->size() || paddingBoxOffsetChanged)
++#if USE(COORDINATED_GRAPHICS)
++        // Grow-only resizes keep existing tile content valid; see
++        // GraphicsLayerCoordinated::shouldRepaintOnSizeChange(). Same
++        // WEBKIT_REPAINT_ON_LAYER_RESIZE kill-switch restores stock behaviour.
++        static bool repaintOnResize = [] {
++            const char* v = getenv("WEBKIT_REPAINT_ON_LAYER_RESIZE");
++            return v && *v && *v != '0';
++        }();
++        bool scrolledContentsShrank = scrollSize.width() < m_scrolledContentsLayer->size().width()
++            || scrollSize.height() < m_scrolledContentsLayer->size().height();
++        bool repaintScrolledContents = paddingBoxOffsetChanged
++            || (scrollSize != m_scrolledContentsLayer->size() && (scrolledContentsShrank || repaintOnResize));
++#else
++        bool repaintScrolledContents = scrollSize != m_scrolledContentsLayer->size() || paddingBoxOffsetChanged;
++#endif
++        if (repaintScrolledContents)
+             m_scrolledContentsLayer->setNeedsDisplay();
+ 
+         m_scrolledContentsLayer->setSize(scrollSize);
