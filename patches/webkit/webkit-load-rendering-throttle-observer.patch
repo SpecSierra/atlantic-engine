@@ -30,8 +30,19 @@ covers pages (reddit/onche) that hold the progress bar open indefinitely.
 
 The m_isWaitingForRenderer / requestCompositionForRenderingUpdate handshake
 is never touched: that path schedules the observer from its own completion
-handler, independent of this timer. Applies ON TOP of
-webkit-load-rendering-throttle-env.patch. Unset/0 = off (stock).
+handler, independent of this timer.
+
+Compositor gate (fixes the move-during-load freeze): shouldDeferRenderingUpdateForLoad()
+returns false whenever isCompositionRequiredOrOngoing() is true. Moving during
+a load scrolls on the compositor thread and reveals content whose tiles are
+painted by updateRendering(); deferring that paint deadlocks the
+composition<-tiles<-flush handshake -> m_isWaitingForRenderer sticks true and
+the page never repaints again (device-repro'd on onche.org: rAF wedged at 1,
+past the 10s cap, only Qt-chrome interaction unstuck it). So we only coalesce
+during quiet load with no compositor activity -- which is exactly the
+paint-storm case -- and never while scrolling/compositing.
+
+Applies ON TOP of webkit-load-rendering-throttle-env.patch. Unset/0 = off (stock).
 
 --- a/Source/WebCore/page/Page.h
 +++ b/Source/WebCore/page/Page.h
@@ -91,7 +102,7 @@ webkit-load-rendering-throttle-env.patch. Unset/0 = off (stock).
  #if USE(CAIRO)
      , m_paintingEngine(Cairo::PaintingEngine::create())
  #elif USE(SKIA)
-@@ -188,6 +210,43 @@
+@@ -188,6 +210,52 @@
      m_renderingUpdateRunLoopObserver->invalidate();
  }
  
@@ -119,6 +130,15 @@ webkit-load-rendering-throttle-env.patch. Unset/0 = off (stock).
 +    if (now - m_loadThrottleStartTime > loadRenderingThrottleMaxDuration)
 +        return false;
 +
++    // Never defer while the compositor is scrolling/compositing. Moving during a
++    // load reveals content whose tiles are painted by updateRendering; deferring it
++    // deadlocks the composition<-tiles<-flush handshake (m_isWaitingForRenderer
++    // sticks true -> permanent freeze on move-during-load, device-repro'd on
++    // onche.org). Only coalesce during quiet load with no compositor activity,
++    // which is the paint-storm case anyway.
++    if (isCompositionRequiredOrOngoing())
++        return false;
++
 +    return now < m_lastRenderingUpdateTime + interval;
 +}
 +
@@ -135,7 +155,7 @@ webkit-load-rendering-throttle-env.patch. Unset/0 = off (stock).
  void LayerTreeHost::updateRendering()
  {
      invalidateRenderingUpdateRunLoopObserver();
-@@ -196,6 +255,9 @@
+@@ -196,6 +264,9 @@
      if (m_layerTreeStateIsFrozen)
          return;
  
@@ -145,7 +165,7 @@ webkit-load-rendering-throttle-env.patch. Unset/0 = off (stock).
      SetForScope<bool> reentrancyProtector(m_isUpdatingRendering, true);
  
      TraceScope traceScope(LayerTreeHostRenderingUpdateStart, LayerTreeHostRenderingUpdateEnd);
-@@ -278,6 +340,20 @@
+@@ -278,6 +349,20 @@
      if (m_isWaitingForRenderer)
          return;
  
