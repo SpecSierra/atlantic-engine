@@ -27,7 +27,7 @@ many full rebuilds/restyles the sheet-arrival cadence actually causes.
  #include <wtf/SetForScope.h>
  #include <wtf/TZoneMallocInlines.h>
  
-@@ -78,6 +80,30 @@
+@@ -78,6 +80,20 @@
  
  WTF_MAKE_TZONE_ALLOCATED_IMPL(Scope);
  
@@ -45,27 +45,19 @@ many full rebuilds/restyles the sheet-arrival cadence actually causes.
 +    return enabled;
 +}
 +
-+static const char* resolverUpdateTypeName(ResolverUpdateType t)
-+{
-+    switch (t) {
-+    case ResolverUpdateType::Reconstruct: return "Reconstruct";
-+    case ResolverUpdateType::Reset: return "Reset";
-+    case ResolverUpdateType::Additive: return "Additive";
-+    }
-+    return "?";
-+}
-+
  Scope::Scope(Document& document)
      : m_document(document)
      , m_pendingUpdateTimer(*this, &Scope::pendingUpdateTimerFired)
-@@ -600,6 +626,15 @@
+@@ -600,6 +616,17 @@
      if (updateType == UpdateType::ActiveSet)
          styleSheetChange = analyzeStyleSheetChange(activeCSSStyleSheets);
  
 +    if (styleLogEnabled()) {
++        const char* resolverName = styleSheetChange.resolverUpdateType == ResolverUpdateType::Reconstruct ? "Reconstruct"
++            : (styleSheetChange.resolverUpdateType == ResolverUpdateType::Reset ? "Reset" : "Additive");
 +        fprintf(stderr, "[stylelog] updateActiveStyleSheets doc=%p updateType=%s resolver=%s oldSheets=%u newSheets=%u added=%u body=%d missingStyle=%d\n",
 +            &m_document.get(), updateType == UpdateType::ActiveSet ? "ActiveSet" : (updateType == UpdateType::ContentsOrInterpretation ? "Contents" : "FullExt"),
-+            resolverUpdateTypeName(styleSheetChange.resolverUpdateType),
++            resolverName,
 +            static_cast<unsigned>(m_activeStyleSheets.size()), static_cast<unsigned>(activeCSSStyleSheets.size()),
 +            static_cast<unsigned>(styleSheetChange.addedSheets.size()),
 +            m_document->bodyOrFrameset() ? 1 : 0, m_document->hasNodesWithMissingStyle() ? 1 : 0);
@@ -74,7 +66,7 @@ many full rebuilds/restyles the sheet-arrival cadence actually causes.
      updateResolver(activeCSSStyleSheets, styleSheetChange.resolverUpdateType);
  
      m_weakCopyOfActiveStyleSheetListForFastLookup.clear();
-@@ -628,10 +663,15 @@
+@@ -628,10 +655,15 @@
      bool invalidateAll = !m_document->bodyOrFrameset() || m_document->hasNodesWithMissingStyle();
  
      if (styleSheetChange.resolverUpdateType == ResolverUpdateType::Reconstruct || invalidateAll) {
