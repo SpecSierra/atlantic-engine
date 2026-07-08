@@ -277,6 +277,12 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # confirm out-of-DOM-order sheet completion is forcing repeated full rebuilds.
     # Zero overhead when unset. Remove once the style lever is chosen.
     "patches/webkit/webkit-style-log-diagnostic.patch"
+    # webkit-skip-layout-resolver-reset.patch: WEBKIT_SKIP_LAYOUT_RESOLVER_RESET=1 skips
+    # the heavyweight didChangeStyleSheetEnvironment() that updateStyleForLayout fires when
+    # the resolver is missing (rdar FIXME) — the dominant source of full-doc restyle
+    # Reconstructs on heavy loads (~990/franceinfo-load). Default unset = stock. For an
+    # on-device A/B of DCL + visual correctness before committing.
+    "patches/webkit/webkit-skip-layout-resolver-reset.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(
