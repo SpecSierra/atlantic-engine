@@ -251,7 +251,17 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # padding-box offset changes still repaint).
     # WEBKIT_REPAINT_ON_LAYER_RESIZE=1 = stock behaviour.
     "patches/webkit/webkit-no-full-repaint-on-layer-grow.patch"
-    # webkit-load-rendering-throttle-env.patch: the REAL paint-storm lever
+    # webkit-load-rendering-throttle-env.patch: Page-side load-throttle plumbing
+    # (ProgressTracker window + preferred-interval clamps). INERT on this port:
+    # rendering updates are paced by the LayerTreeHost run-loop observer, which
+    # never consults these. The LayerTreeHost enforcement (former parts 2/3,
+    # builds 465-467) is REMOVED: it caused intermittent-to-permanent rendering
+    # freezes on scroll-during-load (reddit/onche) — the stock design relies on
+    # the REPEATING RenderingUpdate RunLoopObserver polling until the compositor
+    # is free, and deferring it with a timer broke that self-healing. Patch files
+    # kept in patches/webkit/ for reference. runtime-common ships
+    # WEBKIT_LOAD_RENDERING_INTERVAL_MS=0.
+    # (former comment:) the REAL paint-storm lever
     # (device-proven via WEBKIT_PAINT_LOG + setNeedsDisplayInRect breakpoints):
     # a heavy load issues ~8900 correct, precisely-sized repaint rects through
     # repaintAfterLayoutIfNeeded — one restyle→layout→paint pass per landing
@@ -261,22 +271,6 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # (ProgressTracker window) so dirty regions coalesce and each batched
     # update paints the union once. runtime-common.sh ships 250 ms; =0 stock.
     "patches/webkit/webkit-load-rendering-throttle-env.patch"
-    # webkit-load-rendering-throttle-layertreehost.patch: part 2 — device A/B
-    # showed part 1 was inert (DCL/paint passes unchanged): this port paces
-    # rendering updates via the LayerTreeHost run-loop observer, not WebCore's
-    # RenderingUpdateScheduler/DisplayLink. Defer the observer with a one-shot
-    # timer so updates run at most once per WEBKIT_LOAD_RENDERING_INTERVAL_MS
-    # while the part-1 ProgressTracker load window is active. Must apply AFTER
-    # the env patch (Page.h context depends on it).
-    "patches/webkit/webkit-load-rendering-throttle-layertreehost.patch"
-    # webkit-load-rendering-throttle-lossproof.patch: part 3 — fixes the
-    # reddit/onche freeze on 465/466: WebCore latches its rendering-update
-    # request and asks ONCE; the throttle's deferral windows widened existing
-    # LayerTreeHost races (observer fired while waiting = silent drop) into a
-    # permanent freeze. Adds m_renderingUpdatePending re-arming on every
-    # recovery path + WEBKIT_LOAD_RENDERING_THROTTLE_MAX_MS (10s) window cap.
-    # Must apply AFTER the layertreehost patch (same functions).
-    "patches/webkit/webkit-load-rendering-throttle-lossproof.patch"
     # webkit-paint-log-diagnostic.patch: TEMPORARY env-gated paint/invalidation
     # logging (WEBKIT_PAINT_LOG=1, WebProcess stderr) for the load-time
     # paint-storm hunt — per-layer damage (GLC FULL/RECT), per-proxy dirty

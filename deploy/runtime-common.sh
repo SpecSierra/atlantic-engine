@@ -425,7 +425,13 @@ atlantic_export_browser_env() {
     # = 130 screenfuls per franceinfo load) as each script/stylesheet/image
     # landing triggers another restyle→layout→paint pass. Reverts to stock
     # cadence when the load finishes; =0 disables for A/B.
-    export WEBKIT_LOAD_RENDERING_INTERVAL_MS="${WEBKIT_LOAD_RENDERING_INTERVAL_MS:-250}"
+    # DEFAULT OFF (=0): the LayerTreeHost-side enforcement (throttle parts 2/3,
+    # builds 465-467) caused intermittent-to-permanent rendering freezes on
+    # scroll-during-load (reddit/onche; WebCore latches its update request and
+    # the deferral broke the repeating run-loop-observer self-healing). Those
+    # patches are removed from the build; the remaining Page-side clamp is
+    # inert on this port, so any nonzero value currently has no effect.
+    export WEBKIT_LOAD_RENDERING_INTERVAL_MS="${WEBKIT_LOAD_RENDERING_INTERVAL_MS:-0}"
     # Touch-ack timeout (webkit-touch-ack-timeout-env.patch): if the WebProcess
     # doesn't ack touch events within this many ms, the UIProcess recognizes the
     # gesture itself and scrolls via the scrolling thread — flicks work during
