@@ -418,22 +418,13 @@ atlantic_export_browser_env() {
     # restores stock (parser) for A/B.
     export WEBKIT_LOADING_TIMER_ALIGNMENT_MS="${WEBKIT_LOADING_TIMER_ALIGNMENT_MS:-50}"
     export WEBKIT_PARSER_TIME_LIMIT_MS="${WEBKIT_PARSER_TIME_LIMIT_MS:-100}"
-    # Load-time rendering-update throttle (webkit-load-rendering-throttle-env
-    # patch): while the main load is in progress, cap rendering updates
-    # (style/layout/paint/rAF batching) to one per this many ms. A heavy load
-    # otherwise re-rasters the visible tiles ~100x (device-measured ~340 Mpx
-    # = 130 screenfuls per franceinfo load) as each script/stylesheet/image
-    # landing triggers another restyle→layout→paint pass. Reverts to stock
-    # cadence when the load finishes; =0 disables for A/B.
-    # 250 ms = 4 Hz during load. Enforced by
-    # webkit-load-rendering-throttle-observer.patch, which defers the WORK inside
-    # the REPEATING RenderingUpdate run-loop-observer callback (early-return, the
-    # observer stays scheduled and self-heals). Freeze-safe replacement for the
-    # former LayerTreeHost timer deferral (throttle parts 2/3, builds 465-467),
-    # which broke the observer's self-healing and froze rendering on
-    # scroll-during-load (reddit/onche); those patches are deleted. NOTE: pending
-    # device re-verification of the reddit swipe-during-load repro on this build.
-    export WEBKIT_LOAD_RENDERING_INTERVAL_MS="${WEBKIT_LOAD_RENDERING_INTERVAL_MS:-250}"
+    # (Load-time rendering-update throttle: DROPPED after builds 465-471. Coalescing
+    # rendering updates during load to cut the ~340 Mpx/load paint storm always
+    # deadlocked the compositor composition<-tiles<-flush handshake on
+    # move-during-load — m_isWaitingForRenderer stuck true = permanent freeze
+    # (device-repro'd on onche.org). It also never moved DCL. The env + observer
+    # patches and WEBKIT_LOAD_RENDERING_INTERVAL_MS are removed. See memory
+    # franceinfo-load-slowness-analysis.md.)
     # Touch-ack timeout (webkit-touch-ack-timeout-env.patch): if the WebProcess
     # doesn't ack touch events within this many ms, the UIProcess recognizes the
     # gesture itself and scrolls via the scrolling thread — flicks work during
