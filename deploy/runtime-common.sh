@@ -425,13 +425,15 @@ atlantic_export_browser_env() {
     # = 130 screenfuls per franceinfo load) as each script/stylesheet/image
     # landing triggers another restyle→layout→paint pass. Reverts to stock
     # cadence when the load finishes; =0 disables for A/B.
-    # DEFAULT OFF (=0): the LayerTreeHost-side enforcement (throttle parts 2/3,
-    # builds 465-467) caused intermittent-to-permanent rendering freezes on
-    # scroll-during-load (reddit/onche; WebCore latches its update request and
-    # the deferral broke the repeating run-loop-observer self-healing). Those
-    # patches are removed from the build; the remaining Page-side clamp is
-    # inert on this port, so any nonzero value currently has no effect.
-    export WEBKIT_LOAD_RENDERING_INTERVAL_MS="${WEBKIT_LOAD_RENDERING_INTERVAL_MS:-0}"
+    # 250 ms = 4 Hz during load. Enforced by
+    # webkit-load-rendering-throttle-observer.patch, which defers the WORK inside
+    # the REPEATING RenderingUpdate run-loop-observer callback (early-return, the
+    # observer stays scheduled and self-heals). Freeze-safe replacement for the
+    # former LayerTreeHost timer deferral (throttle parts 2/3, builds 465-467),
+    # which broke the observer's self-healing and froze rendering on
+    # scroll-during-load (reddit/onche); those patches are deleted. NOTE: pending
+    # device re-verification of the reddit swipe-during-load repro on this build.
+    export WEBKIT_LOAD_RENDERING_INTERVAL_MS="${WEBKIT_LOAD_RENDERING_INTERVAL_MS:-250}"
     # Touch-ack timeout (webkit-touch-ack-timeout-env.patch): if the WebProcess
     # doesn't ack touch events within this many ms, the UIProcess recognizes the
     # gesture itself and scrolls via the scrolling thread — flicks work during

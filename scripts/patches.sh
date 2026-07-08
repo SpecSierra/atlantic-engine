@@ -251,26 +251,30 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # padding-box offset changes still repaint).
     # WEBKIT_REPAINT_ON_LAYER_RESIZE=1 = stock behaviour.
     "patches/webkit/webkit-no-full-repaint-on-layer-grow.patch"
-    # webkit-load-rendering-throttle-env.patch: Page-side load-throttle plumbing
-    # (ProgressTracker window + preferred-interval clamps). INERT on this port:
-    # rendering updates are paced by the LayerTreeHost run-loop observer, which
-    # never consults these. The LayerTreeHost enforcement (former parts 2/3,
-    # builds 465-467) is REMOVED: it caused intermittent-to-permanent rendering
-    # freezes on scroll-during-load (reddit/onche) — the stock design relies on
-    # the REPEATING RenderingUpdate RunLoopObserver polling until the compositor
-    # is free, and deferring it with a timer broke that self-healing. Patch files
-    # kept in patches/webkit/ for reference. runtime-common ships
-    # WEBKIT_LOAD_RENDERING_INTERVAL_MS=0.
-    # (former comment:) the REAL paint-storm lever
-    # (device-proven via WEBKIT_PAINT_LOG + setNeedsDisplayInRect breakpoints):
-    # a heavy load issues ~8900 correct, precisely-sized repaint rects through
-    # repaintAfterLayoutIfNeeded — one restyle→layout→paint pass per landing
-    # script/stylesheet/image — re-rastering the visible tiles ~100× (~340 Mpx
-    # per franceinfo load). Cap rendering updates to one per
-    # WEBKIT_LOAD_RENDERING_INTERVAL_MS while the main load is in progress
-    # (ProgressTracker window) so dirty regions coalesce and each batched
-    # update paints the union once. runtime-common.sh ships 250 ms; =0 stock.
+    # webkit-load-rendering-throttle-env.patch: Page-side load-throttle plumbing.
+    # Opens a "main load in progress" window (ProgressTracker →
+    # Page::setRenderingThrottledForLoad) and clamps the preferred rendering-update
+    # interval. On this port the preferred-interval clamps are INERT (rendering
+    # updates are paced by the LayerTreeHost run-loop observer, not the WebCore
+    # RenderingUpdateScheduler/DisplayLink machinery) — but the load-window flag it
+    # exposes is what the observer patch below reads. Keep this applied first.
     "patches/webkit/webkit-load-rendering-throttle-env.patch"
+    # webkit-load-rendering-throttle-observer.patch: the actual paint-storm lever,
+    # applied where this port paces rendering updates. The REAL storm (device-proven
+    # via WEBKIT_PAINT_LOG + setNeedsDisplayInRect breakpoints): a heavy load issues
+    # ~8900 correct, precisely-sized repaint rects through repaintAfterLayoutIfNeeded
+    # — one restyle→layout→paint pass per landing script/stylesheet/image —
+    # re-rastering the visible tiles ~100× (~340 Mpx per franceinfo load). While the
+    # env patch's main-load window is open, this coalesces updates to one per
+    # WEBKIT_LOAD_RENDERING_INTERVAL_MS by deferring the WORK inside the REPEATING
+    # RenderingUpdate RunLoopObserver callback (renderingUpdateRunLoopObserverFired)
+    # — returning early WITHOUT invalidating the observer, so it keeps polling and
+    # self-heals. This is the safe replacement for the former parts 2/3 (builds
+    # 465-467), which deferred the observer *scheduling* with a one-shot timer and
+    # broke that self-healing → intermittent-to-permanent rendering freezes on
+    # scroll-during-load (reddit/onche). Those two patch files are deleted. Ships
+    # a 10s per-load safety cap. runtime-common.sh sets the interval (=0 stock/off).
+    "patches/webkit/webkit-load-rendering-throttle-observer.patch"
     # webkit-paint-log-diagnostic.patch: TEMPORARY env-gated paint/invalidation
     # logging (WEBKIT_PAINT_LOG=1, WebProcess stderr) for the load-time
     # paint-storm hunt — per-layer damage (GLC FULL/RECT), per-proxy dirty
