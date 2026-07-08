@@ -82,3 +82,53 @@ many full rebuilds/restyles the sheet-arrival cadence actually causes.
      Invalidator invalidator(styleSheetChange.addedSheets, m_resolver->mediaQueryEvaluator());
      invalidator.invalidateStyle(*this);
  }
+@@ -852,6 +884,21 @@
+     scheduleUpdate(UpdateType::ContentsOrInterpretation);
+ }
+ 
++// Diagnostic (WEBKIT_STYLE_LOG=1): report whether a content-mutated active sheet is
++// eligible for an incremental resolver append (mutated sheet is the LAST active author
++// sheet -> the appended rule lands last in the cascade, so no reorder is needed).
++// Answers whether the CSS-in-JS insertRule pattern that dominates franceinfo's style
++// cost can take a targeted fast path vs the current full resolver Reconstruct.
++void Scope::reportContentMutationForDiagnostic(const CSSStyleSheet& sheet, bool isInsertion)
++{
++    if (!styleLogEnabled())
++        return;
++    bool isLastActive = !m_activeStyleSheets.isEmpty() && m_activeStyleSheets.last().ptr() == &sheet;
++    fprintf(stderr, "[stylelog] contentMutation sheet=%p insertion=%d active=%d isLastActive=%d activeCount=%u\n",
++        &sheet, isInsertion ? 1 : 0, activeStyleSheetsContains(sheet) ? 1 : 0, isLastActive ? 1 : 0,
++        static_cast<unsigned>(m_activeStyleSheets.size()));
++}
++
+ void Scope::didChangeStyleSheetEnvironment()
+ {
+     RELEASE_ASSERT(!m_isUpdatingStyleResolver);
+--- a/Source/WebCore/style/StyleScope.h
++++ b/Source/WebCore/style/StyleScope.h
+@@ -118,6 +118,7 @@
+     void didChangeActiveStyleSheetCandidates();
+     // This is called when contents of a stylesheet is mutated.
+     void didChangeStyleSheetContents();
++    void reportContentMutationForDiagnostic(const CSSStyleSheet&, bool isInsertion);
+     // This is called when the environment where we intrepret the stylesheets changes (for example switching to printing).
+     // The change is assumed to potentially affect all author and user stylesheets including shadow roots.
+     WEBCORE_EXPORT void didChangeStyleSheetEnvironment();
+--- a/Source/WebCore/css/CSSStyleSheet.cpp
++++ b/Source/WebCore/css/CSSStyleSheet.cpp
+@@ -249,6 +249,7 @@
+                 ownerDocument->keyframesRuleDidChange(modifiedKeyframesRuleName);
+         }
+ 
++        scope.reportContentMutationForDiagnostic(*this, mutationType == RuleInsertion || mutationType == RuleReplace);
+         scope.didChangeStyleSheetContents();
+ 
+         m_wasMutated = true;
+@@ -258,6 +259,7 @@
+ void CSSStyleSheet::didMutate()
+ {
+     forEachStyleScope([&](auto& scope) {
++        scope.reportContentMutationForDiagnostic(*this, false);
+         scope.didChangeStyleSheetContents();
+ 
+         m_wasMutated = true;
