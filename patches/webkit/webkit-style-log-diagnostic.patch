@@ -82,7 +82,21 @@ many full rebuilds/restyles the sheet-arrival cadence actually causes.
      Invalidator invalidator(styleSheetChange.addedSheets, m_resolver->mediaQueryEvaluator());
      invalidator.invalidateStyle(*this);
  }
-@@ -852,6 +884,21 @@
+@@ -832,6 +864,8 @@
+                 break;
+             }
+             case DynamicMediaQueryEvaluationChanges::Type::ResetStyle:
++                if (styleLogEnabled())
++                    fprintf(stderr, "[stylelog] schedContents src=mqReset\n");
+                 scope->scheduleUpdate(UpdateType::ContentsOrInterpretation);
+                 break;
+             }
+@@ -849,11 +883,30 @@
+ 
+ void Scope::didChangeStyleSheetContents()
+ {
++    if (styleLogEnabled())
++        fprintf(stderr, "[stylelog] schedContents src=contentsDirect\n");
      scheduleUpdate(UpdateType::ContentsOrInterpretation);
  }
  
@@ -103,7 +117,11 @@ many full rebuilds/restyles the sheet-arrival cadence actually causes.
 +
  void Scope::didChangeStyleSheetEnvironment()
  {
++    if (styleLogEnabled())
++        fprintf(stderr, "[stylelog] schedContents src=envChange resolverExists=%d\n", resolverIfExists() ? 1 : 0);
      RELEASE_ASSERT(!m_isUpdatingStyleResolver);
+     RELEASE_ASSERT(!m_document->isResolvingTreeStyle());
+ 
 --- a/Source/WebCore/style/StyleScope.h
 +++ b/Source/WebCore/style/StyleScope.h
 @@ -118,6 +118,7 @@
