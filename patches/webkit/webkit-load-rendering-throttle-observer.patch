@@ -1,37 +1,36 @@
-Load rendering throttle, done safely: coalesce inside the RunLoopObserver.
+Load rendering throttle, done safely: coalesce in the observer + timer wakeup.
 
 Re-implements the load-time paint-storm coalescing that builds 465-467
 shipped and build 468 reverted, WITHOUT the freeze regression.
 
-Why the old attempts froze: parts 2/3 intercepted
-LayerTreeHost::scheduleRenderingUpdate() and, while throttled, returned
-early *without scheduling* the RenderingUpdate RunLoopObserver, standing
-in a one-shot Timer to re-drive it later. But that observer is
-Type::Repeating on purpose: once scheduled it fires every main-loop
-iteration and renderingUpdateRunLoopObserverFired() simply returns while
-m_isWaitingForRenderer blocks it, so a pending update can NEVER be lost.
-Replacing that self-healing poll with a one-shot timer dropped updates
-whenever the compositor was mid-flight -> permanent rendering freeze
-(deterministic repro: swipe while reddit.com loads).
+Root-cause of the freeze (device-confirmed on build 469): on this port the
+RenderingUpdate "RunLoopObserver" is a GLib activity observer that fires
+only at RunLoop::Activity::BeforeWaiting -- i.e. only when the run loop
+actually iterates (RunLoopGLib.cpp). Deferring rendering work while leaving
+the observer merely "scheduled" does NOT self-heal: scheduleRenderingUpdate()
+early-returns on isScheduled() and never calls breakToAllowRenderingUpdate(),
+so once the page goes quiet nothing wakes the loop to re-fire the observer,
+and the deferred update never runs -> permanent freeze (rAF counter wedged
+at 1; deterministic repro: swipe while reddit.com loads). Builds 465-467's
+one-shot-timer-in-scheduleRenderingUpdate had the same class of bug plus it
+broke the m_isWaitingForRenderer compositor handshake.
 
-The safe enforcement point is the observer callback itself. Leave the
-scheduling path completely stock (the repeating observer keeps polling),
-and in renderingUpdateRunLoopObserverFired() defer the *work* -- return
-early WITHOUT invalidating the observer -- until
-WEBKIT_LOAD_RENDERING_INTERVAL_MS has elapsed since the last
-updateRendering(), while the ProgressTracker main-load window
-(Page::isRenderingThrottledForLoad(), from webkit-load-rendering-throttle-env.patch)
-is open. Because the observer stays scheduled it re-fires next iteration
-and retries on its own; m_isWaitingForRenderer and the composition
-handshake are untouched. Dirty regions accumulate between updates, so the
-batched update paints the union once instead of once per landing
-resource (~340 Mpx -> ~35-50% fewer painted px per franceinfo load,
-device-measured under the old throttle).
+Correct design: throttle in the observer callback
+(renderingUpdateRunLoopObserverFired, which only runs when
+!m_isWaitingForRenderer), and when deferring, INVALIDATE the observer and arm
+a one-shot Timer for the remaining interval. The timer is the wakeup the run
+loop otherwise lacks: on fire it calls scheduleRenderingUpdate(), which
+re-arms the observer (and honours m_isWaitingForRenderer), so it fires and
+proceeds once the interval has elapsed. Dirty regions accumulate between
+updates, so each batched update paints the union once instead of once per
+landing resource (~340 Mpx -> ~35-50% fewer painted px/load, device-measured
+under the old throttle). The env patch's ProgressTracker main-load window
+(Page::isRenderingThrottledForLoad) gates it; a 10s per-load safety cap
+covers pages (reddit/onche) that hold the progress bar open indefinitely.
 
-Safety cap: a single load never stays throttled longer than
-loadRenderingThrottleMaxDuration (10s) -- reddit/onche hold the progress
-bar open indefinitely, and after the cap we fall back to stock full-rate
-updates for the rest of that load. Applies ON TOP of
+The m_isWaitingForRenderer / requestCompositionForRenderingUpdate handshake
+is never touched: that path schedules the observer from its own completion
+handler, independent of this timer. Applies ON TOP of
 webkit-load-rendering-throttle-env.patch. Unset/0 = off (stock).
 
 --- a/Source/WebCore/page/Page.h
@@ -61,18 +60,16 @@ webkit-load-rendering-throttle-env.patch. Unset/0 = off (stock).
 +#include <cstdlib>
  #include <wtf/TZoneMallocInlines.h>
  #include <wtf/glib/RunLoopSourcePriority.h>
-
-@@ -69,6 +71,27 @@
-
+ 
+@@ -69,9 +71,29 @@
+ 
  WTF_MAKE_TZONE_ALLOCATED_IMPL(LayerTreeHost);
-
+ 
 +// See webkit-load-rendering-throttle-env.patch. On this port rendering updates are
-+// paced by the RenderingUpdate RunLoopObserver, not the WebCore
++// paced by the RenderingUpdate RunLoopObserver (an activity observer that fires only
++// at RunLoop BeforeWaiting, i.e. only when the loop iterates), NOT the WebCore
 +// RenderingUpdateScheduler/DisplayLink machinery, so the load-time coalescing lives
-+// in the observer callback (renderingUpdateRunLoopObserverFired). The observer is
-+// Type::Repeating: we defer the *work* while leaving it scheduled, so it re-fires
-+// and retries on its own -- never dropping a pending update (that was the 465-467
-+// freeze). Unset/0 = off.
++// in the observer callback (renderingUpdateRunLoopObserverFired). Unset/0 = off.
 +static Seconds loadRenderingThrottleInterval()
 +{
 +    static Seconds interval = [] {
@@ -90,10 +87,14 @@ webkit-load-rendering-throttle-env.patch. Unset/0 = off (stock).
  LayerTreeHost::LayerTreeHost(WebPage& webPage)
      : m_webPage(webPage)
      , m_sceneState(CoordinatedSceneState::create())
-@@ -188,6 +211,30 @@
++    , m_loadRenderingThrottleTimer(*this, &LayerTreeHost::loadRenderingThrottleTimerFired)
+ #if USE(CAIRO)
+     , m_paintingEngine(Cairo::PaintingEngine::create())
+ #elif USE(SKIA)
+@@ -188,6 +210,43 @@
      m_renderingUpdateRunLoopObserver->invalidate();
  }
-
+ 
 +bool LayerTreeHost::shouldDeferRenderingUpdateForLoad()
 +{
 +    auto interval = loadRenderingThrottleInterval();
@@ -102,63 +103,96 @@ webkit-load-rendering-throttle-env.patch. Unset/0 = off (stock).
 +
 +    auto* corePage = m_webPage.corePage();
 +    if (!corePage || !corePage->isRenderingThrottledForLoad()) {
-+        m_loadThrottleStartTime = MonotonicTime();
++        m_loadThrottleActive = false;
 +        return false;
 +    }
 +
 +    auto now = MonotonicTime::now();
-+    if (!m_loadThrottleStartTime)
++    if (!m_loadThrottleActive) {
++        m_loadThrottleActive = true;
 +        m_loadThrottleStartTime = now;
++    }
 +
 +    // Safety cap: stop throttling this load after the max window so a page that
-+    // never finishes loading still renders at full rate eventually.
++    // never finishes loading (reddit/onche hold the progress bar open) still
++    // renders at full rate eventually.
 +    if (now - m_loadThrottleStartTime > loadRenderingThrottleMaxDuration)
 +        return false;
 +
 +    return now < m_lastRenderingUpdateTime + interval;
 +}
 +
++void LayerTreeHost::loadRenderingThrottleTimerFired()
++{
++    // Wake the run loop at the throttle deadline and re-arm the RenderingUpdate
++    // observer. The observer only fires at RunLoop BeforeWaiting, so without this
++    // timer a page that goes quiet mid-load would never repaint again (the 465-467
++    // freeze). scheduleRenderingUpdate() respects m_isWaitingForRenderer, so the
++    // compositor handshake is untouched.
++    scheduleRenderingUpdate();
++}
++
  void LayerTreeHost::updateRendering()
  {
      invalidateRenderingUpdateRunLoopObserver();
-@@ -196,6 +243,8 @@
+@@ -196,6 +255,9 @@
      if (m_layerTreeStateIsFrozen)
          return;
-
+ 
 +    m_lastRenderingUpdateTime = MonotonicTime::now();
++    m_loadRenderingThrottleTimer.stop();
 +
      SetForScope<bool> reentrancyProtector(m_isUpdatingRendering, true);
-
+ 
      TraceScope traceScope(LayerTreeHostRenderingUpdateStart, LayerTreeHostRenderingUpdateEnd);
-@@ -278,6 +327,12 @@
+@@ -278,6 +340,20 @@
      if (m_isWaitingForRenderer)
          return;
-
-+    // Coalesce rendering updates during the main load. Returning here leaves the
-+    // repeating observer scheduled, so it re-fires next main-loop iteration and
-+    // proceeds once the throttle interval has elapsed -- self-healing preserved.
-+    if (shouldDeferRenderingUpdateForLoad())
+ 
++    // Coalesce rendering updates during the main load. Stop the observer's busy
++    // per-iteration polling and instead schedule a single wakeup at the throttle
++    // deadline (loadRenderingThrottleTimerFired -> scheduleRenderingUpdate), which
++    // re-arms the observer to fire and proceed once the interval has elapsed. Dirty
++    // regions accumulate meanwhile, so the batched update paints the union once.
++    if (shouldDeferRenderingUpdateForLoad()) {
++        invalidateRenderingUpdateRunLoopObserver();
++        if (!m_loadRenderingThrottleTimer.isActive()) {
++            auto delay = (m_lastRenderingUpdateTime + loadRenderingThrottleInterval()) - MonotonicTime::now();
++            m_loadRenderingThrottleTimer.startOneShot(std::max(delay, 0_s));
++        }
 +        return;
++    }
 +
      updateRendering();
  }
-
+ 
 --- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.h
 +++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.h
-@@ -125,6 +125,7 @@
+@@ -37,6 +37,7 @@
+ #include <WebCore/GraphicsLayerFactory.h>
+ #include <WebCore/PlatformScreen.h>
+ #include <WebCore/RunLoopObserver.h>
++#include <WebCore/Timer.h>
+ #include <wtf/CheckedRef.h>
+ #include <wtf/Forward.h>
+ #include <wtf/Lock.h>
+@@ -125,6 +126,8 @@
      void scheduleRenderingUpdateRunLoopObserver();
      void invalidateRenderingUpdateRunLoopObserver();
      void renderingUpdateRunLoopObserverFired();
 +    bool shouldDeferRenderingUpdateForLoad();
++    void loadRenderingThrottleTimerFired();
      void updateRendering();
      void requestCompositionForRenderingUpdate();
-
-@@ -179,6 +180,8 @@
+ 
+@@ -179,6 +182,10 @@
          std::optional<uint32_t> compositionRequestID;
      } m_forceRepaintAsync;
      std::unique_ptr<WebCore::RunLoopObserver> m_renderingUpdateRunLoopObserver;
++    WebCore::Timer m_loadRenderingThrottleTimer;
 +    MonotonicTime m_lastRenderingUpdateTime;
 +    MonotonicTime m_loadThrottleStartTime;
++    bool m_loadThrottleActive { false };
  #if USE(CAIRO)
      std::unique_ptr<WebCore::Cairo::PaintingEngine> m_paintingEngine;
  #elif USE(SKIA)
