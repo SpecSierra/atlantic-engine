@@ -368,6 +368,20 @@ atlantic_export_browser_env() {
     export WEBKIT_MEMORY_BASE_THRESHOLD_MB="${WEBKIT_MEMORY_BASE_THRESHOLD_MB:-700}"
     export WEBKIT_MEMORY_POLL_INTERVAL_MS="${WEBKIT_MEMORY_POLL_INTERVAL_MS:-3000}"
 
+    # ── Texture pool cap (synchronous) ───────────────────────────────────────
+    # Honoured by webkit-texpool-synchronous-cap.patch. The BitmapTexturePool
+    # releases unused GL textures from a WebProcess MAIN-THREAD timer, which
+    # starves exactly when texture churn peaks (video playback uploads one
+    # ~9 MB BGRA frame texture per composited frame; page loads churn tile
+    # textures), so dead textures pile up without bound — device-measured
+    # 1.27 GB of released 1080p video-frame textures in a single WebProcess
+    # (YouTube, ~2 min) driving the phone into zram swap and system OOM. The
+    # patch enforces this cap synchronously in acquireTexture() on the
+    # compositor thread, counting only free (refCount==1) entries so a large
+    # in-use tile working set doesn't defeat reuse. 0 = stock behaviour (A/B).
+    # WEBKIT_TEXPOOL_LOG=1 logs pool stats on each enforcement.
+    export WEBKIT_TEXTURE_POOL_CAP_MB="${WEBKIT_TEXTURE_POOL_CAP_MB:-64}"
+
     # ── Steady-state cache footprint ──────────────────────────────────────────
     # document_viewer: no back/forward page cache, no disk/URL cache, minimal
     # decoded-image retention. Part of the OOM fix above — the disk/URL cache and

@@ -45,6 +45,16 @@ readonly WEBKIT_SOURCE_PATCHES=(
     "patches/webkit/webkit-webcore-texmap-owner-headers.patch"
     "patches/webkit/webkit-glfence-disable-env.patch"
     "patches/webkit/webkit-texpool-compositor-sync-env.patch"
+    # webkit-texpool-synchronous-cap.patch: BitmapTexturePool's unused-texture
+    # release runs on a WebProcess main-thread timer that starves exactly when
+    # texture churn peaks (video playback, page load), so released frame/tile
+    # textures accumulate without bound (device-measured 1.27 GB of dead 1080p
+    # video-frame textures in one WebProcess -> phone swap-thrash + OOM).
+    # Enforce the pool cap synchronously in acquireTexture() on the compositor
+    # thread (GL context guaranteed current), scoped to free (refCount==1)
+    # entries. WEBKIT_TEXTURE_POOL_CAP_MB overrides (0 = stock for A/B);
+    # WEBKIT_TEXPOOL_LOG=1 logs pool stats.
+    "patches/webkit/webkit-texpool-synchronous-cap.patch"
     "patches/webkit/webkit-raster-on-compositor-thread-env.patch"
     # webkit-skia-record-rtree-env.patch: record the per-layer tile SkPicture with
     # an R-tree BBH so each per-tile replay() culls draw ops to its tile's clip,

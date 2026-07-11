@@ -1,0 +1,112 @@
+--- a/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.cpp
++++ b/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.cpp
+@@ -86,10 +86,99 @@
+     return disabled;
+ }
+ 
++// The pool's unused-texture release runs on a WebProcess MAIN-THREAD timer.
++// Exactly when texture churn peaks (video playback: one ~9 MB BGRA frame
++// texture per composited frame; page load / scroll: tile-texture churn), the
++// main thread is saturated for seconds to minutes, the timer starves, and
++// released textures accumulate without bound (device-measured: 147 live 1080p
++// frame textures = 1.27 GB in one WebProcess; the phone swap-thrashes and the
++// system OOMs). The compile-time cap (BITMAP_TEXTURE_POOL_MAX_SIZE_IN_MB) is
++// ineffective because it only shortens that same starved timer's interval.
++//
++// Fix: enforce the cap synchronously in acquireTexture(), which always runs
++// on the compositor thread with a GL context current (see the ASSERT), so
++// deletion can never be blocked by main-thread starvation. The cap applies to
++// FREE entries only (refCount == 1): in-use textures are the page's working
++// set, not pool overhead, and counting them would permanently defeat reuse on
++// tile-heavy pages. WEBKIT_TEXTURE_POOL_CAP_MB overrides the compile-time cap
++// (0 = disable synchronous enforcement, stock behaviour, for A/B).
++// WEBKIT_TEXPOOL_LOG=1 logs pool stats on each enforcement.
++static size_t texturePoolFreeCapInBytes()
++{
++    static size_t capBytes = []() -> size_t {
++        if (const char* env = getenv("WEBKIT_TEXTURE_POOL_CAP_MB")) {
++            if (*env)
++                return static_cast<size_t>(strtoul(env, nullptr, 10)) * MB;
++        }
++        return s_poolSizeLimitInBytes;
++    }();
++    return capBytes;
++}
++
++static bool texturePoolLogEnabled()
++{
++    static bool enabled = [] {
++        const char* env = getenv("WEBKIT_TEXPOOL_LOG");
++        return env && *env && strcmp(env, "0");
++    }();
++    return enabled;
++}
++
++void BitmapTexturePool::enforceFreePoolCapWhileLocked()
++{
++    ASSERT(m_lock.isHeld());
++    size_t capBytes = texturePoolFreeCapInBytes();
++    if (!capBytes || capBytes == std::numeric_limits<size_t>::max())
++        return;
++
++    // Total size is an upper bound for the free size: cheap early out.
++    if (m_poolSizeInBytes <= capBytes)
++        return;
++
++    size_t freeBytes = 0;
++    unsigned freeCount = 0;
++    for (const auto& entry : m_textures) {
++        if (entry.texture->refCount() == 1) {
++            freeBytes += entry.texture->sizeInBytes();
++            freeCount++;
++        }
++    }
++
++    if (texturePoolLogEnabled()) {
++        WTFLogAlways("[texpool] entries=%zu total=%zuMB free=%zuMB(%u) cap=%zuMB",
++            m_textures.size(), static_cast<size_t>(m_poolSizeInBytes / MB), freeBytes / MB, freeCount, capBytes / MB);
++    }
++
++    if (freeBytes <= capBytes)
++        return;
++
++    // Keep textures released within the tolerance window so steady-state
++    // producers (the video frame ping-pong, scroll tile reuse) keep reusing
++    // instead of churning GL allocations; drop the window entirely when the
++    // backlog is runaway (> 2x cap). Entries are in insertion order, so this
++    // releases oldest-first.
++    Seconds tolerance = freeBytes > 2 * capBytes ? Seconds(0) : s_releaseUnusedSecondsToleranceOnLimitExceeded;
++    MonotonicTime minUsedTime = MonotonicTime::now() - tolerance;
++    m_textures.removeAllMatching([&](const Entry& entry) {
++        if (freeBytes <= capBytes)
++            return false;
++        if (entry.canBeReleased(minUsedTime)) {
++            size_t bytes = entry.texture->sizeInBytes();
++            freeBytes -= bytes;
++            m_poolSizeInBytes -= bytes;
++            return true;
++        }
++        return false;
++    });
++
++    exitLimitExceededModeIfNeeded();
++}
++
+ Ref<BitmapTexture> BitmapTexturePool::acquireTexture(const IntSize& size, OptionSet<BitmapTexture::Flags> flags)
+ {
+     ASSERT(GLContextWrapper::currentContext());
+     Locker locker { m_lock };
++    enforceFreePoolCapWhileLocked();
+     Entry* selectedEntry = texturePoolReuseDisabled() ? m_textures.end() : std::find_if(m_textures.begin(), m_textures.end(), [&](Entry& entry) {
+         return entry.texture->refCount() == 1
+             && entry.texture->size() == size
+--- a/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h
++++ b/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h
+@@ -84,6 +84,7 @@
+     void enterLimitExceededModeIfNeeded();
+     void exitLimitExceededModeIfNeeded();
+     void releaseUnusedTexturesTimerFired();
++    void enforceFreePoolCapWhileLocked();
+ 
+     Lock m_lock;
+     Vector<Entry> m_textures WTF_GUARDED_BY_LOCK(m_lock);
