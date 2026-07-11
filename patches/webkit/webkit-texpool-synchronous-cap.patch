@@ -1,6 +1,22 @@
 --- a/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.cpp
 +++ b/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.cpp
-@@ -86,10 +86,129 @@
+@@ -52,7 +52,14 @@
+ 
+ static constexpr Seconds s_releaseUnusedSecondsTolerance { 3_s };
+ static constexpr Seconds s_releaseUnusedTexturesTimerInterval { 500_ms };
+-static constexpr Seconds s_releaseUnusedSecondsToleranceOnLimitExceeded { 50_ms };
++// Must exceed the compositor frame interval even under heavy load (~1 s at
++// the observed 1-2 fps floor): releasing a just-freed surface before the next
++// frame re-acquires it turns steady-state reuse (video frames, CSS-blur
++// scratch surfaces at ~9 MB each) into per-frame create/delete churn — and on
++// the libhybris Adreno driver deleted texture storage is never reclaimed, so
++// churn is a permanent kgsl memory leak. The original 50 ms was far below the
++// loaded frame interval and caused exactly that.
++static constexpr Seconds s_releaseUnusedSecondsToleranceOnLimitExceeded { 1_s };
+ static constexpr Seconds s_releaseUnusedTexturesTimerIntervalOnLimitExceeded { 200_ms };
+ 
+ BitmapTexturePool& BitmapTexturePool::singleton()
+@@ -86,10 +93,132 @@
      return disabled;
  }
  
@@ -71,11 +87,14 @@
 +        return;
 +
 +    // Keep textures released within the tolerance window so steady-state
-+    // producers (the video frame ping-pong, scroll tile reuse) keep reusing
-+    // instead of churning GL allocations; drop the window entirely when the
-+    // backlog is runaway (> 2x cap). Entries are in insertion order, so this
-+    // releases oldest-first.
-+    Seconds tolerance = freeBytes > 2 * capBytes ? Seconds(0) : s_releaseUnusedSecondsToleranceOnLimitExceeded;
++    // producers (the video frame ping-pong, CSS-filter scratch surfaces,
++    // scroll tile reuse) keep reusing instead of churning GL allocations —
++    // churned (created+deleted) textures permanently leak their storage on
++    // the libhybris Adreno driver. Even when the backlog is runaway (> 2x
++    // cap) keep a window above the loaded compositor frame interval, only
++    // shorter than the base tolerance. Entries are in insertion order, so
++    // this releases oldest-first.
++    Seconds tolerance = freeBytes > 2 * capBytes ? Seconds(0.3) : s_releaseUnusedSecondsToleranceOnLimitExceeded;
 +    MonotonicTime minUsedTime = MonotonicTime::now() - tolerance;
 +    m_textures.removeAllMatching([&](const Entry& entry) {
 +        if (freeBytes <= capBytes)
@@ -130,7 +149,7 @@
      Entry* selectedEntry = texturePoolReuseDisabled() ? m_textures.end() : std::find_if(m_textures.begin(), m_textures.end(), [&](Entry& entry) {
          return entry.texture->refCount() == 1
              && entry.texture->size() == size
-@@ -123,6 +242,7 @@
+@@ -123,6 +252,7 @@
  {
      ASSERT(GLContextWrapper::currentContext());
      Locker locker { m_lock };
@@ -151,3 +170,30 @@
  
      Lock m_lock;
      Vector<Entry> m_textures WTF_GUARDED_BY_LOCK(m_lock);
+--- a/Source/WebCore/platform/graphics/texmap/BitmapTexture.cpp
++++ b/Source/WebCore/platform/graphics/texmap/BitmapTexture.cpp
+@@ -465,8 +465,13 @@
+ 
+ BitmapTexture::~BitmapTexture()
+ {
+-    glDeleteTextures(1, &m_id);
+-
++    // Delete the FBO and its renderbuffers BEFORE the texture. Deleting a
++    // texture still attached to an unbound framebuffer leaves a dangling
++    // attachment that keeps the texture storage alive (GL only auto-detaches
++    // from the currently-bound FBO), and the libhybris Adreno driver has been
++    // observed to never reclaim such storage (kgsl allocations survive
++    // glDeleteTextures) — every render-target texture deleted in the upstream
++    // order leaked its GPU memory until process exit.
+     if (m_fbo)
+         glDeleteFramebuffers(1, &m_fbo);
+ 
+@@ -475,6 +480,8 @@
+ 
+     if (m_stencilBufferObject)
+         glDeleteRenderbuffers(1, &m_stencilBufferObject);
++
++    glDeleteTextures(1, &m_id);
+ }
+ 
+ void BitmapTexture::copyFromExternalTexture(GLuint sourceTextureID, const IntRect& targetRect, const IntSize& sourceOffset)
