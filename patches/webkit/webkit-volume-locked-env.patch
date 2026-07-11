@@ -31,12 +31,7 @@ behaviour.
  #include <limits>
  #include <pal/SessionID.h>
  #include <ranges>
-@@ -495,12 +496,20 @@
-     return true;
- }
-
- static bool defaultVolumeLocked()
- {
+@@ -500,7 +501,15 @@
  #if PLATFORM(IOS)
      return PAL::currentUserInterfaceIdiomIsSmallScreen();
  #else
@@ -52,4 +47,4 @@ behaviour.
 +    return locked;
  #endif
  }
-
+ 
