@@ -402,13 +402,28 @@ install -m 755 "${SCRIPT_DIR}/deploy/atlantic-browser-memory.sh" \
 install -m 644 "${SCRIPT_DIR}/deploy/atlantic-browser-memory.service" \
     "${S}/usr/lib/systemd/system/atlantic-browser-memory.service"
 
-# Enable + start both boot oneshots on install (idempotent; tolerant on a
-# host without the unit running, e.g. during image builds).
+# Periodic low-memory reclaim: the seine vendor kernel leaks pages into
+# driver pools (ION pool + the "Bad rss-counter idx:4" unaccounted pool)
+# whose shrinkers never fire on their own — device-measured 1.6 GB recovered
+# by a manual drop_caches after heavy browser use. The timer pokes the
+# shrinkers whenever MemFree runs low; self-gated to < 6 GB RAM devices.
+install -m 755 "${SCRIPT_DIR}/deploy/atlantic-memory-reclaim.sh" \
+    "${S}/usr/libexec/atlantic/atlantic-memory-reclaim.sh"
+install -m 644 "${SCRIPT_DIR}/deploy/atlantic-memory-reclaim.service" \
+    "${S}/usr/lib/systemd/system/atlantic-memory-reclaim.service"
+install -m 644 "${SCRIPT_DIR}/deploy/atlantic-memory-reclaim.timer" \
+    "${S}/usr/lib/systemd/system/atlantic-memory-reclaim.timer"
+
+# Enable + start the boot oneshots and the reclaim timer on install
+# (idempotent; tolerant on a host without the unit running, e.g. during
+# image builds).
 FPM_POST_EXTRA="systemctl daemon-reload >/dev/null 2>&1 || :
 systemctl enable atlantic-cpu-governor.service >/dev/null 2>&1 || :
 systemctl start atlantic-cpu-governor.service >/dev/null 2>&1 || :
 systemctl enable atlantic-browser-memory.service >/dev/null 2>&1 || :
-systemctl start atlantic-browser-memory.service >/dev/null 2>&1 || :" \
+systemctl start atlantic-browser-memory.service >/dev/null 2>&1 || :
+systemctl enable atlantic-memory-reclaim.timer >/dev/null 2>&1 || :
+systemctl start atlantic-memory-reclaim.timer >/dev/null 2>&1 || :" \
 fpm_rpm wpe-sfos-compat "$WPE_SFOS_COMPAT_VERSION" "SFOS compatibility shims for WPE WebKit" "$S"
 
 # ===========================================================================
@@ -746,7 +761,9 @@ systemctl daemon-reload >/dev/null 2>&1 || :
 systemctl enable atlantic-cpu-governor.service >/dev/null 2>&1 || :
 systemctl start atlantic-cpu-governor.service >/dev/null 2>&1 || :
 systemctl enable atlantic-browser-memory.service >/dev/null 2>&1 || :
-systemctl start atlantic-browser-memory.service >/dev/null 2>&1 || :"
+systemctl start atlantic-browser-memory.service >/dev/null 2>&1 || :
+systemctl enable atlantic-memory-reclaim.timer >/dev/null 2>&1 || :
+systemctl start atlantic-memory-reclaim.timer >/dev/null 2>&1 || :"
 fpm_rpm atlantic-browser "$ATLANTIC_BROWSER_VERSION" "Atlantic Browser (WPE WebKit engine, all-in-one)" "$B" \
     --depends sailjail \
     --depends firejail \

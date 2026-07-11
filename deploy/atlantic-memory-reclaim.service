@@ -1,0 +1,10 @@
+[Unit]
+Description=Atlantic: reclaim leaked driver-pool memory (vendor kernel shrinker bug)
+Documentation=https://github.com/SpecSierra/atlantic-engine
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/atlantic/atlantic-memory-reclaim.sh
+# Reclaim must be able to run when memory is exhausted — that's its job.
+OOMScoreAdjust=-1000
+SuccessExitStatus=0 1
