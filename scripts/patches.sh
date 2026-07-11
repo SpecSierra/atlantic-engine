@@ -287,6 +287,13 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # arming decisions and the 0<dt<0.2 gate to find where the signal is lost. Must
     # apply AFTER webkit-lowres-tiles-during-scroll-env.patch. Remove once fixed.
     "patches/webkit/webkit-scrolltier-log-diagnostic.patch"
+    # webkit-lowres-tiles-cpu-path.patch: enable low-res tiles on the CPU rendering
+    # path (WEBKIT_SKIA_ENABLE_CPU_RENDERING=1 had silently disabled the whole
+    # feature — the force-1.0 guards in paint/replay). CPU upload of a whole-tile
+    # low-res buffer now goes 1:1 into the buffer-sized texture; composite upscales.
+    # Must apply AFTER webkit-lowres-tiles-during-scroll-env.patch (and after the
+    # scrolltier-log diagnostic, contexts overlap in SkiaPaintingEngine.cpp).
+    "patches/webkit/webkit-lowres-tiles-cpu-path.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

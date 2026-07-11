@@ -1,0 +1,65 @@
+Fix: low-res tiles during scroll on the CPU rendering path.
+
+Root cause of the feature silently dying (found via WEBKIT_SCROLLTIER_LOG on
+build 481): the scroll-speed ladder arms fine (tier=LowRes, lowResActive=1),
+but WEBKIT_SKIA_ENABLE_CPU_RENDERING=1 (the shipped 2x-fps scroll win) makes
+renderingMode Unaccelerated, and SkiaPaintingEngine::paint/replay force
+lowResScale back to 1.0 on that path - so every tile painted full-res and fast
+flicks fell into natural checkerboard.
+
+The CPU path only needed one real fix: for a whole-tile low-res update the
+CoordinatedBackingStoreTile texture is already acquired at the (smaller)
+buffer size and m_isLowRes/composite upscale are texture-source agnostic, but
+the CPU upload used update.sourceRect (full tile dimensions) - upload the
+whole smaller buffer 1:1 instead. The threaded replay lambda already scales
+the canvas regardless of rendering mode. With that, drop the two force-1.0
+guards. Applies AFTER webkit-lowres-tiles-during-scroll-env.patch.
+
+diff -ruN a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
+--- a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp	2026-07-11 16:14:45.293198039 +0000
++++ b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp	2026-07-11 16:14:45.324198243 +0000
+@@ -161,10 +161,9 @@
+     ASSERT(!useThreadedRendering());
+ 
+     auto renderingMode = canPerformAcceleratedRendering() ? RenderingMode::Accelerated : RenderingMode::Unaccelerated;
+-    // Low-res tiles are only correct on the GPU swap path (see CoordinatedBackingStoreTile);
+-    // the unaccelerated CPU copy path always paints full-resolution.
+-    if (renderingMode != RenderingMode::Accelerated)
+-        lowResScale = 1.0f;
++    // Low-res tiles are supported on both paths: the GPU path swaps the smaller texture in,
++    // and the CPU path uploads the whole (smaller) buffer 1:1 into a texture of the buffer's
++    // size (see CoordinatedBackingStoreTile); composite upscales to the tile rect either way.
+ 
+     Ref platformLayer = layer.coordinatedPlatformLayer();
+     platformLayer->willPaintTile();
+@@ -220,10 +219,8 @@
+     // ### Asynchronous rendering on worker threads ###
+     ASSERT(useThreadedRendering());
+ 
+-    // Low-res tiles are only correct on the GPU swap path (see CoordinatedBackingStoreTile);
+-    // the unaccelerated CPU copy path always replays full-resolution.
+-    if (recording->renderingMode() != RenderingMode::Accelerated)
+-        lowResScale = 1.0f;
++    // Low-res tiles are supported on both the GPU swap path and the CPU upload path
++    // (see CoordinatedBackingStoreTile), so no need to force full resolution here.
+ 
+     Ref platformLayer = layer.coordinatedPlatformLayer();
+     platformLayer->willPaintTile();
+diff -ruN a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp	2026-07-11 16:14:45.298198072 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp	2026-07-11 16:14:45.324198243 +0000
+@@ -119,7 +119,13 @@
+         WTFBeginSignpost(this, CopyTextureCPUToGPU);
+         ASSERT(!update.buffer->isBackedByOpenGL());
+         auto& buffer = static_cast<CoordinatedUnacceleratedTileBuffer&>(update.buffer.get());
+-        m_texture->updateContents(buffer.data(), update.sourceRect, update.bufferOffset, buffer.stride(), buffer.pixelFormat());
++        // A whole-tile low-res update carries a buffer smaller than the tile rect; the
++        // texture was acquired at the buffer's size above, so upload the whole buffer 1:1
++        // (update.sourceRect still has full-tile dimensions). Composite upscales it.
++        if (wholeTileUpdate && update.buffer->size() != update.sourceRect.size())
++            m_texture->updateContents(buffer.data(), IntRect(IntPoint::zero(), update.buffer->size()), IntPoint::zero(), buffer.stride(), buffer.pixelFormat());
++        else
++            m_texture->updateContents(buffer.data(), update.sourceRect, update.bufferOffset, buffer.stride(), buffer.pixelFormat());
+         WTFEndSignpost(this, CopyTextureCPUToGPU);
+ 
+         WTFEndSignpost(this, CoordinatedSwapBuffer);
