@@ -2,8 +2,8 @@
 Description=Atlantic: periodic low-memory reclaim check
 
 [Timer]
-OnBootSec=2min
-OnUnitActiveSec=2min
+OnBootSec=90s
+OnUnitActiveSec=1min
 AccuracySec=30s
 
 [Install]

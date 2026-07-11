@@ -33,8 +33,26 @@ CRITICAL_KB=${ATLANTIC_RECLAIM_CRITICAL_KB:-262144}     # 256 MB
 
 free_kb() { awk '/^MemFree:/{print $2}' /proc/meminfo 2>/dev/null || echo 0; }
 
+# Browser-exit trigger: the leaked pool pages accrue during browser sessions,
+# so reclaim right after the browser closes (the moment the user looks at the
+# memory gauge and sees "2 GB used with nothing open"). The timer tick keeps
+# a marker of whether the browser was running last time; a running->gone
+# transition forces a reclaim regardless of the MemFree threshold.
+MARKER=/run/atlantic-memory-reclaim.browser-up
+browser_closed=0
+closed_note=""
+if pgrep -f "atlantic-browser.bi[n]" >/dev/null 2>&1; then
+    : > "${MARKER}" 2>/dev/null || true
+elif [ -e "${MARKER}" ]; then
+    browser_closed=1
+    closed_note=" (browser closed)"
+    rm -f "${MARKER}" 2>/dev/null || true
+fi
+
 before=$(free_kb)
-[ "${before}" -ge "${THRESHOLD_KB}" ] 2>/dev/null && exit 0
+if [ "${browser_closed}" = 0 ]; then
+    [ "${before}" -ge "${THRESHOLD_KB}" ] 2>/dev/null && exit 0
+fi
 
 sync
 echo 2 > /proc/sys/vm/drop_caches 2>/dev/null || exit 0
@@ -45,9 +63,9 @@ if [ "${after}" -lt "${CRITICAL_KB}" ] 2>/dev/null; then
     echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
     sleep 1
     after=$(free_kb)
-    echo "atlantic-memory-reclaim: escalated to drop_caches=3: MemFree ${before} -> ${after} kB"
+    echo "atlantic-memory-reclaim: escalated to drop_caches=3${closed_note}: MemFree ${before} -> ${after} kB"
 else
-    echo "atlantic-memory-reclaim: drop_caches=2: MemFree ${before} -> ${after} kB"
+    echo "atlantic-memory-reclaim: drop_caches=2${closed_note}: MemFree ${before} -> ${after} kB"
 fi
 
 exit 0
