@@ -1,6 +1,6 @@
 --- a/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.cpp
 +++ b/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.cpp
-@@ -86,10 +86,99 @@
+@@ -86,10 +86,129 @@
      return disabled;
  }
  
@@ -92,21 +92,62 @@
 +    exitLimitExceededModeIfNeeded();
 +}
 +
++#if USE(GBM)
++// Image textures (EGLImage imports: the dmabuf/gralloc video-frame path on
++// hybris — CoordinatedPlatformLayerBufferDMABuf::importDMABuf) are appended
++// here once per decoded frame and are ONLY swept by the main-thread timer, so
++// they accumulate the same way under main-thread starvation (device-measured:
++// 149 x ~9 MB frame imports = 1.28 GB kgsl in one WebProcess while the pool's
++// m_textures held just 146 MB). Unlike pooled textures they have zero reuse
++// value — each wraps one specific frame's EGLImage — so sweep every released
++// (refCount == 1) entry synchronously whenever the pool is entered on the
++// compositor thread. In-flight frames (committed/pending buffers) hold a ref
++// and are never touched.
++void BitmapTexturePool::releaseUnusedImageTexturesWhileLocked()
++{
++    ASSERT(m_lock.isHeld());
++    if (m_imageTextures.isEmpty())
++        return;
++
++    auto sizeBefore = m_imageTextures.size();
++    m_imageTextures.removeAllMatching([](const BitmapTexture& texture) {
++        return texture.refCount() == 1;
++    });
++
++    if (texturePoolLogEnabled() && m_imageTextures.size() != sizeBefore)
++        WTFLogAlways("[texpool] image textures: %zu -> %zu", sizeBefore, m_imageTextures.size());
++}
++#endif
++
  Ref<BitmapTexture> BitmapTexturePool::acquireTexture(const IntSize& size, OptionSet<BitmapTexture::Flags> flags)
  {
      ASSERT(GLContextWrapper::currentContext());
      Locker locker { m_lock };
++#if USE(GBM)
++    releaseUnusedImageTexturesWhileLocked();
++#endif
 +    enforceFreePoolCapWhileLocked();
      Entry* selectedEntry = texturePoolReuseDisabled() ? m_textures.end() : std::find_if(m_textures.begin(), m_textures.end(), [&](Entry& entry) {
          return entry.texture->refCount() == 1
              && entry.texture->size() == size
+@@ -123,6 +242,7 @@
+ {
+     ASSERT(GLContextWrapper::currentContext());
+     Locker locker { m_lock };
++    releaseUnusedImageTexturesWhileLocked();
+     auto texture = BitmapTexture::create(image, flags);
+     m_imageTextures.append(texture.copyRef());
+     scheduleReleaseUnusedTextures();
 --- a/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h
 +++ b/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h
-@@ -84,6 +84,7 @@
+@@ -84,6 +84,10 @@
      void enterLimitExceededModeIfNeeded();
      void exitLimitExceededModeIfNeeded();
      void releaseUnusedTexturesTimerFired();
 +    void enforceFreePoolCapWhileLocked();
++#if USE(GBM)
++    void releaseUnusedImageTexturesWhileLocked();
++#endif
  
      Lock m_lock;
      Vector<Entry> m_textures WTF_GUARDED_BY_LOCK(m_lock);
