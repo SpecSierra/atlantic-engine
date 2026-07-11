@@ -167,6 +167,17 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # PULSE_PROP_OVERRIDE can't do this — it only sets the context proplist, and
     # WebKit's explicit per-stream media.role wins. Unset = upstream behaviour.
     "patches/webkit/webkit-gst-media-role-env.patch"
+    # webkit-volume-locked-env.patch: WEBKIT_VOLUME_LOCKED=1 — lock the HTML
+    # media element volume to the system volume (upstream m_volumeLocked, the
+    # iPhone model). Completes the media-role fix above: each new <video>
+    # creates a new pulse stream and WebKit stamped el.volume (1.0; YouTube
+    # sets it per video) onto it as an explicit stream volume, so every next
+    # video reset loudness to 100% instead of inheriting the mainvolume step
+    # (device-proven with pacat: explicit-volume stream connects at 100% while
+    # the step sits at 44%). Locked: page JS can't change the stream volume
+    # (mute still works), el.volume mirrors the system volume, and new streams
+    # inherit the current step. Unset = upstream behaviour.
+    "patches/webkit/webkit-volume-locked-env.patch"
     # webkit-gst-audio-system-clock.patch: WEBKIT_GST_AUDIO_SYSTEM_CLOCK — force
     # provide-clock=FALSE on the PulseAudio sink so the pipeline runs off the
     # monotonic system clock. Fixes "YouTube sound stops after ~0.25 s": the

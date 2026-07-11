@@ -1,0 +1,55 @@
+Lock media element volume to the system volume (WEBKIT_VOLUME_LOCKED).
+
+Fixes "every video starts back at full volume": with WEBKIT_GST_MEDIA_ROLE=
+x-maemo (webkit-gst-media-role-env.patch) the hardware volume keys step all
+browser PulseAudio streams via module-meego-mainvolume — but each new <video>
+element creates a NEW pulse stream, and WebKit pushes the element's JS volume
+(el.volume, 1.0 for a fresh element — and YouTube's player sets it on every
+video load) down onto that stream as an explicit per-stream volume
+(HTMLMediaElement::updateVolume -> MediaPlayerPrivateGStreamer::setVolume ->
+playbin -> pulsesink). Device-proven: at mainvolume step 4 (44%) a new x-maemo
+stream WITHOUT a client volume inherits 44%, while one connecting WITH an
+explicit 100% client volume plays at 100% — so navigating to the next video
+resets loudness to full until the user touches the volume keys again.
+
+Upstream already has the right model for phones: m_volumeLocked — what iPhones
+use (defaultVolumeLocked() is true on iOS small-screen). When locked, page JS
+writes to el.volume are ignored for playback (the setVolume locked path never
+calls updateVolume, so nothing is ever stamped on the pulse stream), el.volume
+instead MIRRORS the player/stream volume, and mute keeps working — the system
+volume (hardware keys / mainvolume) is the single owner of loudness, and every
+new stream inherits it. This patch makes that default reachable off-iOS via
+WEBKIT_VOLUME_LOCKED=1 (set in deploy/runtime-common.sh). Unset/0 = upstream
+behaviour.
+--- a/Source/WebCore/html/HTMLMediaElement.cpp
++++ b/Source/WebCore/html/HTMLMediaElement.cpp
+@@ -151,6 +151,7 @@
+ #include "VisibilityAdjustment.h"
+ #include "WebCoreJSClientData.h"
+ #include <JavaScriptCore/Uint8Array.h>
++#include <cstdlib>
+ #include <limits>
+ #include <pal/SessionID.h>
+ #include <ranges>
+@@ -495,12 +496,20 @@
+     return true;
+ }
+
+ static bool defaultVolumeLocked()
+ {
+ #if PLATFORM(IOS)
+     return PAL::currentUserInterfaceIdiomIsSmallScreen();
+ #else
+-    return false;
++    // SFOS: WEBKIT_VOLUME_LOCKED=1 hands loudness to the system volume (the
++    // hardware keys / module-meego-mainvolume), the iPhone model: page JS
++    // el.volume writes don't touch the PulseAudio stream volume, so a new
++    // stream per video can't reset it back to 100%. Unset = upstream.
++    static bool locked = []() {
++        const char* env = std::getenv("WEBKIT_VOLUME_LOCKED");
++        return env && *env && *env != '0';
++    }();
++    return locked;
+ #endif
+ }
+

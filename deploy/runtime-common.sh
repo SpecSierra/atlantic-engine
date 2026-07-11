@@ -161,6 +161,15 @@ atlantic_export_helper_env() {
     # proplist, and WebKit's explicit per-stream media.role wins (device-verified).
     # The old PULSE_PROP_OVERRIDE=media.role=x-maemo here was a no-op; removed.
     export WEBKIT_GST_MEDIA_ROLE="${WEBKIT_GST_MEDIA_ROLE:-x-maemo}"
+    # Lock the HTML media element volume to the system volume (engine patch
+    # webkit-volume-locked-env.patch, upstream m_volumeLocked — the iPhone
+    # model). Without it every new <video> (= new pulse stream) got the page's
+    # el.volume (1.0, YouTube sets it per video) stamped on as an explicit
+    # stream volume, resetting loudness to 100% on each video instead of
+    # inheriting the mainvolume step the hardware keys had set. Locked: page JS
+    # cannot change the stream volume (mute still works) and el.volume mirrors
+    # the system volume. Set to 0 to restore upstream behaviour.
+    export WEBKIT_VOLUME_LOCKED="${WEBKIT_VOLUME_LOCKED:-1}"
     # Fix "YouTube sound stops after ~0.25 s". The libhybris PulseAudio sink's
     # provided clock (GstPulseSinkClock) intermittently freezes when its stream is
     # (re)corked across a mute/unmute or an MSE audio re-init; because the audio
