@@ -281,6 +281,12 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # style resolution — see memory franceinfo-style-resolution-dominant.md).
     # Also carries the WEBKIT_STYLE_LOG=1 [stylelog] diagnostic for device A/B.
     "patches/webkit/webkit-style-smart-reconstruct.patch"
+    # webkit-scrolltier-log-diagnostic.patch: TEMPORARY env-gated scroll-speed-ladder
+    # tracing (WEBKIT_SCROLLTIER_LOG=1, WebProcess stderr) — the low-res-tiles-during-
+    # scroll feature stopped engaging on device (build 480); logs dy-path eligibility,
+    # arming decisions and the 0<dt<0.2 gate to find where the signal is lost. Must
+    # apply AFTER webkit-lowres-tiles-during-scroll-env.patch. Remove once fixed.
+    "patches/webkit/webkit-scrolltier-log-diagnostic.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(
