@@ -269,6 +269,18 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # with reason). Zero overhead when unset. Must apply AFTER the
     # no-full-repaint patch (contexts overlap). Remove once the storm is fixed.
     "patches/webkit/webkit-paint-log-diagnostic.patch"
+    # webkit-style-smart-reconstruct.patch: PoC (WEBKIT_STYLE_SMART_RECONSTRUCT=1,
+    # off by default). Downgrades ContentsOrInterpretation stylesheet updates that
+    # were NOT caused by a real contents mutation or genuine environment change:
+    # the updateStyleForLayout rdar-36670246 resolver-null hack goes through a new
+    # weak variant that keeps the resolver/MatchResultCache alive, and weak-only
+    # pending updates are re-analyzed like ActiveSet (unchanged sheet list -> no-op,
+    # appended sheets -> Additive + scoped invalidation) instead of full resolver
+    # Reconstruct + invalidateAllStyle whole-document restyle. Targets the ~179
+    # main-doc full restyles per franceinfo load (44% of load main-thread time is
+    # style resolution — see memory franceinfo-style-resolution-dominant.md).
+    # Also carries the WEBKIT_STYLE_LOG=1 [stylelog] diagnostic for device A/B.
+    "patches/webkit/webkit-style-smart-reconstruct.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

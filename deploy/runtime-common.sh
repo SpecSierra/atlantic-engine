@@ -431,6 +431,15 @@ atlantic_export_browser_env() {
     # page load instead of being silently dropped. =0 disables for A/B.
     export WEBKIT_TOUCH_ACK_TIMEOUT_MS="${WEBKIT_TOUCH_ACK_TIMEOUT_MS:-100}"
 
+    # ── Smart stylesheet reconstructs (PoC, default OFF) ──────────────────────
+    # Honoured by webkit-style-smart-reconstruct.patch. =1 downgrades spurious
+    # ContentsOrInterpretation updates (updateStyleForLayout resolver-null hack)
+    # from full resolver Reconstruct + whole-document restyle to an additive
+    # resolver update + scoped invalidation (or a no-op). Default ON (user
+    # accepted the risk for the perf upside); =0 to A/B against stock.
+    # WEBKIT_STYLE_LOG=1 logs the decision mix ([stylelog]).
+    export WEBKIT_STYLE_SMART_RECONSTRUCT="${WEBKIT_STYLE_SMART_RECONSTRUCT:-1}"
+
     # ── Overlay scrollbar size ────────────────────────────────────────────────
     # Honoured by webkit-adwaita-scrollbar-scale-env.patch. Atlantic's 3x UI
     # scale is implemented as page zoom (webkit_web_view_set_zoom_level), which
