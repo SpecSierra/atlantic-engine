@@ -269,20 +269,6 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # with reason). Zero overhead when unset. Must apply AFTER the
     # no-full-repaint patch (contexts overlap). Remove once the storm is fixed.
     "patches/webkit/webkit-paint-log-diagnostic.patch"
-    # webkit-style-log-diagnostic.patch: TEMPORARY env-gated stylesheet-invalidation
-    # logging (WEBKIT_STYLE_LOG=1, WebProcess stderr) for the load-time style-recalc
-    # hunt — device sampling shows ~44% of franceinfo load main-thread time in style
-    # resolution. Logs each Scope::updateActiveStyleSheets with resolver update type
-    # (Reconstruct/Reset/Additive) + whether it triggers a full-document restyle, to
-    # confirm out-of-DOM-order sheet completion is forcing repeated full rebuilds.
-    # Zero overhead when unset. Remove once the style lever is chosen.
-    "patches/webkit/webkit-style-log-diagnostic.patch"
-    # webkit-skip-layout-resolver-reset.patch: WEBKIT_SKIP_LAYOUT_RESOLVER_RESET=1 skips
-    # the heavyweight didChangeStyleSheetEnvironment() that updateStyleForLayout fires when
-    # the resolver is missing (rdar FIXME) — the dominant source of full-doc restyle
-    # Reconstructs on heavy loads (~990/franceinfo-load). Default unset = stock. For an
-    # on-device A/B of DCL + visual correctness before committing.
-    "patches/webkit/webkit-skip-layout-resolver-reset.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(
