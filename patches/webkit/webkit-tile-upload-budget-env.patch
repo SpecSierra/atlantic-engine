@@ -1,6 +1,6 @@
 diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp
 --- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp	2026-07-12 16:11:38.446290616 +0000
-+++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp	2026-07-12 16:13:05.931890463 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp	2026-07-12 16:26:17.803323990 +0000
 @@ -25,6 +25,8 @@
  #include "BitmapTexturePool.h"
  #include "CoordinatedTileBuffer.h"
@@ -72,7 +72,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
  CoordinatedBackingStoreTile::CoordinatedBackingStoreTile(float scale)
      : m_scale(scale)
  {
-@@ -47,11 +104,37 @@
+@@ -47,11 +104,39 @@
  
  void CoordinatedBackingStoreTile::processPendingUpdates()
  {
@@ -99,7 +99,9 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
 +            }
 +            // GPU-backed buffers swap textures (no upload); only CPU buffers
 +            // pay the glTexSubImage cost the budget meters.
-+            size_t bytes = next.buffer->isBackedByOpenGL() ? 0 : next.buffer->size().area() * 4;
++            size_t bytes = 0;
++            if (!next.buffer->isBackedByOpenGL())
++                bytes = static_cast<size_t>(next.buffer->size().area().value()) * 4;
 +            if (bytes && !TileUploadBudget::tryConsume(bytes))
 +                break;
 +            updates.append(WTF::move(m_updates.first()));
