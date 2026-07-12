@@ -1,6 +1,6 @@
 diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp
 --- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp	2026-07-12 16:11:38.446290616 +0000
-+++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp	2026-07-12 16:26:17.803323990 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp	2026-07-12 16:48:31.256478714 +0000
 @@ -25,6 +25,8 @@
  #include "BitmapTexturePool.h"
  #include "CoordinatedTileBuffer.h"
@@ -72,7 +72,21 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
  CoordinatedBackingStoreTile::CoordinatedBackingStoreTile(float scale)
      : m_scale(scale)
  {
-@@ -47,11 +104,39 @@
+@@ -42,16 +99,53 @@
+ 
+ void CoordinatedBackingStoreTile::addUpdate(Update&& update)
+ {
++    // Budget mode defers updates across composites, so the queue can outlive one
++    // frame; without coalescing, a paint storm (page load) grows it -- and the
++    // tile buffers it keeps alive -- unboundedly, until the process is OOM-killed.
++    // A whole-tile update replaces the texture wholesale, making every earlier
++    // queued update for this tile dead weight: drop them and release their
++    // buffers immediately. (Stock unbudgeted mode drains the queue every
++    // composite, so it never accumulates and keeps exact upstream behavior.)
++    if (TileUploadBudget::enabled() && !m_updates.isEmpty() && update.sourceRect.size() == update.tileRect.size())
++        m_updates.clear();
+     m_updates.append(WTF::move(update));
+ }
  
  void CoordinatedBackingStoreTile::processPendingUpdates()
  {
