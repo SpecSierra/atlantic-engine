@@ -47,3 +47,46 @@ diff -ur a/Source/WebCore/page/scrolling/AsyncScrollingCoordinator.cpp b/Source/
      if (reasons && is<ScrollingStateFrameScrollingNode>(*scrollingStateNode)) {
          // The LocalFrameView's GraphicsLayer is likely to be out-of-synch with the PlatformLayer
          // at this point. So we'll update it before we switch back to main thread scrolling
+diff -ur a/Source/WebKit/WebProcess/WebPage/EventDispatcher.cpp b/Source/WebKit/WebProcess/WebPage/EventDispatcher.cpp
+--- a/Source/WebKit/WebProcess/WebPage/EventDispatcher.cpp	2026-07-12 14:47:40.850770904 +0000
++++ b/Source/WebKit/WebProcess/WebPage/EventDispatcher.cpp	2026-07-12 14:47:59.162898579 +0000
+@@ -61,6 +61,8 @@
+ #include <WebCore/ScrollingThread.h>
+ #include <WebCore/ScrollingTreeNode.h>
+ #include <WebCore/ThreadedScrollingTree.h>
++#include <cstdlib>
++#include <cstring>
+ #endif
+ 
+ namespace WebKit {
+@@ -160,6 +162,30 @@
+         auto processingSteps = scrollingTree->determineWheelEventProcessing(platformWheelEvent);
+         bool useMainThreadForScrolling = processingSteps.contains(WheelEventProcessingSteps::SynchronousScrolling);
+ 
++        // WEBKIT_FORCE_ASYNC_SCROLL (see AsyncScrollingCoordinator.cpp): never route
++        // wheel-driven scrolling through the main thread. When the event region at
++        // the touch point demands synchronous dispatch (non-passive wheel/touch
++        // listeners), the stock path blocks the SCROLLING THREAD in
++        // waitForEventToBeProcessedByMainThread() until the main thread has run the
++        // page's handlers -- on main-thread-bound pages (~1s per rendering update)
++        // that freezes scrolling, kinetic animation and composition for the whole
++        // pass, and the UIProcess coalesces all further wheel events behind the
++        // missing ack (measured: 240 touch moves -> 16 delivered wheel events).
++        // Instead scroll on the scrolling thread and deliver the DOM wheel event
++        // non-blocking. Deliberately lossy: pages can no longer preventDefault()
++        // wheel-driven scrolling (same trade-off as forced-passive listeners).
++        static bool forceAsyncScrollWheel = [] {
++            const char* env = getenv("WEBKIT_FORCE_ASYNC_SCROLL");
++            return env && *env && strcmp(env, "0");
++        }();
++        if (forceAsyncScrollWheel) {
++            processingSteps.remove(WheelEventProcessingSteps::SynchronousScrolling);
++            processingSteps.remove(WheelEventProcessingSteps::BlockingDOMEventDispatch);
++            processingSteps.add(WheelEventProcessingSteps::AsyncScrolling);
++            processingSteps.add(WheelEventProcessingSteps::NonBlockingDOMEventDispatch);
++            useMainThreadForScrolling = false;
++        }
++
+ #if !PLATFORM(COCOA)
+         // Deliver continuing scroll gestures directly to the scrolling thread until the end.
+         if ((platformWheelEvent.phase() == PlatformWheelEventPhase::Changed || platformWheelEvent.phase() == PlatformWheelEventPhase::Ended)
