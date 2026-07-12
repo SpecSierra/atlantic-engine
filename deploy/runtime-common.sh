@@ -452,6 +452,14 @@ atlantic_export_browser_env() {
     # pinning perfectly. 0/unset = stock (the A/B switch).
     export WEBKIT_FORCE_ASYNC_SCROLL="${WEBKIT_FORCE_ASYNC_SCROLL:-0}"
 
+    # Honoured by the qt5 plugin (WPEQtViewBackend). Acknowledge each exported
+    # web frame immediately instead of after Qt's next scene-graph render, so
+    # the WebProcess compositor is not lock-stepped to the QML render loop
+    # (which collapses to ~1fps under main-thread load and freezes scrolling).
+    # Qt samples the newest frame whenever it renders; intermediate frames are
+    # dropped. 0/unset = stock handshake (the A/B switch).
+    export ATLANTIC_EAGER_FRAME_COMPLETE="${ATLANTIC_EAGER_FRAME_COMPLETE:-0}"
+
     # ── Load-time responsiveness ─────────────────────────────────────────────
     # Honoured by webkit-loading-timer-alignment-env.patch and
     # webkit-parser-time-limit-env.patch. During a heavy page load the

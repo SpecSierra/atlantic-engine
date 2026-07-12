@@ -25,6 +25,8 @@
 #include "WPEWaylandSubsurface.h"
 #include <QGuiApplication>
 #include <QMetaObject>
+#include <cstdlib>
+#include <cstring>
 #include <QOpenGLFunctions>
 #include <QQuickWindow>
 #include <QtGlobal>
@@ -224,13 +226,34 @@ GLuint WPEQtViewBackend::texture(QOpenGLContext* context)
     return m_textureId;
 }
 
+// ATLANTIC_EAGER_FRAME_COMPLETE=1: acknowledge each exported web frame the
+// moment it arrives (displayImage) instead of after Qt has actually rendered a
+// scene-graph frame that samples it (didRenderFrame). The stock handshake makes
+// the WebProcess compositor lock-step with Qt's render loop: when the QML scene
+// renders slowly under load, composites stall in InProgress waiting for the
+// frame-complete and scrolling visibly freezes (device-measured on franceinfo:
+// compositor 0.2-3fps during scroll, 26fps at rest). With eager acks the
+// WebProcess composites at its own rate, Qt samples the newest frame whenever
+// it renders, and intermediate frames are simply dropped; buffer reuse is still
+// backpressured by the (Qt-paced) release_exported_image below.
+static bool eagerFrameComplete()
+{
+    static const bool on = [] {
+        const char* env = getenv("ATLANTIC_EAGER_FRAME_COMPLETE");
+        return env && env[0] && strcmp(env, "0");
+    }();
+    return on;
+}
+
 void WPEQtViewBackend::didRenderFrame()
 {
     if (!m_frameUpdateRequested || !m_exportable)
         return;
 
     m_frameUpdateRequested = false;
-    wpe_view_backend_exportable_fdo_dispatch_frame_complete(m_exportable);
+    // In eager mode the frame-complete was already dispatched in displayImage().
+    if (!eagerFrameComplete())
+        wpe_view_backend_exportable_fdo_dispatch_frame_complete(m_exportable);
     if (m_committedImage)
         wpe_view_backend_exportable_fdo_egl_dispatch_release_exported_image(m_exportable, m_committedImage);
     m_committedImage = m_pendingImage;
@@ -260,6 +283,10 @@ void WPEQtViewBackend::displayImage(struct wpe_fdo_egl_exported_image* image)
         wpe_view_backend_exportable_fdo_egl_dispatch_release_exported_image(m_exportable, m_pendingImage);
 
     m_pendingImage = image;
+    // Eager ack: let the WebProcess compositor start its next frame immediately
+    // rather than after Qt's next scene-graph render (see eagerFrameComplete()).
+    if (eagerFrameComplete() && m_exportable)
+        wpe_view_backend_exportable_fdo_dispatch_frame_complete(m_exportable);
     if (m_view) {
         m_view->triggerUpdate();
         // QQuickItem::update() from triggerUpdate() is not sufficient on hybris
