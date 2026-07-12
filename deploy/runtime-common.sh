@@ -466,8 +466,10 @@ atlantic_export_browser_env() {
     # the rest stays queued and drains over follow-up composites (stale/blank
     # tiles show meanwhile). Kills the multi-hundred-ms composite stalls when a
     # heavy main-thread pass commits screenfuls of tiles at once.
-    # 0/unset = stock unbounded (the A/B switch); 8 ≈ two screenfuls per frame.
-    export WEBKIT_TILE_UPLOAD_BUDGET_MB="${WEBKIT_TILE_UPLOAD_BUDGET_MB:-0}"
+    # 0 = stock unbounded. Ships 6 — device A/B swept 2/4/6/8/16 on franceinfo
+    # (build 499, Jul 2026): 6 was the user-preferred balance between scroll
+    # smoothness (smaller per-composite hitch) and content fill-in latency.
+    export WEBKIT_TILE_UPLOAD_BUDGET_MB="${WEBKIT_TILE_UPLOAD_BUDGET_MB:-6}"
 
     # ── Load-time responsiveness ─────────────────────────────────────────────
     # Honoured by webkit-loading-timer-alignment-env.patch and
