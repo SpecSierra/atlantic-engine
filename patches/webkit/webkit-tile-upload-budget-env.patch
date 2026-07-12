@@ -1,0 +1,215 @@
+diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp	2026-07-12 16:11:38.446290616 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp	2026-07-12 16:13:05.931890463 +0000
+@@ -25,6 +25,8 @@
+ #include "BitmapTexturePool.h"
+ #include "CoordinatedTileBuffer.h"
+ #include "GraphicsLayer.h"
++#include <cstdlib>
++#include <cstring>
+ #include <wtf/SystemTracing.h>
+ 
+ #if USE(SKIA)
+@@ -33,6 +35,61 @@
+ 
+ namespace WebCore {
+ 
++namespace TileUploadBudget {
++
++// Compositor-thread only (renderLayerTree -> flushCompositingState ->
++// processPendingUpdates all run on the compositing run loop), so plain statics.
++static size_t s_bytesThisFrame = 0;
++static bool s_deferredThisFrame = false;
++
++static size_t budgetBytes()
++{
++    static const size_t bytes = []() -> size_t {
++        if (const char* env = getenv("WEBKIT_TILE_UPLOAD_BUDGET_MB")) {
++            double mb = atof(env);
++            if (mb > 0 && mb <= 512)
++                return static_cast<size_t>(mb * 1024 * 1024);
++        }
++        return 0;
++    }();
++    return bytes;
++}
++
++bool enabled()
++{
++    return !!budgetBytes();
++}
++
++void beginFrame()
++{
++    s_bytesThisFrame = 0;
++    s_deferredThisFrame = false;
++}
++
++bool deferredThisFrame()
++{
++    return s_deferredThisFrame;
++}
++
++bool tryConsume(size_t bytes)
++{
++    // The first update of a frame always fits, so forward progress is
++    // guaranteed even when a single update exceeds the whole budget.
++    if (s_bytesThisFrame && s_bytesThisFrame + bytes > budgetBytes()) {
++        s_deferredThisFrame = true;
++        return false;
++    }
++    s_bytesThisFrame += bytes;
++    return true;
++}
++
++void noteDeferred()
++{
++    s_deferredThisFrame = true;
++}
++
++} // namespace TileUploadBudget
++
+ CoordinatedBackingStoreTile::CoordinatedBackingStoreTile(float scale)
+     : m_scale(scale)
+ {
+@@ -47,11 +104,37 @@
+ 
+ void CoordinatedBackingStoreTile::processPendingUpdates()
+ {
+-    auto updates = WTF::move(m_updates);
+-    auto updatesCount = updates.size();
+-    if (!updatesCount)
++    if (m_updates.isEmpty())
+         return;
+ 
++    // Per-composite upload budget (see TileUploadBudget above): consume the
++    // queue incrementally so deferred updates survive to the next composite.
++    // Updates within a tile are ordered; a deferral stops this tile's queue.
++    Vector<Update> updates;
++    if (!TileUploadBudget::enabled())
++        updates = WTF::move(m_updates);
++    else {
++        while (!m_updates.isEmpty()) {
++            auto& next = m_updates.first();
++            // Don't block the composite waiting for a worker still painting
++            // this buffer -- leave it queued and drain on a later frame.
++            if (!next.buffer->isPaintingComplete()) {
++                TileUploadBudget::noteDeferred();
++                break;
++            }
++            // GPU-backed buffers swap textures (no upload); only CPU buffers
++            // pay the glTexSubImage cost the budget meters.
++            size_t bytes = next.buffer->isBackedByOpenGL() ? 0 : next.buffer->size().area() * 4;
++            if (bytes && !TileUploadBudget::tryConsume(bytes))
++                break;
++            updates.append(WTF::move(m_updates.first()));
++            m_updates.removeAt(0);
++        }
++        if (updates.isEmpty())
++            return;
++    }
++
++    auto updatesCount = updates.size();
+     WTFBeginSignpost(this, CoordinatedSwapBuffers, "%zu updates", updatesCount);
+     for (unsigned updateIndex = 0; updateIndex < updatesCount; ++updateIndex) {
+         auto& update = updates[updateIndex];
+diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h	2026-07-12 16:11:38.443290595 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h	2026-07-12 16:12:01.315447404 +0000
+@@ -51,6 +51,7 @@
+     void addUpdate(Update&&);
+ 
+     void processPendingUpdates();
++    bool hasPendingUpdates() const { return !m_updates.isEmpty(); }
+ 
+     bool canBePainted() const { return !!m_texture; }
+ 
+@@ -62,6 +63,23 @@
+     bool m_isLowRes { false };
+ };
+ 
++// Per-composite tile upload budget (WEBKIT_TILE_UPLOAD_BUDGET_MB, unset/0 =
++// stock unlimited). All functions are compositor-thread only. When enabled,
++// CoordinatedBackingStoreTile::processPendingUpdates() defers (a) updates whose
++// buffer is still being painted by a worker (instead of blocking the composite
++// in waitUntilPaintingComplete) and (b) updates beyond the per-frame upload
++// byte budget. Deferred updates stay queued; ThreadedCompositor::renderLayerTree
++// checks deferredThisFrame() after the flush and schedules a follow-up composite
++// so they drain over subsequent frames. Lossy: stale/blank tile content shows
++// until the drain catches up.
++namespace TileUploadBudget {
++WEBCORE_EXPORT bool enabled();
++WEBCORE_EXPORT void beginFrame();
++WEBCORE_EXPORT bool deferredThisFrame();
++bool tryConsume(size_t bytes);
++void noteDeferred();
++} // namespace TileUploadBudget
++
+ } // namespace WebCore
+ 
+ #endif // USE(COORDINATED_GRAPHICS)
+diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp	2026-07-12 16:11:38.440290574 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp	2026-07-12 16:12:01.314447398 +0000
+@@ -106,6 +106,12 @@
+ #endif
+ }
+ 
++bool CoordinatedTileBuffer::isPaintingComplete()
++{
++    Locker locker { m_painting.lock };
++    return m_painting.state == PaintingState::Complete;
++}
++
+ void CoordinatedTileBuffer::waitUntilPaintingComplete()
+ {
+     Locker locker { m_painting.lock };
+diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.h b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.h
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.h	2026-07-12 16:11:38.438290561 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.h	2026-07-12 16:14:23.750424138 +0000
+@@ -67,6 +67,10 @@
+     virtual void beginPainting();
+     virtual void completePainting();
+     void waitUntilPaintingComplete();
++    // Non-blocking probe of the painting handshake, for the per-composite tile
++    // upload budget (WEBKIT_TILE_UPLOAD_BUDGET_MB): lets the compositor defer a
++    // still-painting tile update instead of blocking in waitUntilPaintingComplete.
++    WEBCORE_EXPORT bool isPaintingComplete();
+ 
+ #if USE(SKIA)
+     SkCanvas* canvas();
+diff -ur a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp	2026-07-12 16:11:38.448290629 +0000
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp	2026-07-12 16:13:47.196173439 +0000
+@@ -33,6 +33,7 @@
+ #include "RenderProcessInfo.h"
+ #include "WebPage.h"
+ #include "WebProcess.h"
++#include <WebCore/CoordinatedBackingStoreTile.h>
+ #include <WebCore/CoordinatedPlatformLayer.h>
+ #include <WebCore/Damage.h>
+ #include <WebCore/PlatformDisplay.h>
+@@ -452,6 +453,10 @@
+ 
+     m_surface->willRenderFrame(viewportSize);
+ 
++    // Per-composite tile upload budget (WEBKIT_TILE_UPLOAD_BUDGET_MB): reset the
++    // frame's byte counter before the layer flush processes tile updates.
++    WebCore::TileUploadBudget::beginFrame();
++
+     RunLoop::mainSingleton().dispatch([this, protectedThis = Ref { *this }] {
+         if (m_layerTreeHost)
+             m_layerTreeHost->willRenderFrame();
+@@ -467,6 +472,12 @@
+ 
+     updateFPSCounter();
+ 
++    // Tile updates deferred by the upload budget stay queued in their
++    // CoordinatedBackingStoreTile; schedule a follow-up composite so they drain
++    // over the next frames instead of waiting for unrelated activity.
++    if (WebCore::TileUploadBudget::enabled() && WebCore::TileUploadBudget::deferredThisFrame())
++        requestComposition(CompositionReason::RenderingUpdate);
++
+     if (shouldNotifiyDidComposite)
+         m_didCompositeRunLoopObserver->schedule(&RunLoop::mainSingleton());
+ 

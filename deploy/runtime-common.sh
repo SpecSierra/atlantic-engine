@@ -460,6 +460,15 @@ atlantic_export_browser_env() {
     # dropped. 0/unset = stock handshake (the A/B switch).
     export ATLANTIC_EAGER_FRAME_COMPLETE="${ATLANTIC_EAGER_FRAME_COMPLETE:-0}"
 
+    # Honoured by webkit-tile-upload-budget-env.patch. Cap the tile work a single
+    # composite may do: don't block on buffers the Skia workers are still
+    # painting, and upload at most this many MB of CPU tile pixels per frame —
+    # the rest stays queued and drains over follow-up composites (stale/blank
+    # tiles show meanwhile). Kills the multi-hundred-ms composite stalls when a
+    # heavy main-thread pass commits screenfuls of tiles at once.
+    # 0/unset = stock unbounded (the A/B switch); 8 ≈ two screenfuls per frame.
+    export WEBKIT_TILE_UPLOAD_BUDGET_MB="${WEBKIT_TILE_UPLOAD_BUDGET_MB:-0}"
+
     # ── Load-time responsiveness ─────────────────────────────────────────────
     # Honoured by webkit-loading-timer-alignment-env.patch and
     # webkit-parser-time-limit-env.patch. During a heavy page load the

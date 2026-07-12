@@ -343,6 +343,19 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # choke point; lossy: affected fixed/sticky elements lag at main-thread cadence
     # during scroll. Unset/0 = stock. Pairs with the fling throttle above.
     "patches/webkit/webkit-force-async-scroll-env.patch"
+    # webkit-tile-upload-budget-env.patch: WEBKIT_TILE_UPLOAD_BUDGET_MB — cap the
+    # tile work one composite may do. Device-root-caused (build 495): after each
+    # ~1s main-thread pass commits screenfuls of CPU-painted tiles, the next
+    # composite (a) BLOCKS in waitUntilPaintingComplete for buffers Skia workers
+    # are still painting and (b) uploads tens of MB via glTexSubImage in one go
+    # (franceinfo layers up to 23460x1269) — compositor-thread samples showed the
+    # stalls inside driver-blob code / idle-waiting, FPS 0.2-3 during scroll.
+    # With a budget, still-painting buffers and out-of-budget updates stay queued
+    # (never dropped) and renderLayerTree schedules follow-up composites to drain
+    # them. Lossy: stale/blank tile content for a few frames. Unset/0 = stock.
+    # Must apply AFTER the composite-scroll-sync patches (ThreadedCompositor.cpp
+    # contexts overlap).
+    "patches/webkit/webkit-tile-upload-budget-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(
