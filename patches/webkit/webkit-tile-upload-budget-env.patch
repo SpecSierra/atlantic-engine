@@ -1,3 +1,22 @@
+diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp	2026-07-12 17:20:28.809644734 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp	2026-07-12 17:20:28.830644879 +0000
+@@ -81,6 +81,15 @@
+ 
+     for (const auto& tile : m_tiles.values()) {
+         ASSERT(tile.scale() == m_scale);
++        // With the tile upload budget (WEBKIT_TILE_UPLOAD_BUDGET_MB) a freshly
++        // created tile's FIRST update can be deferred to a later composite, so a
++        // tile may reach paint with no texture yet -- stock code never sees this
++        // (every created tile is updated in the same flush) and dereferences the
++        // texture unconditionally, which crashed the compositor thread (device
++        // core: drawTexture <- paintToTextureMapper, build 498). Skip such tiles;
++        // the gap shows the layer background until the deferred update drains.
++        if (!tile.canBePainted())
++            continue;
+         const auto allEdgesExposed = allTileEdgesExposed(layerRect, tile.rect()) ? TextureMapper::AllEdgesExposed::Yes : TextureMapper::AllEdgesExposed::No;
+ 
+ #if ENABLE(DAMAGE_TRACKING)
 diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp
 --- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp	2026-07-12 16:11:38.446290616 +0000
 +++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp	2026-07-12 16:48:31.256478714 +0000
