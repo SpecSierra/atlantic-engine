@@ -423,9 +423,9 @@ atlantic_export_browser_env() {
     # re-enable a "very fast = blank band" tier above the low-res one. Prepaint
     # cover stays at 2 (normal) so low-res only bites when a fling outruns it.
     export WEBKIT_LOWRES_TILE_SCALE="${WEBKIT_LOWRES_TILE_SCALE:-0.3}"
-    export WEBKIT_LOWRES_SCROLL_SPEED="${WEBKIT_LOWRES_SCROLL_SPEED:-400}"
-    export WEBKIT_CHECKERBOARD_DURING_SCROLL="${WEBKIT_CHECKERBOARD_DURING_SCROLL:-0}"
-    export WEBKIT_CHECKERBOARD_SETTLE_MS="${WEBKIT_CHECKERBOARD_SETTLE_MS:-100}"
+    export WEBKIT_LOWRES_SCROLL_SPEED="${WEBKIT_LOWRES_SCROLL_SPEED:-120}"
+    export WEBKIT_CHECKERBOARD_DURING_SCROLL="${WEBKIT_CHECKERBOARD_DURING_SCROLL:-800}"
+    export WEBKIT_CHECKERBOARD_SETTLE_MS="${WEBKIT_CHECKERBOARD_SETTLE_MS:-200}"
     export WEBKIT_COVER_AREA_MULTIPLIER="${WEBKIT_COVER_AREA_MULTIPLIER:-2}"
 
     # ── Fling throttle: starve page work during fast scroll ──────────────────
@@ -439,7 +439,7 @@ atlantic_export_browser_env() {
     # scrolling already-painted tiles at full rate and the page catches up on
     # settle. Deliberately lossy: lazy-load/sticky-header JS lags during the fling.
     # 0/unset = fully disabled (stock scheduling) — the A/B switch. 200 = 5Hz.
-    export WEBKIT_FLING_THROTTLE_MS="${WEBKIT_FLING_THROTTLE_MS:-0}"
+    export WEBKIT_FLING_THROTTLE_MS="${WEBKIT_FLING_THROTTLE_MS:-400}"
     export WEBKIT_FLING_THROTTLE_SPEED="${WEBKIT_FLING_THROTTLE_SPEED:-400}"
     export WEBKIT_FLING_THROTTLE_SETTLE_MS="${WEBKIT_FLING_THROTTLE_SETTLE_MS:-300}"
 
@@ -450,7 +450,7 @@ atlantic_export_browser_env() {
     # measured ~1fps notch-by-notch because their fixed/sticky elements are not
     # composited. Lossy: those elements lag/jitter during scroll instead of
     # pinning perfectly. 0/unset = stock (the A/B switch).
-    export WEBKIT_FORCE_ASYNC_SCROLL="${WEBKIT_FORCE_ASYNC_SCROLL:-0}"
+    export WEBKIT_FORCE_ASYNC_SCROLL="${WEBKIT_FORCE_ASYNC_SCROLL:-1}"
 
     # Honoured by the qt5 plugin (WPEQtViewBackend). Acknowledge each exported
     # web frame immediately instead of after Qt's next scene-graph render, so
