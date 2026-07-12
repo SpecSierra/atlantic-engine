@@ -183,6 +183,57 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
  } // namespace WebCore
  
  #endif // USE(COORDINATED_GRAPHICS)
+diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedCompositionReason.h b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedCompositionReason.h
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedCompositionReason.h	2026-07-12 17:59:28.806711360 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedCompositionReason.h	2026-07-12 17:59:28.832711539 +0000
+@@ -35,6 +35,12 @@
+     VideoFrame = 1 << 1,
+     Animation = 1 << 2,
+     AsyncScrolling = 1 << 3,
++    // Drain composite for tile updates deferred by the per-composite upload
++    // budget (WEBKIT_TILE_UPLOAD_BUDGET_MB). Deliberately distinct from
++    // RenderingUpdate: that reason is deferred by the compositor while
++    // isWaitingForTiles, which would stall the drain behind the very tile
++    // batch it is meant to spread out.
++    TileDrain = 1 << 4,
+ };
+ 
+ } // namespace WebCore
+@@ -47,7 +53,8 @@
+         WebCore::CompositionReason::RenderingUpdate,
+         WebCore::CompositionReason::VideoFrame,
+         WebCore::CompositionReason::Animation,
+-        WebCore::CompositionReason::AsyncScrolling
++        WebCore::CompositionReason::AsyncScrolling,
++        WebCore::CompositionReason::TileDrain
+     >;
+ };
+ 
+diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp	2026-07-12 17:59:28.811711395 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp	2026-07-12 17:59:28.833711546 +0000
+@@ -898,7 +898,7 @@
+ {
+     ASSERT(!isMainThread());
+     Locker locker { m_lock };
+-    if (m_pendingChanges.isEmpty() && (!reasons.contains(CompositionReason::RenderingUpdate) || !m_backingStoreProxy))
++    if (m_pendingChanges.isEmpty() && (!reasons.containsAny({ CompositionReason::RenderingUpdate, CompositionReason::TileDrain }) || !m_backingStoreProxy))
+         return;
+ 
+     auto& layer = ensureTarget();
+@@ -1082,6 +1082,12 @@
+         }
+     }
+ 
++    // Tile-drain composites only flush the tile updates the upload budget
++    // deferred (WEBKIT_TILE_UPLOAD_BUDGET_MB); RenderingUpdate composites
++    // already did so in the backing-store block above.
++    if (reasons.contains(CompositionReason::TileDrain) && !reasons.contains(CompositionReason::RenderingUpdate) && m_backingStore)
++        m_backingStore->processPendingUpdates();
++
+     if (reasons.containsAny({ CompositionReason::RenderingUpdate, CompositionReason::VideoFrame, CompositionReason::AsyncScrolling })) {
+         if (m_pendingChanges.contains(Change::ContentsBuffer)) {
+             m_contentsBuffer.committed = WTF::move(m_contentsBuffer.pending);
 diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp
 --- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp	2026-07-12 16:11:38.440290574 +0000
 +++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp	2026-07-12 16:12:01.314447398 +0000
@@ -215,7 +266,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBu
      SkCanvas* canvas();
 diff -ur a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
 --- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp	2026-07-12 16:11:38.448290629 +0000
-+++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp	2026-07-12 16:13:47.196173439 +0000
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp	2026-07-12 17:59:28.833711546 +0000
 @@ -33,6 +33,7 @@
  #include "RenderProcessInfo.h"
  #include "WebPage.h"
@@ -243,7 +294,7 @@ diff -ur a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedComposit
 +    // CoordinatedBackingStoreTile; schedule a follow-up composite so they drain
 +    // over the next frames instead of waiting for unrelated activity.
 +    if (WebCore::TileUploadBudget::enabled() && WebCore::TileUploadBudget::deferredThisFrame())
-+        requestComposition(CompositionReason::RenderingUpdate);
++        requestComposition(CompositionReason::TileDrain);
 +
      if (shouldNotifiyDidComposite)
          m_didCompositeRunLoopObserver->schedule(&RunLoop::mainSingleton());
