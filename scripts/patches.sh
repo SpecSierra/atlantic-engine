@@ -315,6 +315,21 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # Must apply AFTER webkit-lowres-tiles-during-scroll-env.patch (and after the
     # scrolltier-log diagnostic, contexts overlap in SkiaPaintingEngine.cpp).
     "patches/webkit/webkit-lowres-tiles-cpu-path.patch"
+    # webkit-fling-throttle-env.patch: fling degradation for main-thread-bound
+    # pages (franceinfo/radiofrance scroll <1fps, 44% style resolution). While the
+    # scrolling thread reports a fast fling (velocity sampled in
+    # ScrollingTree::scrollingTreeNodeDidScroll, settle window like the
+    # checkerboard patch), LayerTreeHost caps main-thread rendering updates to one
+    # per WEBKIT_FLING_THROTTLE_MS. Page::updateRendering is where scroll DOM
+    # events, rAF, IntersectionObserver, style, layout and paint all run, so this
+    # one gate starves scroll-triggered page work during the fling; the compositor
+    # keeps scrolling already-painted tiles. Deliberately lossy (lazy-load/sticky
+    # JS lags until settle). SAFE vs the builds-465..471 deadlock: the repeating
+    # RenderingUpdate observer is never invalidated/deferred — the gate just
+    # early-returns and leaves it polling, plus a one-shot wakeup timer for quiet
+    # loops. Unset/0 = bit-for-bit stock scheduling. Must apply AFTER the
+    # composite-scroll-sync patches (contexts overlap in LayerTreeHost.cpp).
+    "patches/webkit/webkit-fling-throttle-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

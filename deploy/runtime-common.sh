@@ -428,6 +428,21 @@ atlantic_export_browser_env() {
     export WEBKIT_CHECKERBOARD_SETTLE_MS="${WEBKIT_CHECKERBOARD_SETTLE_MS:-100}"
     export WEBKIT_COVER_AREA_MULTIPLIER="${WEBKIT_COVER_AREA_MULTIPLIER:-2}"
 
+    # ── Fling throttle: starve page work during fast scroll ──────────────────
+    # Honoured by webkit-fling-throttle-env.patch. On main-thread-bound pages
+    # (franceinfo/radiofrance: scroll <1fps, style resolution dominates) scroll-
+    # triggered JS/style/layout serialize behind every scroll frame. With this set,
+    # a fast fling (> WEBKIT_FLING_THROTTLE_SPEED CSS px/s, held for
+    # WEBKIT_FLING_THROTTLE_SETTLE_MS after the last fast motion) caps main-thread
+    # rendering updates — scroll DOM events, rAF, IntersectionObserver, style,
+    # layout, paint — to one per WEBKIT_FLING_THROTTLE_MS; the compositor keeps
+    # scrolling already-painted tiles at full rate and the page catches up on
+    # settle. Deliberately lossy: lazy-load/sticky-header JS lags during the fling.
+    # 0/unset = fully disabled (stock scheduling) — the A/B switch. 200 = 5Hz.
+    export WEBKIT_FLING_THROTTLE_MS="${WEBKIT_FLING_THROTTLE_MS:-0}"
+    export WEBKIT_FLING_THROTTLE_SPEED="${WEBKIT_FLING_THROTTLE_SPEED:-400}"
+    export WEBKIT_FLING_THROTTLE_SETTLE_MS="${WEBKIT_FLING_THROTTLE_SETTLE_MS:-300}"
+
     # ── Load-time responsiveness ─────────────────────────────────────────────
     # Honoured by webkit-loading-timer-alignment-env.patch and
     # webkit-parser-time-limit-env.patch. During a heavy page load the
