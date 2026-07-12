@@ -1,0 +1,49 @@
+diff -ur a/Source/WebCore/page/scrolling/AsyncScrollingCoordinator.cpp b/Source/WebCore/page/scrolling/AsyncScrollingCoordinator.cpp
+--- a/Source/WebCore/page/scrolling/AsyncScrollingCoordinator.cpp	2026-07-12 13:29:07.916572509 +0000
++++ b/Source/WebCore/page/scrolling/AsyncScrollingCoordinator.cpp	2026-07-12 13:29:41.148817802 +0000
+@@ -58,6 +58,8 @@
+ #include "Settings.h"
+ #include "WheelEventTestMonitor.h"
+ #include "pal/HysteresisActivity.h"
++#include <cstdlib>
++#include <cstring>
+ #include <wtf/ProcessID.h>
+ #include <wtf/SystemTracing.h>
+ #include <wtf/TZoneMallocInlines.h>
+@@ -1211,12 +1213,36 @@
+         ASSERT_NOT_REACHED();
+ }
+ 
++// WEBKIT_FORCE_ASYNC_SCROLL: never fall back to main-thread ("synchronous")
++// scrolling because of slow-repaint content. Pages with a non-composited
++// position:fixed/sticky element (HasNonLayerViewportConstrainedObjects) or
++// slow-repaint objects like background-attachment:fixed (HasSlowRepaintObjects)
++// normally force EVERY scroll frame to wait for a full main-thread rendering
++// update; on main-thread-bound pages (franceinfo: ~1s per update) that means
++// scrolling at ~1fps. With this set, those reasons are ignored so the scrolling
++// thread keeps applying layer positions and compositing at full rate.
++// Deliberately lossy: the affected fixed/sticky elements are repositioned only
++// at main-thread cadence (they visibly lag/jitter during the scroll), and fixed
++// backgrounds can shift. Structural reasons (ForcedOnMainThread, IsImageDocument,
++// HasViewportConstrainedObjectsWithoutSupportingFixedLayers) are preserved.
++static bool forceAsyncScrollEnabled()
++{
++    static bool enabled = [] {
++        const char* env = getenv("WEBKIT_FORCE_ASYNC_SCROLL");
++        return env && *env && strcmp(env, "0");
++    }();
++    return enabled;
++}
++
+ void AsyncScrollingCoordinator::setSynchronousScrollingReasons(std::optional<ScrollingNodeID> nodeID, OptionSet<SynchronousScrollingReason> reasons)
+ {
+     RefPtr scrollingStateNode = dynamicDowncast<ScrollingStateScrollingNode>(stateNodeForNodeID(nodeID));
+     if (!scrollingStateNode)
+         return;
+ 
++    if (forceAsyncScrollEnabled())
++        reasons.remove({ SynchronousScrollingReason::HasSlowRepaintObjects, SynchronousScrollingReason::HasNonLayerViewportConstrainedObjects });
++
+     if (reasons && is<ScrollingStateFrameScrollingNode>(*scrollingStateNode)) {
+         // The LocalFrameView's GraphicsLayer is likely to be out-of-synch with the PlatformLayer
+         // at this point. So we'll update it before we switch back to main thread scrolling

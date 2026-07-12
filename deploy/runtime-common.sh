@@ -443,6 +443,15 @@ atlantic_export_browser_env() {
     export WEBKIT_FLING_THROTTLE_SPEED="${WEBKIT_FLING_THROTTLE_SPEED:-400}"
     export WEBKIT_FLING_THROTTLE_SETTLE_MS="${WEBKIT_FLING_THROTTLE_SETTLE_MS:-300}"
 
+    # Honoured by webkit-force-async-scroll-env.patch. Never fall back to
+    # main-thread scrolling because of slow-repaint content (non-composited
+    # fixed/sticky elements, background-attachment:fixed). Without it, such pages
+    # scroll at the main-thread rendering-update rate — franceinfo/radiofrance
+    # measured ~1fps notch-by-notch because their fixed/sticky elements are not
+    # composited. Lossy: those elements lag/jitter during scroll instead of
+    # pinning perfectly. 0/unset = stock (the A/B switch).
+    export WEBKIT_FORCE_ASYNC_SCROLL="${WEBKIT_FORCE_ASYNC_SCROLL:-0}"
+
     # ── Load-time responsiveness ─────────────────────────────────────────────
     # Honoured by webkit-loading-timer-alignment-env.patch and
     # webkit-parser-time-limit-env.patch. During a heavy page load the

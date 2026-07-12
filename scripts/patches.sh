@@ -330,6 +330,19 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # loops. Unset/0 = bit-for-bit stock scheduling. Must apply AFTER the
     # composite-scroll-sync patches (contexts overlap in LayerTreeHost.cpp).
     "patches/webkit/webkit-fling-throttle-env.patch"
+    # webkit-force-async-scroll-env.patch: WEBKIT_FORCE_ASYNC_SCROLL — device-
+    # root-caused (franceinfo, build 491): the page's non-composited fixed/sticky
+    # elements set SynchronousScrollingReason::HasNonLayerViewportConstrainedObjects,
+    # which forbids the scrolling thread from applying layer positions
+    # (canUpdateLayersOnScrollingThread false) — ZERO async-scroll composites, every
+    # visible scroll frame waits for a full ~1s main-thread rendering update = the
+    # 1fps notch-by-notch scroll. gdb-proven: composites:updates 24:23 stock; 23:6
+    # after neutralizing the 28 fixed/sticky elements via JS. The flag drops the
+    # slow-repaint reasons (HasSlowRepaintObjects, HasNonLayerViewportConstrained-
+    # Objects) at the single AsyncScrollingCoordinator::setSynchronousScrollingReasons
+    # choke point; lossy: affected fixed/sticky elements lag at main-thread cadence
+    # during scroll. Unset/0 = stock. Pairs with the fling throttle above.
+    "patches/webkit/webkit-force-async-scroll-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(
