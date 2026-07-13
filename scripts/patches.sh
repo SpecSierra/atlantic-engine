@@ -356,6 +356,20 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # Must apply AFTER the composite-scroll-sync patches (ThreadedCompositor.cpp
     # contexts overlap).
     "patches/webkit/webkit-tile-upload-budget-env.patch"
+    # webkit-tile-upload-scroll-gate.patch: make the upload budget behave like
+    # other browsers visually. (1) WEBKIT_TILE_UPLOAD_BUDGET_SCROLL_ONLY
+    # (default 1): the budget only meters composites while the scrolling tree
+    # reports motion (atomic stamp from scrollingTreeNodeDidScroll + settle
+    # window WEBKIT_TILE_UPLOAD_SCROLL_SETTLE_MS, default 250); once settled,
+    # the next composite drains the whole queue at once (stock path), so newly
+    # exposed content completes atomically instead of popping in square by
+    # square. (2) While metering, CoordinatedBackingStore drains tiles ordered
+    # along the scroll direction (leading edge first) and stops at budget
+    # exhaustion, so fill-in reads as a progressive wave, not random squares.
+    # No-op when the budget is 0. Must apply AFTER tile-upload-budget-env and
+    # fling-throttle-env (contexts overlap in CoordinatedBackingStoreTile.* and
+    # ScrollingTree.*).
+    "patches/webkit/webkit-tile-upload-scroll-gate.patch"
 
     # Touch devices: kill the fake mouse-move WebKit dispatches after every
     # scroll at the stale synthetic-tap position, which :hover-highlights

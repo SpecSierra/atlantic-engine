@@ -478,6 +478,16 @@ atlantic_export_browser_env() {
     # smoothness (smaller per-composite hitch) and content fill-in latency.
     export WEBKIT_TILE_UPLOAD_BUDGET_MB="${WEBKIT_TILE_UPLOAD_BUDGET_MB:-6}"
 
+    # Honoured by webkit-tile-upload-scroll-gate.patch. Only meter tile uploads
+    # while a scroll is actually in progress (plus the settle window, ms); at
+    # rest the queued tiles drain in one composite, so freshly exposed content
+    # completes atomically like other browsers instead of trickling in
+    # square-by-square. While metering, tiles drain ordered along the scroll
+    # direction (leading edge first). SCROLL_ONLY=0 = always-on budget (the
+    # pre-build-506 behavior).
+    export WEBKIT_TILE_UPLOAD_BUDGET_SCROLL_ONLY="${WEBKIT_TILE_UPLOAD_BUDGET_SCROLL_ONLY:-1}"
+    export WEBKIT_TILE_UPLOAD_SCROLL_SETTLE_MS="${WEBKIT_TILE_UPLOAD_SCROLL_SETTLE_MS:-250}"
+
     # ── Load-time responsiveness ─────────────────────────────────────────────
     # Honoured by webkit-loading-timer-alignment-env.patch and
     # webkit-parser-time-limit-env.patch. During a heavy page load the
