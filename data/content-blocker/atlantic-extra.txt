@@ -12,3 +12,11 @@
 !   '||domain^' also covers the cdn.lib.* subdomain.
 ||getjad.io^
 ||getjan.io^
+!
+! Reddit "Get the app to keep using Reddit" xpromo bottom sheet. uBO covers it
+! only via a :has-text() procedural selector adblock-rust cannot honor; this
+! plain class hide paints it out from first paint. The companion JS in the
+! browser's kRedditPerf user script removes the element AND lifts the
+! body.rpl-scroll-lock it stamps (a hidden modal would otherwise freeze
+! scrolling behind it).
+reddit.com##.configured-xpromo
