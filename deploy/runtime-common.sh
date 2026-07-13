@@ -489,6 +489,16 @@ atlantic_export_browser_env() {
     export WEBKIT_TILE_UPLOAD_BUDGET_SCROLL_ONLY="${WEBKIT_TILE_UPLOAD_BUDGET_SCROLL_ONLY:-1}"
     export WEBKIT_TILE_UPLOAD_SCROLL_SETTLE_MS="${WEBKIT_TILE_UPLOAD_SCROLL_SETTLE_MS:-800}"
 
+    # Honoured by webkit-tile-upload-nonblocking-settle.patch. Byte budget for
+    # SETTLED (non-scrolling) composites. Unlimited settled drains were the
+    # residual franceinfo scroll freeze (device A/B, build 509, Jul 2026):
+    # every inter-gesture gap > SETTLE_MS flipped the next composite to an
+    # unmetered drain pushing tens of MB through glTexSubImage in one frame —
+    # mean scroll FPS 2.0 unlimited vs 7.4 metered. 16MB drains post-scroll
+    # fill-in in 1-2 big directional waves (anti-popping kept) while bounding
+    # any single composite. 0 = unlimited (the build-507/508 behavior).
+    export WEBKIT_TILE_UPLOAD_REST_BUDGET_MB="${WEBKIT_TILE_UPLOAD_REST_BUDGET_MB:-16}"
+
     # ── Load-time responsiveness ─────────────────────────────────────────────
     # Honoured by webkit-loading-timer-alignment-env.patch and
     # webkit-parser-time-limit-env.patch. During a heavy page load the

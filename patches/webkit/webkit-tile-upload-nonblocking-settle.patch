@@ -1,6 +1,67 @@
 --- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp
 +++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp
-@@ -198,12 +198,20 @@
+@@ -102,6 +102,30 @@
+     return bytes;
+ }
+ 
++// WEBKIT_TILE_UPLOAD_REST_BUDGET_MB (default 16, 0 = unlimited): the byte
++// budget for settled (non-scrolling) composites. An UNLIMITED settled drain is
++// what froze franceinfo scrolling (device-measured, build 509): every gap
++// between gestures longer than SETTLE_MS flipped the next composite to an
++// unmetered drain that pushed the whole queued batch (tens of MB, DPR3 CPU
++// tiles) through glTexSubImage in one frame — mean scroll FPS 2.0 unlimited vs
++// 7.4 metered. A rest budget a few times the scroll budget keeps post-scroll
++// fill-in completing in one or two big directional waves (the anti-popping
++// behavior the scroll gate exists for) while bounding any single composite.
++static size_t restBudgetBytes()
++{
++    static const size_t bytes = []() -> size_t {
++        if (const char* env = getenv("WEBKIT_TILE_UPLOAD_REST_BUDGET_MB")) {
++            double mb = atof(env);
++            if (mb >= 0 && mb <= 512)
++                return static_cast<size_t>(mb * 1024 * 1024);
++        }
++        return 16 * 1024 * 1024;
++    }();
++    return bytes;
++}
++
++static size_t s_frameBudgetBytes = 0;
++
+ bool enabled()
+ {
+     return !!budgetBytes();
+@@ -112,9 +136,18 @@
+     s_bytesThisFrame = 0;
+     s_deferredThisFrame = false;
+     s_budgetExhaustedThisFrame = false;
++    if (!enabled()) {
++        s_throttlingThisFrame = false;
++        s_frameBudgetBytes = 0;
++        return;
++    }
+     // Latched once per composite so every tile in the frame sees the same
+-    // decision, even if the scroll settles mid-flush.
+-    s_throttlingThisFrame = enabled() && (!scrollOnly() || scrollActiveNow());
++    // decision, even if the scroll settles mid-flush. Scrolling composites
++    // (or all composites with SCROLL_ONLY=0) use the tight scroll budget;
++    // settled composites use the larger rest budget (0 = unlimited).
++    const bool scrolling = !scrollOnly() || scrollActiveNow();
++    s_frameBudgetBytes = scrolling ? budgetBytes() : restBudgetBytes();
++    s_throttlingThisFrame = !!s_frameBudgetBytes;
+ }
+ 
+ bool throttlingThisFrame()
+@@ -153,7 +186,7 @@
+ {
+     // The first update of a frame always fits, so forward progress is
+     // guaranteed even when a single update exceeds the whole budget.
+-    if (s_bytesThisFrame && s_bytesThisFrame + bytes > budgetBytes()) {
++    if (s_bytesThisFrame && s_bytesThisFrame + bytes > s_frameBudgetBytes) {
+         s_deferredThisFrame = true;
+         s_budgetExhaustedThisFrame = true;
+         return false;
+@@ -198,12 +231,20 @@
      // Per-composite upload budget (see TileUploadBudget above): consume the
      // queue incrementally so deferred updates survive to the next composite.
      // Updates within a tile are ordered; a deferral stops this tile's queue.
@@ -24,7 +85,7 @@
          while (!m_updates.isEmpty()) {
              auto& next = m_updates.first();
              // Don't block the composite waiting for a worker still painting
-@@ -212,13 +220,15 @@
+@@ -212,13 +253,15 @@
                  TileUploadBudget::noteDeferred();
                  break;
              }

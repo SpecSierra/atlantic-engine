@@ -371,17 +371,19 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # ScrollingTree.*).
     "patches/webkit/webkit-tile-upload-scroll-gate.patch"
     # webkit-tile-upload-nonblocking-settle.patch: the scroll gate's settled
-    # composite fell back to the STOCK drain, which blocks in
-    # waitUntilPaintingComplete for buffers Skia workers are still painting.
-    # During a heavy scroll the paint queue runs seconds deep, and every settle
-    # flip (gap between gestures > SETTLE_MS) froze composition for all of it —
-    # this was the residual franceinfo scroll freeze (device A/B, fresh-load
-    # continuous scroll: mean FPS 2.5 / 16-of-20 samples <3 FPS with the
-    # blocking settle drain vs 11.8 with non-blocking metering). Settled frames
-    # still upload the whole painted queue in one composite (no byte metering,
-    # so the anti-popping behavior is kept) but defer still-painting buffers to
-    # the TileDrain follow-up composite instead of blocking. Must apply AFTER
-    # tile-upload-scroll-gate (same function).
+    # composite fell back to the STOCK drain — unbounded glTexSubImage batch
+    # plus blocking in waitUntilPaintingComplete for buffers Skia workers are
+    # still painting. Every settle flip (gap between gestures > SETTLE_MS)
+    # stalled composition for the whole queued batch — the residual franceinfo
+    # scroll freeze. Device A/B (fresh-load continuous scroll, build 509):
+    # non-blocking alone did NOT help (mean FPS 2.0 — the byte volume, not the
+    # blocking wait, dominates); metering every frame gave mean 7.4. Fix:
+    # settled composites are metered too, at a larger rest budget
+    # (WEBKIT_TILE_UPLOAD_REST_BUDGET_MB, ships 16, 0 = unlimited) so
+    # post-scroll fill-in completes in 1-2 big directional waves (anti-popping
+    # kept) and never blocks on still-painting buffers (they defer to the
+    # TileDrain follow-up composite). Must apply AFTER tile-upload-scroll-gate
+    # (same function).
     "patches/webkit/webkit-tile-upload-nonblocking-settle.patch"
 
     # Touch devices: kill the fake mouse-move WebKit dispatches after every
