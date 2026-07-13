@@ -1,0 +1,38 @@
+--- a/Source/WebCore/page/EventHandler.cpp	2026-07-13 10:25:09.407425520 +0000
++++ b/Source/WebCore/page/EventHandler.cpp	2026-07-13 10:25:23.355514875 +0000
+@@ -149,6 +149,7 @@
+ #include "WheelEventDeltaFilter.h"
+ #include "WheelEventTestMonitor.h"
+ #include "WindowsKeyboardCodes.h"
++#include <cstdlib>
+ #include <ranges>
+ #include <wtf/Assertions.h>
+ #include <wtf/NeverDestroyed.h>
+@@ -3965,9 +3966,27 @@
+     page->scheduleRenderingUpdate(RenderingUpdateStep::CursorUpdate);
+ }
+ 
++// On a pure-touch device there is no real mouse, but WebKit still tracks a
++// "last known mouse position" left behind by the synthetic click of each tap.
++// After every scroll it dispatches a fake mouse-move at that stale position to
++// refresh hover state, so whatever link happens to scroll under the invisible
++// cursor gets :hover-highlighted. WEBKIT_NO_FAKE_MOUSE_MOVE=1 suppresses those
++// fake moves entirely (real mouse-move events are unaffected).
++static bool fakeMouseMoveEventsDisabled()
++{
++    static bool disabled = [] {
++        const char* env = getenv("WEBKIT_NO_FAKE_MOUSE_MOVE");
++        return env && *env && *env != '0';
++    }();
++    return disabled;
++}
++
+ void EventHandler::dispatchFakeMouseMoveEventSoon()
+ {
+ #if !ENABLE(IOS_TOUCH_EVENTS)
++    if (fakeMouseMoveEventsDisabled())
++        return;
++
+     if (m_mousePressed)
+         return;
+ 

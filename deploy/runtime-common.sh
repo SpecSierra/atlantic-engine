@@ -443,6 +443,13 @@ atlantic_export_browser_env() {
     export WEBKIT_FLING_THROTTLE_SPEED="${WEBKIT_FLING_THROTTLE_SPEED:-400}"
     export WEBKIT_FLING_THROTTLE_SETTLE_MS="${WEBKIT_FLING_THROTTLE_SETTLE_MS:-300}"
 
+    # Honoured by webkit-no-fake-mouse-move-env.patch. Pure-touch device: each
+    # tap's synthetic click leaves a stale "last known mouse position", and
+    # after every scroll WebKit dispatches a fake mouse-move there — so links
+    # scrolling under the invisible cursor get :hover-highlighted. 1 = never
+    # dispatch fake mouse-moves (real mouse events unaffected). 0 = stock.
+    export WEBKIT_NO_FAKE_MOUSE_MOVE="${WEBKIT_NO_FAKE_MOUSE_MOVE:-1}"
+
     # Honoured by webkit-force-async-scroll-env.patch. Never fall back to
     # main-thread scrolling because of slow-repaint content (non-composited
     # fixed/sticky elements, background-attachment:fixed). Without it, such pages

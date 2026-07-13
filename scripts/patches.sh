@@ -356,6 +356,12 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # Must apply AFTER the composite-scroll-sync patches (ThreadedCompositor.cpp
     # contexts overlap).
     "patches/webkit/webkit-tile-upload-budget-env.patch"
+
+    # Touch devices: kill the fake mouse-move WebKit dispatches after every
+    # scroll at the stale synthetic-tap position, which :hover-highlights
+    # whatever link scrolls under the invisible cursor
+    # (WEBKIT_NO_FAKE_MOUSE_MOVE, default 1 in runtime-common.sh).
+    "patches/webkit/webkit-no-fake-mouse-move-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(
