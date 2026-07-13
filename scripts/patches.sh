@@ -370,6 +370,19 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # fling-throttle-env (contexts overlap in CoordinatedBackingStoreTile.* and
     # ScrollingTree.*).
     "patches/webkit/webkit-tile-upload-scroll-gate.patch"
+    # webkit-tile-upload-nonblocking-settle.patch: the scroll gate's settled
+    # composite fell back to the STOCK drain, which blocks in
+    # waitUntilPaintingComplete for buffers Skia workers are still painting.
+    # During a heavy scroll the paint queue runs seconds deep, and every settle
+    # flip (gap between gestures > SETTLE_MS) froze composition for all of it —
+    # this was the residual franceinfo scroll freeze (device A/B, fresh-load
+    # continuous scroll: mean FPS 2.5 / 16-of-20 samples <3 FPS with the
+    # blocking settle drain vs 11.8 with non-blocking metering). Settled frames
+    # still upload the whole painted queue in one composite (no byte metering,
+    # so the anti-popping behavior is kept) but defer still-painting buffers to
+    # the TileDrain follow-up composite instead of blocking. Must apply AFTER
+    # tile-upload-scroll-gate (same function).
+    "patches/webkit/webkit-tile-upload-nonblocking-settle.patch"
 
     # Touch devices: kill the fake mouse-move WebKit dispatches after every
     # scroll at the stale synthetic-tap position, which :hover-highlights

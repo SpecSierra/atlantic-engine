@@ -1,0 +1,49 @@
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp
+@@ -198,12 +198,20 @@
+     // Per-composite upload budget (see TileUploadBudget above): consume the
+     // queue incrementally so deferred updates survive to the next composite.
+     // Updates within a tile are ordered; a deferral stops this tile's queue.
+-    // With the scroll gate (SCROLL_ONLY), a settled frame takes the stock
+-    // move-all path below, so the whole remaining queue lands in one composite.
++    // With the scroll gate (SCROLL_ONLY), a settled frame uploads the whole
++    // remaining queue in one composite (no byte metering, so newly exposed
++    // content completes atomically) -- but it must still NOT block on buffers a
++    // Skia worker is painting: during a heavy scroll the paint queue runs
++    // seconds deep, and a settled composite that falls back to the stock
++    // blocking drain stalls composition for all of it (device-measured on
++    // franceinfo: mean scroll FPS 2.5 blocking vs 11.8 non-blocking).
++    // Still-painting updates stay queued; the TileDrain follow-up composite
++    // picks them up once painted.
+     Vector<Update> updates;
+-    if (!TileUploadBudget::throttlingThisFrame())
++    if (!TileUploadBudget::enabled())
+         updates = WTF::move(m_updates);
+     else {
++        const bool metered = TileUploadBudget::throttlingThisFrame();
+         while (!m_updates.isEmpty()) {
+             auto& next = m_updates.first();
+             // Don't block the composite waiting for a worker still painting
+@@ -212,13 +220,15 @@
+                 TileUploadBudget::noteDeferred();
+                 break;
+             }
+-            // GPU-backed buffers swap textures (no upload); only CPU buffers
+-            // pay the glTexSubImage cost the budget meters.
+-            size_t bytes = 0;
+-            if (!next.buffer->isBackedByOpenGL())
+-                bytes = static_cast<size_t>(next.buffer->size().area().value()) * 4;
+-            if (bytes && !TileUploadBudget::tryConsume(bytes))
+-                break;
++            if (metered) {
++                // GPU-backed buffers swap textures (no upload); only CPU buffers
++                // pay the glTexSubImage cost the budget meters.
++                size_t bytes = 0;
++                if (!next.buffer->isBackedByOpenGL())
++                    bytes = static_cast<size_t>(next.buffer->size().area().value()) * 4;
++                if (bytes && !TileUploadBudget::tryConsume(bytes))
++                    break;
++            }
+             updates.append(WTF::move(m_updates.first()));
+             m_updates.removeAt(0);
+         }
