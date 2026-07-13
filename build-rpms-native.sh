@@ -513,6 +513,10 @@ cp -a "${CONTENT_BLOCKER_BUILD_DIR}/engine.dat" \
       "${S}/usr/share/atlantic-browser/engine.dat"
 cp -a "${CONTENT_BLOCKER_BUILD_DIR}/adblock-resources.json" \
       "${S}/usr/share/atlantic-browser/adblock-resources.json"
+# DuckDuckGo autoconsent bundle — injected by the browser as a document-start
+# user script to auto-reject CMP cookie banners
+cp -a "${CONTENT_BLOCKER_BUILD_DIR}/autoconsent.js" \
+      "${S}/usr/share/atlantic-browser/autoconsent.js"
 
 # QML files
 mkdir -p "${S}/usr/share/atlantic-browser"

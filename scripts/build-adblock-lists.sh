@@ -59,6 +59,7 @@ fetch_content_blocker_list ubo-annoyances   "${UBO_ANNOYANCES_URL}"    "${UBO_AN
 fetch_content_blocker_list fanboy-social     "${FANBOY_SOCIAL_URL}"    "${FANBOY_SOCIAL_SHA256:-}"
 fetch_content_blocker_list anti-cv           "${ANTI_CV_URL}"          "${ANTI_CV_SHA256:-}"
 fetch_content_blocker_list fanboy-cookie     "${FANBOY_COOKIE_URL}"    "${FANBOY_COOKIE_SHA256:-}"
+fetch_content_blocker_list ubo-cookies       "${UBO_COOKIES_URL}"      "${UBO_COOKIES_SHA256:-}"
 
 # Adblock runtime resources (not filter lists — NOT passed to the engine
 # builder args): Brave redirect surrogates + uBO scriptlet bodies, merged below
@@ -94,6 +95,7 @@ BUILDER_ARGS=(
     "${CONTENT_BLOCKER_FETCH_DIR}/fanboy-social.txt"
     "${CONTENT_BLOCKER_FETCH_DIR}/anti-cv.txt"
     "${CONTENT_BLOCKER_FETCH_DIR}/fanboy-cookie.txt"
+    "${CONTENT_BLOCKER_FETCH_DIR}/ubo-cookies.txt"
 )
 for region in ${REGIONAL_ANTI_CV_LISTS}; do
     BUILDER_ARGS+=("${CONTENT_BLOCKER_FETCH_DIR}/anti-cv-${region}.txt")
@@ -105,6 +107,29 @@ if [ -s "${CONTENT_BLOCKER_DATA_DIR}/atlantic-extra.txt" ]; then
     BUILDER_ARGS+=("${CONTENT_BLOCKER_DATA_DIR}/atlantic-extra.txt")
 fi
 "${SCRIPT_DIR}/adblock-engine/target/release/builder" "${BUILDER_ARGS[@]}"
+
+echo "--- Fetching DuckDuckGo autoconsent (cookie-banner auto-reject) ---"
+# The standalone dist bundle self-initializes (autoAction=optOut, embedded
+# compact rules) — the browser injects it verbatim as a document-start user
+# script in every frame. Fetched as the npm tarball; only dist/ is extracted.
+AUTOCONSENT_TGZ="${CONTENT_BLOCKER_FETCH_DIR}/autoconsent-${AUTOCONSENT_VERSION}.tgz"
+if [ ! -s "${AUTOCONSENT_TGZ}" ]; then
+    echo "  Downloading autoconsent ${AUTOCONSENT_VERSION}"
+    wget -q "${AUTOCONSENT_URL}" -O "${AUTOCONSENT_TGZ}.tmp"
+    mv "${AUTOCONSENT_TGZ}.tmp" "${AUTOCONSENT_TGZ}"
+fi
+if [ -n "${AUTOCONSENT_SHA256:-}" ]; then
+    got="$(sha256sum "${AUTOCONSENT_TGZ}" | awk '{print $1}')"
+    if [ "${got}" != "${AUTOCONSENT_SHA256}" ]; then
+        echo "  ERROR: autoconsent tarball sha256 ${got} != pinned ${AUTOCONSENT_SHA256}" >&2
+        exit 1
+    fi
+fi
+tar -xzf "${AUTOCONSENT_TGZ}" -C "${CONTENT_BLOCKER_BUILD_DIR}" \
+    --strip-components=2 package/dist/autoconsent.standalone.js
+mv "${CONTENT_BLOCKER_BUILD_DIR}/autoconsent.standalone.js" \
+   "${CONTENT_BLOCKER_BUILD_DIR}/autoconsent.js"
+echo "  autoconsent.js: $(wc -c < "${CONTENT_BLOCKER_BUILD_DIR}/autoconsent.js") bytes"
 
 echo "--- Assembling adblock runtime resources ---"
 "${SCRIPT_DIR}/adblock-engine/target/release/builder" --resources \
