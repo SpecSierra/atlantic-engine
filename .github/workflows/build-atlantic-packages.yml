@@ -23,6 +23,9 @@ on:
       - sfos-toolchain*.cmake
       - qt5-plugin/**
       - adblock-engine/**
+      # data/ carries vendored filter lists (atlantic-extra.txt) and other
+      # shipped payload — changes there alter engine.dat.
+      - data/**
     tags:
       - 'v*.*.*'
 
