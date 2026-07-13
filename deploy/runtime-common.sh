@@ -467,6 +467,16 @@ atlantic_export_browser_env() {
     # dropped. 0/unset = stock handshake (the A/B switch).
     export ATLANTIC_EAGER_FRAME_COMPLETE="${ATLANTIC_EAGER_FRAME_COMPLETE:-0}"
 
+    # Honoured by the qt5 plugin (WPEQtViewBackend). Bounded frame pipelining:
+    # the stock handshake serializes composite -> export -> Qt render -> ack ->
+    # next composite (every web frame costs two display frames = the ~28fps
+    # ceiling on the 60Hz panel); EAGER above removes the serialization but
+    # unbounded (frame flood crashed lipstick, builds 495-500). PIPELINED acks
+    # with a single credit replenished per Qt-rendered frame: the WebProcess
+    # composites frame N+1 while Qt renders frame N, but can never run more
+    # than one frame ahead. 0 = stock lock-step (the A/B switch).
+    export ATLANTIC_PIPELINED_FRAME_ACK="${ATLANTIC_PIPELINED_FRAME_ACK:-1}"
+
     # Honoured by webkit-tile-upload-budget-env.patch. Cap the tile work a single
     # composite may do: don't block on buffers the Skia workers are still
     # painting, and upload at most this many MB of CPU tile pixels per frame —

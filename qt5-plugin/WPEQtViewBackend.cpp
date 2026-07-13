@@ -245,6 +245,30 @@ static bool eagerFrameComplete()
     return on;
 }
 
+// ATLANTIC_PIPELINED_FRAME_ACK (default 1, =0 stock): bounded frame pipelining.
+// The stock handshake serializes composite -> export -> Qt render -> ack ->
+// next composite, so every web frame costs (at least) two display frames — the
+// measured ~28fps ceiling on the 60Hz panel. Eager mode (above) removed the
+// serialization but with NO bound: the WebProcess could export frames faster
+// than Qt consumed them, flooding the UI wayland link (lipstick "Broken pipe"
+// fatal on build 495-500). This mode acks with a single credit instead:
+// - a frame arriving with the credit available is acked immediately (the
+//   WebProcess starts compositing frame N+1 while Qt renders frame N);
+// - a frame arriving without it holds its ack until the next Qt frame that
+//   samples a web frame (didRenderFrame) — so production is hard-bounded to
+//   Qt's own render rate plus the single in-flight frame, and a stalled Qt
+//   loop degrades to exactly the stock lock-step instead of a flood.
+// Frames that arrive while an unsampled one is pending replace it (the old
+// image is released; Qt always samples the newest).
+static bool pipelinedFrameAck()
+{
+    static const bool on = [] {
+        const char* env = getenv("ATLANTIC_PIPELINED_FRAME_ACK");
+        return !env || !env[0] || strcmp(env, "0");
+    }();
+    return on;
+}
+
 void WPEQtViewBackend::didRenderFrame()
 {
     if (!m_frameUpdateRequested || !m_exportable)
@@ -252,7 +276,16 @@ void WPEQtViewBackend::didRenderFrame()
 
     m_frameUpdateRequested = false;
     // In eager mode the frame-complete was already dispatched in displayImage().
-    if (!eagerFrameComplete())
+    if (eagerFrameComplete()) {
+        // nothing to ack here
+    } else if (pipelinedFrameAck()) {
+        // Pipelined: pay the owed ack, or replenish the credit (cap 1).
+        if (m_ackOwed) {
+            m_ackOwed = false;
+            wpe_view_backend_exportable_fdo_dispatch_frame_complete(m_exportable);
+        } else
+            m_ackCredit = true;
+    } else
         wpe_view_backend_exportable_fdo_dispatch_frame_complete(m_exportable);
     if (m_committedImage)
         wpe_view_backend_exportable_fdo_egl_dispatch_release_exported_image(m_exportable, m_committedImage);
@@ -287,6 +320,15 @@ void WPEQtViewBackend::displayImage(struct wpe_fdo_egl_exported_image* image)
     // rather than after Qt's next scene-graph render (see eagerFrameComplete()).
     if (eagerFrameComplete() && m_exportable)
         wpe_view_backend_exportable_fdo_dispatch_frame_complete(m_exportable);
+    else if (pipelinedFrameAck() && m_exportable) {
+        // Pipelined ack (see pipelinedFrameAck()): ack now if the credit is
+        // available, otherwise owe it to the next didRenderFrame.
+        if (m_ackCredit) {
+            m_ackCredit = false;
+            wpe_view_backend_exportable_fdo_dispatch_frame_complete(m_exportable);
+        } else
+            m_ackOwed = true;
+    }
     if (m_view) {
         m_view->triggerUpdate();
         // QQuickItem::update() from triggerUpdate() is not sufficient on hybris

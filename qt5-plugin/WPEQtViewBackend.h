@@ -83,6 +83,12 @@ private:
     struct wpe_fdo_egl_exported_image* m_pendingImage { nullptr };
     struct wpe_fdo_egl_exported_image* m_committedImage { nullptr };
     bool m_frameUpdateRequested { false };
+    // Pipelined frame-ack state (ATLANTIC_PIPELINED_FRAME_ACK, see
+    // WPEQtViewBackend.cpp): one ack credit, replenished by each Qt frame that
+    // sampled a web frame. GUI-thread only (displayImage and the queued
+    // frameSwapped->didRenderFrame both run there).
+    bool m_ackCredit { true };
+    bool m_ackOwed { false };
 
     WPEWaylandSubsurface* m_subsurface { nullptr };
 
