@@ -484,9 +484,10 @@ atlantic_export_browser_env() {
     # completes atomically like other browsers instead of trickling in
     # square-by-square. While metering, tiles drain ordered along the scroll
     # direction (leading edge first). SCROLL_ONLY=0 = always-on budget (the
-    # pre-build-506 behavior).
+    # pre-build-506 behavior). Settle 800 user-tuned on device (build 507,
+    # Jul 2026): 250 drained too eagerly between scroll gestures.
     export WEBKIT_TILE_UPLOAD_BUDGET_SCROLL_ONLY="${WEBKIT_TILE_UPLOAD_BUDGET_SCROLL_ONLY:-1}"
-    export WEBKIT_TILE_UPLOAD_SCROLL_SETTLE_MS="${WEBKIT_TILE_UPLOAD_SCROLL_SETTLE_MS:-250}"
+    export WEBKIT_TILE_UPLOAD_SCROLL_SETTLE_MS="${WEBKIT_TILE_UPLOAD_SCROLL_SETTLE_MS:-800}"
 
     # ── Load-time responsiveness ─────────────────────────────────────────────
     # Honoured by webkit-loading-timer-alignment-env.patch and
