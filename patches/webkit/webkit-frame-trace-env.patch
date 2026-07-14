@@ -239,3 +239,43 @@ when unset; not shipped on.
          if (coordPaintLogEnabled())
              fprintf(stderr, "[paintlog] proxy %p PAINT dirtyTiles=%u union=%d,%d %dx%d contents=%dx%d newTiles=%u\n", this, dirtyTilesCount, tileDirtyRectUnion.x(), tileDirtyRectUnion.y(), tileDirtyRectUnion.width(), tileDirtyRectUnion.height(), m_contentsRect.width(), m_contentsRect.height(), static_cast<unsigned>(tilesToCreate.size()));
          WTFBeginSignpost(this, UpdateTiles, "dirty tiles: %u", dirtyTilesCount);
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp
+@@ -45,6 +45,8 @@
+ #include "Image.h"
+ #include "NativeImage.h"
+ #include <cstdlib>
++#include <ctime>
++#include <wtf/Assertions.h>
+ #include <cstdio>
+ 
+ static bool coordPaintLogEnabled()
+@@ -148,6 +150,28 @@
+     if (coordPaintLogEnabled() && rect.width() * rect.height() >= 500000)
+         fprintf(stderr, "[paintlog] GLC %p RECT %.0f,%.0f %.0fx%.0f size=%.0fx%.0f\n", this, rect.x(), rect.y(), rect.width(), rect.height(), m_size.width(), m_size.height());
+ 
++    // ATLANTIC_REPAINT_BT=1: symbolized backtrace at each LARGE repaint-rect
++    // invalidation, throttled to 1/250ms, to name who issues the per-scroll-frame
++    // paint storm (repaintAfterLayoutIfNeeded? style recalc? image load?). Device
++    // lib is unstripped so frames resolve. Diagnostic only, default OFF.
++    {
++        static const bool repaintBt = [] {
++            const char* e = getenv("ATLANTIC_REPAINT_BT");
++            return e && e[0] && e[0] != '0';
++        }();
++        if (repaintBt && rect.width() * rect.height() >= 500000) {
++            static double s_lastBtMs = 0;
++            struct timespec ts;
++            clock_gettime(CLOCK_MONOTONIC, &ts);
++            double nowMs = ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6;
++            if (nowMs - s_lastBtMs > 250) {
++                s_lastBtMs = nowMs;
++                fprintf(stderr, "[repaintbt] GLC %p rect %.0fx%.0f of %.0fx%.0f\n", this, rect.width(), rect.height(), m_size.width(), m_size.height());
++                WTFReportBacktraceWithPrefixAndStackDepth("[repaintbt]   ", 18);
++            }
++        }
++    }
++
+     if (m_dirtyRegion->add(rect))
+         noteLayerPropertyChanged(Change::DirtyRegion, ScheduleFlush::Yes);
+ }
