@@ -400,6 +400,14 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # the composite-scroll-sync trio, fling-throttle) so its context matches the
     # fully-patched tree.
     "patches/webkit/webkit-damage-limited-composite-env.patch"
+
+    # Skip the redundant main-thread memset of CPU tile buffers: the Skia worker
+    # clears+paints every tile before it is composited, so tryZeroedMalloc on the
+    # main thread is wasted work - device-measured as the #1 main-thread hot spot
+    # during franceinfo scroll (~30% of samples). WEBKIT_TILE_BUFFER_SKIP_ZERO=1,
+    # default OFF. Touches CoordinatedTileBuffer.cpp; apply AFTER tile-upload-budget
+    # (the other patch touching that file).
+    "patches/webkit/webkit-tile-buffer-skip-zero-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

@@ -1,0 +1,60 @@
+Skip the redundant main-thread zeroing of CPU tile buffers during scroll.
+
+CoordinatedUnacceleratedTileBuffer allocates its pixel store with
+MallocSpan::tryZeroedMalloc - a full memset of the tile (256x256x4 = 256 KB
+each) on the MAIN thread, inside the tile-record path (SkiaPaintingEngine::
+replay -> createBuffer). But every tile is fully cleared and painted before it
+is ever composited: the raster task does canvas->clear(kTransparent) then plays
+back the recording, on a Skia WORKER thread. So the main-thread zero is pure
+redundant work.
+
+Device profiling (build 512, gdb main-thread sampling during a sustained
+franceinfo scroll) found this memset is the single largest main-thread cost
+during scroll - ~30% of CPU-tip samples and present in ~46% of stacks, ahead of
+style resolution and layout. The freeze is main-thread-bound (WebProcess main
+92% CPU, ThreadedCompositor thread only 12%, Skia workers ~1.5%), so removing
+this memset directly attacks the freeze - unlike the low-res tile ladder, which
+shrinks worker raster but not main-thread record/alloc, or damage-limited
+compositing, which only touches the (idle) compositor thread.
+
+WEBKIT_TILE_BUFFER_SKIP_ZERO=1 switches the allocation to the non-zeroed
+MallocSpan::tryMalloc. Default OFF (stock zeroed behaviour). The one code path
+that does not overwrite the whole buffer is a failed Skia surface creation
+(OOM: canvas() returns null, the paint is skipped), which would then composite
+one uninitialised tile - so this is an off-by-default A/B knob that must be
+device-verified for garbage flashes before it is ever shipped on.
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp
+@@ -29,6 +29,8 @@
+ #include "config.h"
+ #include "CoordinatedTileBuffer.h"
+ 
++#include <cstdlib>
++
+ #if USE(COORDINATED_GRAPHICS)
+ 
+ #if USE(SKIA)
+@@ -130,7 +132,22 @@
+     , m_size(size)
+ {
+     const auto checkedArea = size.area() * 4;
+-    m_data = MallocSpan<unsigned char>::tryZeroedMalloc(checkedArea);
++    // Atlantic: the tile pixels are fully overwritten before the buffer is ever
++    // composited - the Skia raster task clears the whole canvas (canvas->clear)
++    // and paints it, on a worker thread - so zeroing here, on the MAIN thread in
++    // the tile-record path, is redundant. Device profiling of franceinfo scroll
++    // showed this memset as the #1 main-thread hot spot (~30% of samples), i.e. a
++    // direct contributor to the scroll freeze (main thread was 92% busy while the
++    // compositor sat at 12%). WEBKIT_TILE_BUFFER_SKIP_ZERO=1 uses a non-zeroed
++    // allocation. Default = stock (zeroed): the only uncovered path is a failed
++    // Skia surface creation (OOM), which would leave one uninitialised tile, so
++    // this must be device-verified for garbage flashes before shipping on.
++    static const bool skipZero = [] {
++        const char* v = getenv("WEBKIT_TILE_BUFFER_SKIP_ZERO");
++        return v && *v && *v != '0';
++    }();
++    m_data = skipZero ? MallocSpan<unsigned char>::tryMalloc(checkedArea)
++        : MallocSpan<unsigned char>::tryZeroedMalloc(checkedArea);
+ 
+     {
+         Locker locker { s_layersMemoryUsageLock };

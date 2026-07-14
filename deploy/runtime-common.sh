@@ -475,6 +475,18 @@ atlantic_export_browser_env() {
     # self-damages the whole layer, so the bbox scissor mainly helps non-scroll
     # and settled-frame repaints; tightening the scroll case is a follow-up.
 
+    # Honoured by webkit-tile-buffer-skip-zero-env.patch. CPU tile buffers are
+    # zero-allocated (tryZeroedMalloc = a full per-tile memset) on the MAIN thread
+    # in the tile-record path, but every tile is cleared+painted by the Skia
+    # worker before it is composited, so the zero is redundant. Device profiling
+    # of franceinfo scroll found this memset is the #1 main-thread hot spot (~30%
+    # of samples) and the freeze is main-thread-bound (main 92% CPU, compositor
+    # 12%), so this directly attacks the freeze. =1 uses non-zeroed tryMalloc.
+    # NOT EXPORTED = OFF by default: the OOM path (failed Skia surface) would show
+    # one uninitialised tile, so device-verify for garbage flashes before shipping
+    # on. (Damage-limited compositing does NOT help this freeze - it only touches
+    # the idle compositor thread; this and the icon-heal scroll-gate do.)
+
     # Honoured by the qt5 plugin (WPEQtViewBackend). Acknowledge each exported
     # web frame immediately instead of after Qt's next scene-graph render, so
     # the WebProcess compositor is not lock-stepped to the QML render loop
