@@ -88,7 +88,7 @@ when unset; not shipped on.
  
 +// ATLANTIC_FRAME_TRACE=1 marker (see webkit-frame-trace-env.patch). Same
 +// CLOCK_MONOTONIC clock as the ThreadedCompositor and qt5-plugin markers.
-+static bool atlFrameTrace()
++static bool atlFrameTraceLT()
 +{
 +    static const bool on = [] {
 +        const char* e = getenv("ATLANTIC_FRAME_TRACE");
@@ -96,9 +96,9 @@ when unset; not shipped on.
 +    }();
 +    return on;
 +}
-+static void atlFtrace(const char* what, int w = -1)
++static void atlFtraceLT(const char* what, int w = -1)
 +{
-+    if (!atlFrameTrace())
++    if (!atlFrameTraceLT())
 +        return;
 +    struct timespec ts;
 +    clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -111,7 +111,7 @@ when unset; not shipped on.
 +
  void LayerTreeHost::scheduleRenderingUpdate()
  {
-+    atlFtrace("sched", m_isWaitingForRenderer ? 1 : 0);
++    atlFtraceLT("sched", m_isWaitingForRenderer ? 1 : 0);
      WTFEmitSignpost(this, LayerTreeHostScheduleRenderingUpdate, "isWaitingForRenderer %s", m_isWaitingForRenderer ? "yes" : "no");
  
      if (m_layerTreeStateIsFrozen)
@@ -119,7 +119,7 @@ when unset; not shipped on.
  
  void LayerTreeHost::updateRendering()
  {
-+    atlFtrace("rupd", m_isWaitingForRenderer ? 1 : 0);
++    atlFtraceLT("rupd", m_isWaitingForRenderer ? 1 : 0);
      invalidateRenderingUpdateRunLoopObserver();
  
      RELEASE_ASSERT(!m_isUpdatingRendering);
