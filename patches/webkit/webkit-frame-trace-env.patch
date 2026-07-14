@@ -30,7 +30,18 @@ when unset; not shipped on.
  #include <cstring>
  
  #if USE(LIBEPOXY)
-@@ -319,8 +321,28 @@
+@@ -237,6 +239,10 @@
+ void ThreadedCompositor::pendingTilesDidChange()
+ {
+     Locker locker { m_state.lock };
++    if (atlFrameTrace()) {
++        struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
++        fprintf(stderr, "[ftrace] web tileschange p=%u wait=%d t=%.1f\n", m_sceneState->pendingTiles(), m_state.isWaitingForTiles ? 1 : 0, ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6);
++    }
+     if (!m_state.isWaitingForTiles)
+         return;
+ 
+@@ -319,8 +325,28 @@
          layer->flushCompositingState(reasons);
  }
  
@@ -59,7 +70,16 @@ when unset; not shipped on.
      FloatRect clipRect(FloatPoint { }, size);
      TextureMapperLayer& currentRootLayer = m_sceneState->rootLayer().ensureTarget();
      if (currentRootLayer.transform() != matrix)
-@@ -518,6 +540,11 @@
+@@ -513,11 +539,20 @@
+     m_state.didCompositeRenderingUpdateFunction = WTF::move(didCompositeFunction);
+     if (m_sceneState->pendingTiles())
+         m_state.isWaitingForTiles = true;
++    if (atlFrameTrace()) {
++        struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
++        fprintf(stderr, "[ftrace] web wtiles-set p=%u wait=%d t=%.1f\n", m_sceneState->pendingTiles(), m_state.isWaitingForTiles ? 1 : 0, ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6);
++    }
+     scheduleUpdateLocked();
+ }
  
  void ThreadedCompositor::requestComposition(CompositionReason reason)
  {
@@ -174,3 +194,46 @@ when unset; not shipped on.
      auto* rootScrollingNode = rootNode();
      if (!rootScrollingNode)
          return;
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
+@@ -31,6 +31,7 @@
+ #include <cstdlib>
+ #include <cstring>
+ #include <cstdio>
++#include <ctime>
+ 
+ static bool coordPaintLogEnabled()
+ {
+@@ -52,6 +53,24 @@
+ 
+ namespace WebCore {
+ 
++// ATLANTIC_FRAME_TRACE=1 marker (see webkit-frame-trace-env.patch). Logs each
++// tile-paint pass so a freeze can be checked for actual paint activity: if
++// "tilepaint" keeps firing during the stuck isWaitingForTiles window, tiles are
++// genuinely being (re)painted (slow/treadmill); if it goes silent while
++// pendingTiles stays > 0, the handshake is stuck without paint work (a bug).
++// Unique name to avoid unified-source clashes.
++static void atlFtraceBSP(unsigned dirty, unsigned created)
++{
++    static const bool on = [] {
++        const char* e = getenv("ATLANTIC_FRAME_TRACE");
++        return e && e[0] && e[0] != '0';
++    }();
++    if (!on)
++        return;
++    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
++    fprintf(stderr, "[ftrace] web tilepaint dirty=%u new=%u t=%.1f\n", dirty, created, ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6);
++}
++
+ // Tile prepaint tuning for scroll smoothness (see also
+ // webkit-glfence-disable-env.patch / webkit-texpool-compositor-sync-env.patch):
+ //  - WEBKIT_COVER_AREA_MULTIPLIER=<float 1..6>: how much area around the
+@@ -313,6 +332,7 @@
+ 
+     Vector<Update::TileUpdate> tilesToUpdate;
+     if (dirtyTilesCount) {
++        atlFtraceBSP(dirtyTilesCount, static_cast<unsigned>(tilesToCreate.size()));
+         if (coordPaintLogEnabled())
+             fprintf(stderr, "[paintlog] proxy %p PAINT dirtyTiles=%u union=%d,%d %dx%d contents=%dx%d newTiles=%u\n", this, dirtyTilesCount, tileDirtyRectUnion.x(), tileDirtyRectUnion.y(), tileDirtyRectUnion.width(), tileDirtyRectUnion.height(), m_contentsRect.width(), m_contentsRect.height(), static_cast<unsigned>(tilesToCreate.size()));
+         WTFBeginSignpost(this, UpdateTiles, "dirty tiles: %u", dirtyTilesCount);
