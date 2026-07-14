@@ -30,7 +30,26 @@ when unset; not shipped on.
  #include <cstring>
  
  #if USE(LIBEPOXY)
-@@ -237,6 +239,10 @@
+@@ -64,6 +66,18 @@
+ #endif
+ 
+ namespace WebKit {
++
++// ATLANTIC_FRAME_TRACE=1: CLOCK_MONOTONIC-stamped "[ftrace] web ..." markers
++// across the frame pipeline (comparable to the qt5-plugin ui markers, same
++// clock). Defined early so every function below can use it. Zero cost when unset.
++static bool atlFrameTrace()
++{
++    static const bool on = [] {
++        const char* e = getenv("ATLANTIC_FRAME_TRACE");
++        return e && e[0] && e[0] != '0';
++    }();
++    return on;
++}
+ using namespace WebCore;
+ 
+ WTF_MAKE_TZONE_ALLOCATED_IMPL(ThreadedCompositor);
+@@ -237,6 +251,10 @@
  void ThreadedCompositor::pendingTilesDidChange()
  {
      Locker locker { m_state.lock };
@@ -41,25 +60,8 @@ when unset; not shipped on.
      if (!m_state.isWaitingForTiles)
          return;
  
-@@ -319,8 +325,28 @@
-         layer->flushCompositingState(reasons);
- }
+@@ -321,6 +339,11 @@
  
-+// ATLANTIC_FRAME_TRACE=1: CLOCK_MONOTONIC-stamped marker at each WebProcess
-+// composite, comparable to the qt5-plugin ui markers (same clock). Lets a
-+// freeze-then-jump be localized: if 'web composite' keeps firing during a
-+// screen freeze but 'ui recv' does not, the stall is in export/handoff; if
-+// 'web composite' itself stops, the compositor is not producing (production
-+// stall). Zero cost when unset.
-+static bool atlFrameTrace()
-+{
-+    static const bool on = [] {
-+        const char* e = getenv("ATLANTIC_FRAME_TRACE");
-+        return e && e[0] && e[0] != '0';
-+    }();
-+    return on;
-+}
-+
  void ThreadedCompositor::paintToCurrentGLContext(const TransformationMatrix& matrix, const IntSize& size, const OptionSet<CompositionReason>& reasons)
  {
 +    if (atlFrameTrace()) {
@@ -70,7 +72,7 @@ when unset; not shipped on.
      FloatRect clipRect(FloatPoint { }, size);
      TextureMapperLayer& currentRootLayer = m_sceneState->rootLayer().ensureTarget();
      if (currentRootLayer.transform() != matrix)
-@@ -513,11 +539,20 @@
+@@ -513,11 +536,20 @@
      m_state.didCompositeRenderingUpdateFunction = WTF::move(didCompositeFunction);
      if (m_sceneState->pendingTiles())
          m_state.isWaitingForTiles = true;
