@@ -391,6 +391,15 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # whatever link scrolls under the invisible cursor
     # (WEBKIT_NO_FAKE_MOUSE_MOVE, default 1 in runtime-common.sh).
     "patches/webkit/webkit-no-fake-mouse-move-env.patch"
+
+    # Damage-limited compositing: enable WebKit's compiled-in-but-WPE-disabled
+    # damage subsystem so a composite is scissored to the region that actually
+    # changed instead of redrawing the whole scene (WEBKIT_DAMAGE_COMPOSITING,
+    # default OFF in runtime-common.sh). Only touches LayerTreeHost.cpp; must
+    # apply AFTER every other patch that touches that file (raster-on-compositor,
+    # the composite-scroll-sync trio, fling-throttle) so its context matches the
+    # fully-patched tree.
+    "patches/webkit/webkit-damage-limited-composite-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

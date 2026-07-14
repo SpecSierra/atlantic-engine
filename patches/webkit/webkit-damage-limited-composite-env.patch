@@ -1,0 +1,118 @@
+Damage-limited compositing: scissor the scene composite to the changed region.
+
+WPE compiles WebKit's damage-tracking subsystem in (ENABLE_DAMAGE_TRACKING=1)
+but leaves it disabled at runtime: the three WebCore settings that drive it
+default to false for every non-GTK port, and WPE exposes no WebPreferences
+plumbing to flip them. So today every composited frame - including every scroll
+frame - redraws the whole scene clipped only to the full viewport, even when a
+tiny region (a caret, a spinner, a playing video, a settled post-scroll repaint)
+is all that changed.
+
+The machinery to do better is already present and wired: GraphicsLayerCoordinated
+/ CoordinatedPlatformLayer produce per-layer dirty rects, ThreadedCompositor::
+paintToCurrentGLContext() aggregates them into one frame Damage and - when the
+DamagePropagationFlags carry UseForCompositing - fetches m_surface->
+renderTargetDamage() (the damage accumulated for the *specific* buffer about to
+be reused, i.e. buffer-age aware, so partial composite into a rotated buffer is
+correct) and beginClip()s the TextureMapper paint to that region via glScissor.
+CoordinatedBackingStore additionally draws only the tile x damage intersection
+for opaque tiles at identity transform. All of this is gated behind flags that
+LayerTreeHost never turns on for WPE.
+
+This patch makes LayerTreeHost honour env overrides so the stack can be enabled
+and A/B'd on-device without a preferences-plumbing change:
+
+  WEBKIT_DAMAGE_COMPOSITING=1          master switch: propagate damage AND use it
+                                       for compositing (the scissored composite).
+  WEBKIT_DAMAGE_UNIFY=0|1              frame-damage mode when forced on: 1 (default)
+                                       = single bounding box; 0 = per-rect (Rectangles).
+  WEBKIT_DAMAGE_USE_FOR_COMPOSITING=1  when forced on, whether to scissor the
+                                       composite (default 1). Set 0 to propagate
+                                       damage to the UI process only, without the
+                                       WebProcess-side composite clip - lets us
+                                       separate the two effects during A/B.
+
+Default OFF (behaviour unchanged unless WEBKIT_DAMAGE_COMPOSITING is set). An
+off-by-default flag is NOT assumed safe here; this must be device-verified
+(correctness first - watch for stale pixels outside the scissor - then perf)
+before it is considered for shipping on.
+
+Note on scroll specifically: an async scroll moves the scrolling layer via a
+transform change, which self-damages the whole layer, so the frame-damage bounds
+collapse to ~the full viewport and the bbox scissor buys little *during* an
+active fling. The immediate win is every non-scroll and settled-frame repaint
+that currently recomposites the entire scene. Tightening the scroll case itself
+(per-rect scissor / layer-cull in the paint traversal / retained-target scroll-
+copy) is a follow-up that builds on this being on.
+
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
+@@ -103,6 +103,31 @@
+     return ms;
+ }
+ 
++#if ENABLE(DAMAGE_TRACKING)
++namespace {
++// Atlantic: WPE compiles the damage subsystem in but leaves it disabled - the
++// WebCore settings default to false off-GTK and there is no WPE preference to
++// flip them. These env vars force it on so a composite can be scissored to the
++// region that actually changed instead of redrawing the whole scene each frame:
++//   WEBKIT_DAMAGE_COMPOSITING=1          master switch (propagate damage + use it for compositing)
++//   WEBKIT_DAMAGE_UNIFY=0|1              bounding-box (1, default) vs per-rect (0) frame damage
++//   WEBKIT_DAMAGE_USE_FOR_COMPOSITING=1  scissor the scene composite to the changed region (default 1)
++// Off unless WEBKIT_DAMAGE_COMPOSITING is set. An off flag is not assumed safe:
++// this must be device-verified before it is ever shipped on.
++bool damageEnvFlag(const char* name, bool defaultValue)
++{
++    const char* v = getenv(name);
++    return v ? (*v && *v != '0') : defaultValue;
++}
++
++bool damageForceOn()
++{
++    static const bool on = damageEnvFlag("WEBKIT_DAMAGE_COMPOSITING", false);
++    return on;
++}
++} // namespace
++#endif
++
+ LayerTreeHost::LayerTreeHost(WebPage& webPage)
+     : m_webPage(webPage)
+     , m_sceneState(CoordinatedSceneState::create())
+@@ -115,8 +140,8 @@
+     {
+         auto& rootLayer = m_sceneState->rootLayer();
+ #if ENABLE(DAMAGE_TRACKING)
+-        rootLayer.setDamagePropagationEnabled(webPage.corePage()->settings().propagateDamagingInformation());
+-        if (webPage.corePage()->settings().propagateDamagingInformation()) {
++        rootLayer.setDamagePropagationEnabled(webPage.corePage()->settings().propagateDamagingInformation() || damageForceOn());
++        if (webPage.corePage()->settings().propagateDamagingInformation() || damageForceOn()) {
+             m_damageInGlobalCoordinateSpace = std::make_shared<Damage>(m_webPage.size());
+             rootLayer.setDamageInGlobalCoordinateSpace(m_damageInGlobalCoordinateSpace);
+         }
+@@ -134,11 +159,13 @@
+ #if ENABLE(DAMAGE_TRACKING)
+     std::optional<OptionSet<ThreadedCompositor::DamagePropagationFlags>> damagePropagationFlags;
+     const auto& settings = webPage.corePage()->settings();
+-    if (settings.propagateDamagingInformation()) {
++    if (settings.propagateDamagingInformation() || damageForceOn()) {
+         damagePropagationFlags = OptionSet<ThreadedCompositor::DamagePropagationFlags> { };
+-        if (settings.unifyDamagedRegions())
++        const bool unify = damageForceOn() ? damageEnvFlag("WEBKIT_DAMAGE_UNIFY", true) : settings.unifyDamagedRegions();
++        const bool useForCompositing = damageForceOn() ? damageEnvFlag("WEBKIT_DAMAGE_USE_FOR_COMPOSITING", true) : settings.useDamagingInformationForCompositing();
++        if (unify)
+             damagePropagationFlags->add(ThreadedCompositor::DamagePropagationFlags::Unified);
+-        if (settings.useDamagingInformationForCompositing())
++        if (useForCompositing)
+             damagePropagationFlags->add(ThreadedCompositor::DamagePropagationFlags::UseForCompositing);
+     }
+     m_compositor->setDamagePropagationFlags(damagePropagationFlags);
+@@ -469,7 +496,7 @@
+ void LayerTreeHost::attachLayer(CoordinatedPlatformLayer& layer)
+ {
+ #if ENABLE(DAMAGE_TRACKING)
+-    layer.setDamagePropagationEnabled(webPage().corePage()->settings().propagateDamagingInformation());
++    layer.setDamagePropagationEnabled(webPage().corePage()->settings().propagateDamagingInformation() || damageForceOn());
+     if (m_damageInGlobalCoordinateSpace)
+         layer.setDamageInGlobalCoordinateSpace(m_damageInGlobalCoordinateSpace);
+ #endif

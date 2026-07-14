@@ -459,6 +459,22 @@ atlantic_export_browser_env() {
     # pinning perfectly. 0/unset = stock (the A/B switch).
     export WEBKIT_FORCE_ASYNC_SCROLL="${WEBKIT_FORCE_ASYNC_SCROLL:-1}"
 
+    # Honoured by webkit-damage-limited-composite-env.patch. Enables WebKit's
+    # compiled-in but WPE-disabled damage subsystem so a composite is scissored
+    # to the region that actually changed (glScissor to the buffer-age-correct
+    # renderTargetDamage bounds + opaque-tile fragment draws) instead of
+    # redrawing the whole scene every frame. INTENTIONALLY NOT EXPORTED = OFF by
+    # default: an off-by-default engine flag here is not assumed safe (cf.
+    # ATLANTIC_DIRECT_COMPOSITE), so this must be device-verified for correctness
+    # (no stale pixels outside the scissor) before it is ever shipped on.
+    #   WEBKIT_DAMAGE_COMPOSITING=1          turn the whole stack on
+    #   WEBKIT_DAMAGE_UNIFY=0|1              bbox (1, default) vs per-rect frame damage
+    #   WEBKIT_DAMAGE_USE_FOR_COMPOSITING=1  scissor the composite (default 1; set 0
+    #                                        to propagate damage to the UI process only)
+    # Note: during an active fling the scrolling layer's transform change
+    # self-damages the whole layer, so the bbox scissor mainly helps non-scroll
+    # and settled-frame repaints; tightening the scroll case is a follow-up.
+
     # Honoured by the qt5 plugin (WPEQtViewBackend). Acknowledge each exported
     # web frame immediately instead of after Qt's next scene-graph render, so
     # the WebProcess compositor is not lock-stepped to the QML render loop
