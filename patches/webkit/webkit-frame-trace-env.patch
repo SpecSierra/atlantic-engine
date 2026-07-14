@@ -1,14 +1,24 @@
-Frame-trace instrumentation: WebProcess composite marker (ATLANTIC_FRAME_TRACE).
+Frame-trace instrumentation to localize the scroll freeze (ATLANTIC_FRAME_TRACE).
 
-Diagnostic-only (default OFF). When ATLANTIC_FRAME_TRACE=1, emit a
-CLOCK_MONOTONIC-stamped "[ftrace] web composite" line at each
-ThreadedCompositor::paintToCurrentGLContext. Paired with the qt5-plugin
-"[ftrace] ui recv|paint|ack" markers (same clock), this brackets the
-WebProcess->Qt handoff so the franceinfo "content freezes then jumps" stall can
-be localized to production (composite stops), handoff/export (composite fires
-but no ui recv), or present (ui recv fine but paint/ack lag). Live per-thread
-sampling could not catch these random sub-second stalls; explicit frame timing
-can. Zero cost when unset. Not shipped on.
+Diagnostic-only (default OFF). Device frame-tracing localized the franceinfo
+"content freezes then jumps" to a PRODUCTION stall: after the WebProcess acks a
+frame, the next composite is delayed 1-3s (worst ~9.9s) during scroll - the
+pipeline runs ~5.8fps in lockstep with multi-second gaps, all in the WebProcess
+between ack and the next paintToCurrentGLContext. These extra markers pin the
+cause of that ack->composite gap.
+
+When ATLANTIC_FRAME_TRACE=1, emit CLOCK_MONOTONIC-stamped "[ftrace] web ..."
+lines (same clock as the qt5-plugin "ui recv|paint|ack" markers):
+  - ThreadedCompositor.cpp: "composite" (paintToCurrentGLContext) and
+    "reqcomp r=<CompositionReason>" (requestComposition - what drives composites).
+  - LayerTreeHost.cpp: "rupd w=<isWaitingForRenderer>" (main-thread rendering
+    update runs) and "sched w=<isWaitingForRenderer>" (a rendering update is
+    scheduled). w= exposes the composition<-tiles<-flush handshake flag.
+
+So the ack->composite gap resolves to: no reqcomp/sched during the gap = the
+scroll/update scheduler is starved; sched with w=1 = compositor waiting on the
+renderer (tiles); rupd late/slow = main-thread update is the gate. Zero cost
+when unset; not shipped on.
 --- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
 +++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
 @@ -41,6 +41,8 @@
@@ -49,3 +59,67 @@ can. Zero cost when unset. Not shipped on.
      FloatRect clipRect(FloatPoint { }, size);
      TextureMapperLayer& currentRootLayer = m_sceneState->rootLayer().ensureTarget();
      if (currentRootLayer.transform() != matrix)
+@@ -518,6 +540,11 @@
+ 
+ void ThreadedCompositor::requestComposition(CompositionReason reason)
+ {
++    if (atlFrameTrace()) {
++        struct timespec ts;
++        clock_gettime(CLOCK_MONOTONIC, &ts);
++        fprintf(stderr, "[ftrace] web reqcomp r=%u t=%.1f\n", static_cast<unsigned>(reason), ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6);
++    }
+     Locker locker { m_state.lock };
+     m_state.reasons.add(reason);
+     scheduleUpdateLocked();
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
+@@ -53,6 +53,8 @@
+ #include <WebCore/ThreadedScrollingTree.h>
+ #include <WebCore/WindowEventLoop.h>
+ #include <cstdlib>
++#include <cstdio>
++#include <ctime>
+ #include <wtf/SetForScope.h>
+ #include <wtf/SystemTracing.h>
+ #include <wtf/TZoneMallocInlines.h>
+@@ -210,8 +212,32 @@
+         scheduleRenderingUpdate();
+ }
+ 
++// ATLANTIC_FRAME_TRACE=1 marker (see webkit-frame-trace-env.patch). Same
++// CLOCK_MONOTONIC clock as the ThreadedCompositor and qt5-plugin markers.
++static bool atlFrameTrace()
++{
++    static const bool on = [] {
++        const char* e = getenv("ATLANTIC_FRAME_TRACE");
++        return e && e[0] && e[0] != '0';
++    }();
++    return on;
++}
++static void atlFtrace(const char* what, int w = -1)
++{
++    if (!atlFrameTrace())
++        return;
++    struct timespec ts;
++    clock_gettime(CLOCK_MONOTONIC, &ts);
++    double ms = ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6;
++    if (w < 0)
++        fprintf(stderr, "[ftrace] web %s t=%.1f\n", what, ms);
++    else
++        fprintf(stderr, "[ftrace] web %s w=%d t=%.1f\n", what, w, ms);
++}
++
+ void LayerTreeHost::scheduleRenderingUpdate()
+ {
++    atlFtrace("sched", m_isWaitingForRenderer ? 1 : 0);
+     WTFEmitSignpost(this, LayerTreeHostScheduleRenderingUpdate, "isWaitingForRenderer %s", m_isWaitingForRenderer ? "yes" : "no");
+ 
+     if (m_layerTreeStateIsFrozen)
+@@ -251,6 +277,7 @@
+ 
+ void LayerTreeHost::updateRendering()
+ {
++    atlFtrace("rupd", m_isWaitingForRenderer ? 1 : 0);
+     invalidateRenderingUpdateRunLoopObserver();
+ 
+     RELEASE_ASSERT(!m_isUpdatingRendering);
