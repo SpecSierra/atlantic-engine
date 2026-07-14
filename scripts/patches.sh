@@ -415,6 +415,13 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # vs present). Touches ThreadedCompositor.cpp; apply after the other patches
     # touching it.
     "patches/webkit/webkit-frame-trace-env.patch"
+
+    # THE franceinfo scroll-freeze fix: WEBKIT_SKIP_ROOT_CUSTOMPROP_REPAINT=1 (default
+    # OFF) stops RenderBox::styleWillChange from repainting the whole page when a :root/
+    # <body> custom-property changes (the site updates --offset-sticky-* on <html> every
+    # scroll frame -> full-page repaint -> ~2280-tile batch -> compositor stall -> freeze).
+    # Root-caused via the frame-trace tooling above. Touches only RenderBox.cpp.
+    "patches/webkit/webkit-root-customprop-repaint-skip-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(
