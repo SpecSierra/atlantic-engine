@@ -245,7 +245,7 @@ static bool eagerFrameComplete()
     return on;
 }
 
-// ATLANTIC_PIPELINED_FRAME_ACK (default 1, =0 stock): bounded frame pipelining.
+// ATLANTIC_PIPELINED_FRAME_ACK (default 0 = stock): bounded frame pipelining.
 // The stock handshake serializes composite -> export -> Qt render -> ack ->
 // next composite, so every web frame costs (at least) two display frames — the
 // measured ~28fps ceiling on the 60Hz panel. Eager mode (above) removed the
@@ -260,11 +260,16 @@ static bool eagerFrameComplete()
 //   loop degrades to exactly the stock lock-step instead of a flood.
 // Frames that arrive while an unsampled one is pending replace it (the old
 // image is released; Qt always samples the newest).
+// Ships default OFF: device A/B (build 511, franceinfo + example.com CSS
+// animation, rAF-rate) measured identical ~56fps in both modes — the stock
+// round trip already fits within one vsync on the Xperia 10 II, so the
+// serialization it removes was not a real bottleneck there. Kept for
+// experiments on configurations with a slower UI render loop.
 static bool pipelinedFrameAck()
 {
     static const bool on = [] {
         const char* env = getenv("ATLANTIC_PIPELINED_FRAME_ACK");
-        return !env || !env[0] || strcmp(env, "0");
+        return env && env[0] && strcmp(env, "0");
     }();
     return on;
 }

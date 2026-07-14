@@ -475,7 +475,13 @@ atlantic_export_browser_env() {
     # with a single credit replenished per Qt-rendered frame: the WebProcess
     # composites frame N+1 while Qt renders frame N, but can never run more
     # than one frame ahead. 0 = stock lock-step (the A/B switch).
-    export ATLANTIC_PIPELINED_FRAME_ACK="${ATLANTIC_PIPELINED_FRAME_ACK:-1}"
+    # Ships 0: device A/B (franceinfo + example.com, CSS animation rAF-rate,
+    # build 511, Jul 2026) measured IDENTICAL ~56fps in both modes — the stock
+    # ack round trip already fits within one vsync, so the serialization
+    # hypothesis for the ~28fps scroll ceiling was wrong (that ceiling is
+    # per-composite paint/upload cost). Kept for experiments on slower-UI
+    # scenarios; no measured benefit on the Xperia 10 II.
+    export ATLANTIC_PIPELINED_FRAME_ACK="${ATLANTIC_PIPELINED_FRAME_ACK:-0}"
 
     # Honoured by webkit-tile-upload-budget-env.patch. Cap the tile work a single
     # composite may do: don't block on buffers the Skia workers are still
