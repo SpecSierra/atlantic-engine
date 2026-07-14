@@ -416,12 +416,14 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # touching it.
     "patches/webkit/webkit-frame-trace-env.patch"
 
-    # THE franceinfo scroll-freeze fix: WEBKIT_SKIP_ROOT_CUSTOMPROP_REPAINT=1 (default
-    # OFF) stops RenderBox::styleWillChange from repainting the whole page when a :root/
-    # <body> custom-property changes (the site updates --offset-sticky-* on <html> every
-    # scroll frame -> full-page repaint -> ~2280-tile batch -> compositor stall -> freeze).
-    # Root-caused via the frame-trace tooling above. Touches only RenderBox.cpp.
-    "patches/webkit/webkit-root-customprop-repaint-skip-env.patch"
+    # THE franceinfo repaint-storm fix (freeze during scroll + "icons blinking" while the
+    # page settles): RenderBox::styleWillChange repainted the WHOLE root layer for ANY
+    # repaint-level style change on <html>/<body> - class toggles, CSS custom properties
+    # (--offset-sticky-* every scroll frame) - though that full-page repaint exists only
+    # because the root BACKGROUND propagates to the canvas. Now only repaints when the
+    # background actually changed (WEBKIT_SKIP_ROOT_REPAINT_UNLESS_BACKGROUND, default ON;
+    # =0 = stock). Root-caused via the frame-trace + ATLANTIC_REPAINT_BT tooling above.
+    "patches/webkit/webkit-root-repaint-only-on-background-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

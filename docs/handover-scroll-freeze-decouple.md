@@ -25,13 +25,23 @@ update repaints ~the whole viewport** (~2280 tiles). Two contributors:
    (`RenderImage::imageChanged`) as content scrolls into view — real tiles for
    real new content, not a bug.
 
-## Shipped fix (commit 56db78f, build 522+, SHIPPED ON build 523+)
-`patches/webkit/webkit-root-customprop-repaint-skip-env.patch` +
-`WEBKIT_SKIP_ROOT_CUSTOMPROP_REPAINT=1` (now default-on in `deploy/runtime-common.sh`):
-`RenderBox::styleWillChange` skips `repaintRootContents()` when the `<html>`/`<body>`
-change is a custom property (`!customPropertiesEqual`). Device-verified: full-page
-repaints → 0, worst scroll freeze ~34 s → ~3.3 s, no visual regression. A/B with
-`WEBKIT_SKIP_ROOT_CUSTOMPROP_REPAINT=0`.
+## Shipped fix — v2, generalized (`webkit-root-repaint-only-on-background-env.patch`)
+`RenderBox::styleWillChange` called `view().repaintRootContents()` — repainting the
+ENTIRE root layer (29883–93000px) — for **any** repaint-level style change on
+`<html>`/`<body>`. Per WebKit's own comment that full-page repaint exists **only**
+because the root/body **background** propagates to the canvas. Everything else —
+**class toggles** (nav/menu/scrolled state) and **CSS custom properties**
+(`--offset-sticky-*`, written every scroll frame) — does not paint the canvas.
+
+`WEBKIT_SKIP_ROOT_REPAINT_UNLESS_BACKGROUND` (**default ON**, `=0` = stock): take the
+full-page repaint only when the background actually changed (color via
+`visitedDependentBackgroundColor`, presence via `hasBackground`, or `backgroundLayers`).
+
+v1 (`webkit-root-customprop-repaint-skip-env.patch`, commit 56db78f) only covered the
+custom-property case and is **superseded/removed** — it fixed the scroll-frame storm
+(worst freeze ~34 s → ~3.3 s) but left the **class-toggle** path, which repaints the
+whole page repeatedly while the page merely settles (device-captured 6× per load) and
+is what the user sees as **"icons blinking several times before settling down"**.
 
 ## The remaining work: decouple scroll from the main-thread rendering update
 Residual freezes (~1–3 s, occasional; p95 frame ~150 ms ≈ 10 fps during scroll)

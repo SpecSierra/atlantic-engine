@@ -459,18 +459,18 @@ atlantic_export_browser_env() {
     # pinning perfectly. 0/unset = stock (the A/B switch).
     export WEBKIT_FORCE_ASYNC_SCROLL="${WEBKIT_FORCE_ASYNC_SCROLL:-1}"
 
-    # Honoured by webkit-root-customprop-repaint-skip-env.patch. SHIPPED ON: skip the
-    # full-page view().repaintRootContents() in RenderBox::styleWillChange when a
-    # <html>/<body> style change is a CSS custom property. Sites that update a :root
-    # custom property on every scroll frame (franceinfo's --offset-sticky-* sticky
-    # positioning) otherwise repaint the whole ~93000px page each frame, and the
-    # compositor lock-steps to that tile batch = multi-second scroll freeze. Device-
-    # verified (ATLANTIC_FRAME_TRACE/ftrace.py): full-page repaints eliminated, worst
-    # scroll freeze ~34s -> ~3.3s on franceinfo, no visual regression. Residual freezes
-    # (legitimate carousel relayout / image-load repaints + main-thread scroll-input
-    # coupling) need the separate scroll/main-thread decouple effort (see docs/handover).
-    # 0 = stock full-page repaint (the A/B switch).
-    export WEBKIT_SKIP_ROOT_CUSTOMPROP_REPAINT="${WEBKIT_SKIP_ROOT_CUSTOMPROP_REPAINT:-1}"
+    # Honoured by webkit-root-repaint-only-on-background-env.patch (patch default is ON;
+    # exported here for visibility). RenderBox::styleWillChange repainted the ENTIRE root
+    # layer (29883-93000px on franceinfo) for ANY repaint-level style change on <html>/
+    # <body>, though that full-page repaint exists only because the root BACKGROUND
+    # propagates to the canvas. Sites toggle root classes (nav/menu/scrolled state) and
+    # write :root custom properties (franceinfo's --offset-sticky-* every scroll frame),
+    # so the whole page was repainted constantly -> ~2280 tiles per scroll update ->
+    # compositor lock-steps to the batch = multi-second scroll freeze, and the visible
+    # "icons blinking several times before settling". Now the full-page repaint is taken
+    # only when the background actually changed (color / presence / layers). Device-proven
+    # via ATLANTIC_REPAINT_BT symbolized backtraces + ftrace.py. 0 = stock (the A/B switch).
+    export WEBKIT_SKIP_ROOT_REPAINT_UNLESS_BACKGROUND="${WEBKIT_SKIP_ROOT_REPAINT_UNLESS_BACKGROUND:-1}"
 
     # Honoured by webkit-damage-limited-composite-env.patch. Enables WebKit's
     # compiled-in but WPE-disabled damage subsystem so a composite is scissored

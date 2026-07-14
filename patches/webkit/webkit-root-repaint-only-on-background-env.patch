@@ -1,0 +1,76 @@
+Only repaint the whole page for a root/body style change if the BACKGROUND changed.
+
+Supersedes webkit-root-customprop-repaint-skip-env.patch (which only handled the
+custom-property case). RenderBox::styleWillChange takes any Repaint-level style
+change on <html>/<body> and calls view().repaintRootContents() - repainting the
+ENTIRE root layer (29883-93000px tall on franceinfo). Per WebKit's own comment
+there, this exists ONLY because the root/body BACKGROUND propagates up to the
+canvas. Every other style change on the root - a class toggle (nav/menu/scrolled
+state), a CSS custom property (franceinfo's --offset-sticky-* written every scroll
+frame) - does not paint the canvas; the elements whose rendering actually changed
+are repainted through the normal renderer-level repaint path.
+
+Device-proven with ATLANTIC_REPAINT_BT symbolized backtraces:
+- during scroll: the custom-property writes fire this every frame,
+- while merely SETTLING (no scroll): class toggles fire it 6x on one load
+  (rect 1080x29883 of 1080x29883) - the user-visible "icons blinking several times
+  before settling down",
+and each one dirties ~the whole viewport's tiles (~2280 per scroll update), which
+lock-steps the compositor (isWaitingForTiles) into a multi-second freeze.
+
+WEBKIT_SKIP_ROOT_REPAINT_UNLESS_BACKGROUND (default ON, =0 restores stock): take the
+full-page repaint only when the background actually changed - its color
+(visitedDependentBackgroundColor, what propagates to the canvas), its presence
+(hasBackground), or its layers (backgroundLayers: images/position/attachment).
+The rootLayerConfigurationChanged() fixed-background check is preserved inside.
+
+--- a/Source/WebCore/rendering/RenderBox.cpp
++++ b/Source/WebCore/rendering/RenderBox.cpp
+@@ -26,6 +26,7 @@
+ #include "config.h"
+ #include "RenderBox.h"
+ 
++#include <cstdlib>
+ #include "AnchorPositionEvaluator.h"
+ #include "BackgroundPainter.h"
+ #include "BorderPainter.h"
+@@ -264,9 +265,36 @@
+         // The background of the root element or the body element could propagate up to
+         // the canvas. Issue full repaint, when our style changes substantially.
+         if (diff >= Style::DifferenceResult::Repaint && (isDocumentElementRenderer() || isBody())) {
+-            view().repaintRootContents();
+-            if (Style::hasEntirelyFixedBackground(oldStyle->backgroundLayers()) != Style::hasEntirelyFixedBackground(newStyle.backgroundLayers()))
+-                view().compositor().rootLayerConfigurationChanged();
++            // Atlantic (WEBKIT_SKIP_ROOT_REPAINT_UNLESS_BACKGROUND, default on):
++            // repaintRootContents() repaints the ENTIRE root layer (franceinfo: a
++            // 29883-93000px tall layer). Per the comment above, it exists ONLY because the
++            // root/body BACKGROUND propagates up to the canvas - a background change on
++            // <html>/<body> must repaint the whole canvas. Any OTHER style change on the
++            // root/body (a class toggle for nav/menu state, a CSS custom property such as
++            // franceinfo's --offset-sticky-*) does NOT paint the canvas: the elements whose
++            // rendering actually changed are repainted by the normal renderer-level repaint
++            // path. Yet WebKit conservatively repaints the whole page for all of them.
++            //
++            // Device-proven (ATLANTIC_REPAINT_BT backtraces): on franceinfo this fires on
++            // ~every scroll frame (custom-property writes) AND repeatedly while the page
++            // merely settles (class toggles) - the visible "icons blinking several times
++            // before settling", and ~2280 tile repaints per scroll update that lock-step the
++            // compositor into a multi-second freeze.
++            //
++            // So: only take the full-page repaint when the background actually changed -
++            // its color (which propagates to the canvas) or its layers (images/position).
++            static const bool skipUnlessBackground = [] {
++                const char* e = getenv("WEBKIT_SKIP_ROOT_REPAINT_UNLESS_BACKGROUND");
++                return !e || !e[0] || e[0] != '0'; // default ON; =0 restores stock
++            }();
++            const bool backgroundMayHaveChanged = oldStyle->hasBackground() != newStyle.hasBackground()
++                || oldStyle->visitedDependentBackgroundColor() != newStyle.visitedDependentBackgroundColor()
++                || !(oldStyle->backgroundLayers() == newStyle.backgroundLayers());
++            if (!skipUnlessBackground || backgroundMayHaveChanged) {
++                view().repaintRootContents();
++                if (Style::hasEntirelyFixedBackground(oldStyle->backgroundLayers()) != Style::hasEntirelyFixedBackground(newStyle.backgroundLayers()))
++                    view().compositor().rootLayerConfigurationChanged();
++            }
+         }
+         
+         // When a layout hint happens and an object's position style changes, we have to do a layout
