@@ -123,3 +123,54 @@ when unset; not shipped on.
      invalidateRenderingUpdateRunLoopObserver();
  
      RELEASE_ASSERT(!m_isUpdatingRendering);
+@@ -335,6 +362,7 @@
+     // here guarantees a real main-thread-idle gap between passes for the
+     // compositor and scrolling thread to breathe in.
+     m_lastRenderingUpdateTimeForFlingThrottle = MonotonicTime::now();
++    atlFtraceLT("rupd-end", m_isWaitingForRenderer ? 1 : 0);
+ }
+ 
+ bool LayerTreeHost::isFlingActiveForThrottle() const
+--- a/Source/WebCore/page/scrolling/coordinated/ScrollingTreeCoordinated.cpp
++++ b/Source/WebCore/page/scrolling/coordinated/ScrollingTreeCoordinated.cpp
+@@ -40,9 +40,32 @@
+ #include "ScrollingTreePositionedNodeCoordinated.h"
+ #include "ScrollingTreeStickyNodeCoordinated.h"
+ #include <ranges>
++#include <cstdlib>
++#include <cstdio>
++#include <ctime>
+ 
+ namespace WebCore {
+ 
++// ATLANTIC_FRAME_TRACE=1 marker (see webkit-frame-trace-env.patch). Logs each
++// scrolling-tree layer-position apply so a scroll freeze can be checked for
++// scrolling-thread activity: if "scrollapply thr=S" keeps firing during the
++// ack->composite gap, the scrolling thread is requesting AsyncScrolling
++// composites that are not being serviced; if it goes silent, the scroll is not
++// being animated on the scrolling thread during the gap. Same CLOCK_MONOTONIC
++// clock as the other markers. Unique name to avoid unified-source clashes.
++static void atlFtraceSTC(bool scrollingThread)
++{
++    static const bool on = [] {
++        const char* e = getenv("ATLANTIC_FRAME_TRACE");
++        return e && e[0] && e[0] != '0';
++    }();
++    if (!on)
++        return;
++    struct timespec ts;
++    clock_gettime(CLOCK_MONOTONIC, &ts);
++    fprintf(stderr, "[ftrace] web scrollapply thr=%c t=%.1f\n", scrollingThread ? 'S' : 'M', ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6);
++}
++
+ Ref<ScrollingTreeCoordinated> ScrollingTreeCoordinated::create(AsyncScrollingCoordinator& scrollingCoordinator)
+ {
+     return adoptRef(*new ScrollingTreeCoordinated(scrollingCoordinator));
+@@ -81,6 +104,7 @@
+ 
+ void ScrollingTreeCoordinated::applyLayerPositionsInternal()
+ {
++    atlFtraceSTC(ScrollingThread::isCurrentThread());
+     auto* rootScrollingNode = rootNode();
+     if (!rootScrollingNode)
+         return;
