@@ -1,0 +1,51 @@
+Frame-trace instrumentation: WebProcess composite marker (ATLANTIC_FRAME_TRACE).
+
+Diagnostic-only (default OFF). When ATLANTIC_FRAME_TRACE=1, emit a
+CLOCK_MONOTONIC-stamped "[ftrace] web composite" line at each
+ThreadedCompositor::paintToCurrentGLContext. Paired with the qt5-plugin
+"[ftrace] ui recv|paint|ack" markers (same clock), this brackets the
+WebProcess->Qt handoff so the franceinfo "content freezes then jumps" stall can
+be localized to production (composite stops), handoff/export (composite fires
+but no ui recv), or present (ui recv fine but paint/ack lag). Live per-thread
+sampling could not catch these random sub-second stalls; explicit frame timing
+can. Zero cost when unset. Not shipped on.
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
+@@ -41,6 +41,8 @@
+ #include <WebCore/TextureMapperLayer.h>
+ #include <WebCore/TransformationMatrix.h>
+ #include <cstdlib>
++#include <cstdio>
++#include <ctime>
+ #include <cstring>
+ 
+ #if USE(LIBEPOXY)
+@@ -319,8 +321,28 @@
+         layer->flushCompositingState(reasons);
+ }
+ 
++// ATLANTIC_FRAME_TRACE=1: CLOCK_MONOTONIC-stamped marker at each WebProcess
++// composite, comparable to the qt5-plugin ui markers (same clock). Lets a
++// freeze-then-jump be localized: if 'web composite' keeps firing during a
++// screen freeze but 'ui recv' does not, the stall is in export/handoff; if
++// 'web composite' itself stops, the compositor is not producing (production
++// stall). Zero cost when unset.
++static bool atlFrameTrace()
++{
++    static const bool on = [] {
++        const char* e = getenv("ATLANTIC_FRAME_TRACE");
++        return e && e[0] && e[0] != '0';
++    }();
++    return on;
++}
++
+ void ThreadedCompositor::paintToCurrentGLContext(const TransformationMatrix& matrix, const IntSize& size, const OptionSet<CompositionReason>& reasons)
+ {
++    if (atlFrameTrace()) {
++        struct timespec ts;
++        clock_gettime(CLOCK_MONOTONIC, &ts);
++        fprintf(stderr, "[ftrace] web composite t=%.1f\n", ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6);
++    }
+     FloatRect clipRect(FloatPoint { }, size);
+     TextureMapperLayer& currentRootLayer = m_sceneState->rootLayer().ensureTarget();
+     if (currentRootLayer.transform() != matrix)

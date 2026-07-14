@@ -30,8 +30,30 @@
 #include <QOpenGLFunctions>
 #include <QQuickWindow>
 #include <QtGlobal>
+#include <cstdio>
+#include <ctime>
 
 static PFNGLEGLIMAGETARGETTEXTURE2DOESPROC imageTargetTexture2DOES;
+
+// ATLANTIC_FRAME_TRACE=1: emit CLOCK_MONOTONIC-stamped markers at each stage of
+// the WebProcess->Qt frame handoff so freeze-then-jump stalls can be localized
+// (production vs handoff vs present). Comparable to the WebProcess-side markers
+// (same clock). Zero cost when unset. See scripts/devtools frame-trace analysis.
+static double atlTraceNowMs()
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6;
+}
+static bool atlFrameTrace()
+{
+    static const bool on = [] {
+        const char* e = getenv("ATLANTIC_FRAME_TRACE");
+        return e && e[0] && e[0] != '0';
+    }();
+    return on;
+}
+#define ATL_FTRACE(stage) do { if (atlFrameTrace()) fprintf(stderr, "[ftrace] ui " stage " t=%.1f\n", atlTraceNowMs()); } while (0)
 
 std::unique_ptr<WPEQtViewBackend> WPEQtViewBackend::create(const QSizeF& size, QPointer<QOpenGLContext> context, EGLDisplay eglDisplay, QPointer<WPEQtView> view)
 {
@@ -190,6 +212,7 @@ GLuint WPEQtViewBackend::texture(QOpenGLContext* context)
 {
     if ((!m_pendingImage && !m_committedImage) || !hasValidSurface())
         return 0;
+    ATL_FTRACE("paint");
     auto* image = m_pendingImage ? m_pendingImage : m_committedImage;
 
     context->makeCurrent(&m_surface);
@@ -279,6 +302,8 @@ void WPEQtViewBackend::didRenderFrame()
     if (!m_frameUpdateRequested || !m_exportable)
         return;
 
+    ATL_FTRACE("ack");
+
     m_frameUpdateRequested = false;
     // In eager mode the frame-complete was already dispatched in displayImage().
     if (eagerFrameComplete()) {
@@ -300,6 +325,7 @@ void WPEQtViewBackend::didRenderFrame()
 
 void WPEQtViewBackend::displayImage(struct wpe_fdo_egl_exported_image* image)
 {
+    ATL_FTRACE("recv");
     // Direct-composite path: render straight into the wl_subsurface and run the
     // frame-complete handshake here, decoupled from Qt's render loop. This
     // bypasses the QSG texture-node re-composite of the web content and avoids

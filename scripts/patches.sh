@@ -408,6 +408,13 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # default OFF. Touches CoordinatedTileBuffer.cpp; apply AFTER tile-upload-budget
     # (the other patch touching that file).
     "patches/webkit/webkit-tile-buffer-skip-zero-env.patch"
+
+    # Frame-trace diagnostic (ATLANTIC_FRAME_TRACE=1, default OFF): CLOCK_MONOTONIC
+    # marker at each WebProcess composite, paired with the qt5-plugin ui recv/paint/
+    # ack markers to localize the franceinfo freeze-then-jump (production vs handoff
+    # vs present). Touches ThreadedCompositor.cpp; apply after the other patches
+    # touching it.
+    "patches/webkit/webkit-frame-trace-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(
