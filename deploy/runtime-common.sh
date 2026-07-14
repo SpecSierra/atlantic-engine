@@ -459,6 +459,19 @@ atlantic_export_browser_env() {
     # pinning perfectly. 0/unset = stock (the A/B switch).
     export WEBKIT_FORCE_ASYNC_SCROLL="${WEBKIT_FORCE_ASYNC_SCROLL:-1}"
 
+    # Honoured by webkit-root-customprop-repaint-skip-env.patch. SHIPPED ON: skip the
+    # full-page view().repaintRootContents() in RenderBox::styleWillChange when a
+    # <html>/<body> style change is a CSS custom property. Sites that update a :root
+    # custom property on every scroll frame (franceinfo's --offset-sticky-* sticky
+    # positioning) otherwise repaint the whole ~93000px page each frame, and the
+    # compositor lock-steps to that tile batch = multi-second scroll freeze. Device-
+    # verified (ATLANTIC_FRAME_TRACE/ftrace.py): full-page repaints eliminated, worst
+    # scroll freeze ~34s -> ~3.3s on franceinfo, no visual regression. Residual freezes
+    # (legitimate carousel relayout / image-load repaints + main-thread scroll-input
+    # coupling) need the separate scroll/main-thread decouple effort (see docs/handover).
+    # 0 = stock full-page repaint (the A/B switch).
+    export WEBKIT_SKIP_ROOT_CUSTOMPROP_REPAINT="${WEBKIT_SKIP_ROOT_CUSTOMPROP_REPAINT:-1}"
+
     # Honoured by webkit-damage-limited-composite-env.patch. Enables WebKit's
     # compiled-in but WPE-disabled damage subsystem so a composite is scissored
     # to the region that actually changed (glScissor to the buffer-age-correct
