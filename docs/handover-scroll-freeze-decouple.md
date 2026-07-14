@@ -25,23 +25,35 @@ update repaints ~the whole viewport** (~2280 tiles). Two contributors:
    (`RenderImage::imageChanged`) as content scrolls into view — real tiles for
    real new content, not a bug.
 
-## Shipped fix — v2, generalized (`webkit-root-repaint-only-on-background-env.patch`)
+## Shipped fix (`webkit-root-customprop-repaint-skip-env.patch`, default ON)
 `RenderBox::styleWillChange` called `view().repaintRootContents()` — repainting the
-ENTIRE root layer (29883–93000px) — for **any** repaint-level style change on
-`<html>`/`<body>`. Per WebKit's own comment that full-page repaint exists **only**
-because the root/body **background** propagates to the canvas. Everything else —
-**class toggles** (nav/menu/scrolled state) and **CSS custom properties**
-(`--offset-sticky-*`, written every scroll frame) — does not paint the canvas.
+ENTIRE root layer (29883–93000px) — for a Repaint-level style change on `<html>`/
+`<body>`. franceinfo writes `--offset-sticky-*` CSS custom properties on `<html>`
+every scroll frame, so the whole page repainted each frame → ~2280-tile batch →
+compositor lock-step → multi-second freeze. `WEBKIT_SKIP_ROOT_CUSTOMPROP_REPAINT=1`
+(default on) skips the full-page repaint when the change is a custom property.
+Device-verified: worst scroll freeze **~34 s → ~3.3 s**, no regression.
 
-`WEBKIT_SKIP_ROOT_REPAINT_UNLESS_BACKGROUND` (**default ON**, `=0` = stock): take the
-full-page repaint only when the background actually changed (color via
-`visitedDependentBackgroundColor`, presence via `hasBackground`, or `backgroundLayers`).
+### Reverted experiment: "repaint only if background changed" (do not re-add blindly)
+A broader variant (`WEBKIT_SKIP_ROOT_REPAINT_UNLESS_BACKGROUND`) generalized the skip
+to *any* root style change (incl. class toggles) unless the background changed. It was
+**reverted** because: (a) it did **not** fix the user-reported "icons blinking several
+times before settling" (that is a different cause — see below), and (b) an A/B on the
+no-scroll settle suggested it may *increase* per-settle tile cost (replacing one
+coalesced full-page repaint with many individual element repaints; measurement was
+noisy but the direction was wrong). If revisited, measure total *tile* volume
+deterministically, not invalidation counts.
 
-v1 (`webkit-root-customprop-repaint-skip-env.patch`, commit 56db78f) only covered the
-custom-property case and is **superseded/removed** — it fixed the scroll-frame storm
-(worst freeze ~34 s → ~3.3 s) but left the **class-toggle** path, which repaints the
-whole page repeatedly while the page merely settles (device-captured 6× per load) and
-is what the user sees as **"icons blinking several times before settling down"**.
+### The "icons blinking" is NOT the root repaint — it's image-load + flex reflow
+Symbolized `ATLANTIC_REPAINT_BT` backtraces during a **no-scroll settle** show the
+repeated repaints come from: `RenderImage::imageChanged ← CachedImage::updateBufferInternal
+← SubresourceLoader::didReceiveBuffer` (an image repaints on **every network chunk** as
+it streams in) and `RenderFlexibleBox::performFlexLayout ← repaintAfterLayout` (carousels
+relayout each time an image's intrinsic size resolves). franceinfo images lack explicit
+dimensions → layout shift as each loads. This is largely **page-authoring / progressive
+load**, not an engine over-invalidation — no safe one-line engine fix. Possible future
+angles (all risky/uncertain): coalesce `imageChanged` repaints per rAF; skip repaint for
+`updateBufferInternal` chunks of a not-yet-first-painted image; not shipped.
 
 ## The remaining work: decouple scroll from the main-thread rendering update
 Residual freezes (~1–3 s, occasional; p95 frame ~150 ms ≈ 10 fps during scroll)

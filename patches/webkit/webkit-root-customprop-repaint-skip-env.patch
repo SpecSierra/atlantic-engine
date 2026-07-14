@@ -1,0 +1,65 @@
+Skip the full-page root repaint for :root/<body> custom-property-only changes.
+
+Device frame-tracing (ATLANTIC_FRAME_TRACE=1 + /root/ftrace.py + symbolized
+ATLANTIC_REPAINT_BT backtraces) root-caused the franceinfo scroll freeze: the
+site's sticky-positioning JS writes CSS custom properties (--offset-sticky-top/
+--offset-sticky-bottom) onto <html> on essentially every scroll frame. In
+RenderBox::styleWillChange, a Repaint-level style change on the document element
+or body calls view().repaintRootContents() - a repaint of the ENTIRE ~93000px
+page - because the root/body BACKGROUND can propagate to the canvas. But a custom
+-property change does not paint on the root itself (var() consumers repaint
+individually), so the full-page repaint is spurious. The result was ~2280 tile
+repaints per scroll update, and the compositor lock-steps to that tile batch
+(isWaitingForTiles) -> 1-6s (worst ~34s) production stall = "content freezes then
+jumps". This is why every prior lever failed (damage composite, tile-buffer memset,
+memory-pressure purge, composite-scroll-sync lock, pipelined ack, fling throttle):
+all downstream of this one over-invalidation.
+
+WEBKIT_SKIP_ROOT_CUSTOMPROP_REPAINT=1 (default OFF) skips repaintRootContents()
+when the root/body style change is a custom-property change
+(!customPropertiesEqual). Residual case (custom-property AND background changed in
+the same mutation) only defers a canvas repaint by one frame and is vanishingly
+rare. Device-verify with ftrace.py: the per-scroll tilepaint volume and the
+ack->composite gap should collapse.
+
+--- a/Source/WebCore/rendering/RenderBox.cpp
++++ b/Source/WebCore/rendering/RenderBox.cpp
+@@ -26,6 +26,7 @@
+ #include "config.h"
+ #include "RenderBox.h"
+ 
++#include <cstdlib>
+ #include "AnchorPositionEvaluator.h"
+ #include "BackgroundPainter.h"
+ #include "BorderPainter.h"
+@@ -264,9 +265,27 @@
+         // The background of the root element or the body element could propagate up to
+         // the canvas. Issue full repaint, when our style changes substantially.
+         if (diff >= Style::DifferenceResult::Repaint && (isDocumentElementRenderer() || isBody())) {
+-            view().repaintRootContents();
+-            if (Style::hasEntirelyFixedBackground(oldStyle->backgroundLayers()) != Style::hasEntirelyFixedBackground(newStyle.backgroundLayers()))
+-                view().compositor().rootLayerConfigurationChanged();
++            // Atlantic (WEBKIT_SKIP_ROOT_CUSTOMPROP_REPAINT=1, default off): repaintRootContents()
++            // repaints the ENTIRE page and exists only because the root/body BACKGROUND propagates
++            // to the canvas (see comment above). A CSS custom-property change on <html>/<body> also
++            // produces a Repaint-level diff, but it does not paint on the root itself - var()
++            // consumers repaint individually through normal style propagation. Sites that update a
++            // :root custom property on every scroll frame (e.g. franceinfo's --offset-sticky-* for
++            // sticky positioning) therefore repaint the whole (~93000px) page each frame, and the
++            // compositor lock-steps to that tile batch -> multi-second scroll freeze (device-proven
++            // via ATLANTIC_FRAME_TRACE/ftrace.py). Skip the full-page repaint when the change is a
++            // custom property. Env-gated + device-verified; the residual case (a custom-property AND
++            // background change in the same mutation) is vanishingly rare and only defers a canvas
++            // repaint by one frame.
++            static const bool skipRootCustomPropRepaint = [] {
++                const char* e = getenv("WEBKIT_SKIP_ROOT_CUSTOMPROP_REPAINT");
++                return e && e[0] && e[0] != '0';
++            }();
++            if (!(skipRootCustomPropRepaint && !oldStyle->customPropertiesEqual(newStyle))) {
++                view().repaintRootContents();
++                if (Style::hasEntirelyFixedBackground(oldStyle->backgroundLayers()) != Style::hasEntirelyFixedBackground(newStyle.backgroundLayers()))
++                    view().compositor().rootLayerConfigurationChanged();
++            }
+         }
+         
+         // When a layout hint happens and an object's position style changes, we have to do a layout
