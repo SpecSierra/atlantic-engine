@@ -8,7 +8,7 @@
  #include "IntPointHash.h"
  #include "IntRect.h"
  #include <wtf/Assertions.h>
-@@ -45,6 +46,17 @@
+@@ -45,6 +46,18 @@
  
      static constexpr int s_defaultCPUTileSize = 256;
  
@@ -22,6 +22,7 @@
 +    // because there is exactly one page per WebProcess here.
 +    WEBCORE_EXPORT static bool dropTilesWhenHiddenEnabled();
 +    WEBCORE_EXPORT static void setProcessPageHidden(bool);
++    WEBCORE_EXPORT static bool shouldDropAllTiles();
 +
      const IntRect& coverRect() const { return m_coverRect; }
  
@@ -36,7 +37,7 @@
  #include <wtf/MemoryPressureHandler.h>
  #include <wtf/SystemTracing.h>
  #include <wtf/TZoneMallocInlines.h>
-@@ -101,6 +102,34 @@
+@@ -101,6 +102,35 @@
      return enabled;
  }
  
@@ -61,43 +62,62 @@
 +    s_processPageHidden.store(hidden, std::memory_order_relaxed);
 +}
 +
-+// True when we should treat the page as having no tile cover at all.
-+static bool shouldDropAllTilesNow()
++// True when this WebProcess's page is hidden and the feature is enabled: every
++// layer then reports it needs no backing store, so updateContents() drops it.
++bool CoordinatedBackingStoreProxy::shouldDropAllTiles()
 +{
-+    return CoordinatedBackingStoreProxy::dropTilesWhenHiddenEnabled()
++    return dropTilesWhenHiddenEnabled()
 +        && s_processPageHidden.load(std::memory_order_relaxed);
 +}
 +
  // Aggressive checkerboard during fast scroll. The coordinated-graphics port
  // always rasterizes at least the visible rect every time the viewport moves, so
  // a fast fling pays the per-tile paint cost (serialized by gpu-sync glFinish) on
-@@ -429,7 +458,10 @@
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp
+@@ -30,6 +30,7 @@
+ #include "CoordinatedAnimatedBackingStoreClient.h"
+ #include "CoordinatedBackingStore.h"
+ #include "CoordinatedBackingStoreProxy.h"
++#include <cstdio>
+ #include "CoordinatedImageBackingStore.h"
+ #include "CoordinatedPlatformLayerBuffer.h"
+ #include "CoordinatedPlatformLayerBufferHolePunch.h"
+@@ -711,6 +712,14 @@
+     if (!m_owner)
+         return false;
  
- void CoordinatedBackingStoreProxy::createOrDestroyTiles(const IntRect& unscaledVisibleRect, const IntRect& unscaledContentsRect, const IntSize& unscaledViewportSize, float contentsScale, int maxTextureSize, Damage& damage, Vector<uint32_t>& tilesToCreate, Vector<uint32_t>& tilesToRemove)
- {
--    float coverAreaMultiplier = MemoryPressureHandler::singleton().isUnderMemoryPressure() ? 1.0f : coverAreaMultiplierFromEnvironment();
-+    // A hidden page (backgrounded tab) gets zero cover: multiplier 0 forces
-+    // geometryChanged below (0 != prior) so tiles are recomputed and dropped.
-+    float coverAreaMultiplier = shouldDropAllTilesNow() ? 0.0f
-+        : (MemoryPressureHandler::singleton().isUnderMemoryPressure() ? 1.0f : coverAreaMultiplierFromEnvironment());
-     bool contentsScaleChanged = m_contentsScale != contentsScale;
-     m_contentsScale = contentsScale;
- 
-@@ -755,6 +787,11 @@
- 
- std::pair<IntRect, IntRect> CoordinatedBackingStoreProxy::computeCoverAndKeepRect() const
- {
-+    // Hidden page: no cover and no keep, so every existing tile is dropped
-+    // (nothing intersects an empty keepRect) and none are created.
-+    if (shouldDropAllTilesNow())
-+        return { IntRect { }, IntRect { } };
++    // Backgrounded tab (WEBKIT_DROP_TILES_WHEN_HIDDEN): while this WebProcess's
++    // page is hidden, no layer needs a backing store. updateContents() then
++    // nulls m_backingStoreProxy and adds Change::BackingStore, so the compositor
++    // frees the committed tile textures too (~1 GB reclaimed on device). The
++    // backing store is recreated on show (needsBackingStore true again).
++    if (CoordinatedBackingStoreProxy::shouldDropAllTiles())
++        return false;
 +
-     IntRect coverRect = m_visibleRect;
-     IntRect keepRect = m_visibleRect;
+     if (!m_drawsContent || !m_contentsVisible || m_size.isEmpty())
+         return false;
  
+@@ -780,6 +789,8 @@
+         }
+     } else {
+         if (m_backingStoreProxy) {
++            if (CoordinatedBackingStoreProxy::shouldDropAllTiles())
++                fprintf(stderr, "[droptiles] updateContents DROP backing store layer=%p\n", this);
+             m_backingStoreProxy = nullptr;
+             m_pendingChanges.add(Change::BackingStore);
+         }
 --- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/DrawingAreaCoordinatedGraphics.cpp
 +++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/DrawingAreaCoordinatedGraphics.cpp
-@@ -37,6 +37,7 @@
+@@ -27,6 +27,7 @@
+ 
+ #include "config.h"
+ #include "DrawingAreaCoordinatedGraphics.h"
++#include <cstdio>
+ 
+ #include "DrawingAreaProxyMessages.h"
+ #include "MessageSenderInlines.h"
+@@ -37,6 +38,7 @@
  #include "WebPageInlines.h"
  #include "WebPreferencesKeys.h"
  #include "WebProcess.h"
@@ -105,7 +125,7 @@
  #include <WebCore/GraphicsContext.h>
  #include <WebCore/LocalFrameInlines.h>
  #include <WebCore/LocalFrameView.h>
-@@ -374,10 +375,21 @@
+@@ -374,10 +376,25 @@
  void DrawingAreaCoordinatedGraphics::activityStateDidChange(OptionSet<ActivityState> changed, ActivityStateChangeID, CompletionHandler<void()>&& completionHandler)
  {
      if (changed & ActivityState::IsVisible) {
@@ -122,8 +142,12 @@
 +            // still able to composite — with empty cover this paints nothing
 +            // but drops all tiles and frees their GPU memory — before pausing.
 +            CoordinatedBackingStoreProxy::setProcessPageHidden(true);
-+            if (m_layerTreeHost && CoordinatedBackingStoreProxy::dropTilesWhenHiddenEnabled())
++            if (m_layerTreeHost && CoordinatedBackingStoreProxy::dropTilesWhenHiddenEnabled()) {
++                fprintf(stderr, "[droptiles] activityStateDidChange HIDE: isVisible=%d forcing repaint\n",
++                    m_webPage->isVisible());
 +                updateRenderingWithForcedRepaint();
++                fprintf(stderr, "[droptiles] forced repaint returned\n");
++            }
              suspendPainting();
 +        }
      }
