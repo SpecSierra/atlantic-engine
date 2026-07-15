@@ -272,6 +272,18 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # padding-box offset changes still repaint).
     # WEBKIT_REPAINT_ON_LAYER_RESIZE=1 = stock behaviour.
     "patches/webkit/webkit-no-full-repaint-on-layer-grow.patch"
+    # webkit-no-full-repaint-on-composited-move.patch: the SCROLL-time analog of
+    # the grow patch. A self-painting composited layer that merely MOVED (or
+    # jittered <=1px in size) during a layout does not need its whole backing
+    # re-rastered — the compositor repositions it and the tiled backing paints
+    # newly exposed tiles on demand. franceinfo.fr runs a full doc layout on
+    # ~every scroll frame; recursiveUpdateLayerPositions -> repaintAfterLayoutIfNeeded
+    # then full-repaints each of ~14 composited section layers whose location
+    # shifted (device-proven build 524: 11x onche.org's full-layer paint = the
+    # felt ~10x scroll slowdown). Only skips move/jitter of layers that own their
+    # backing store; forced/style repaints and ancestor-painting layers unaffected.
+    # WEBKIT_REPAINT_ON_COMPOSITED_MOVE=1 = stock behaviour.
+    "patches/webkit/webkit-no-full-repaint-on-composited-move.patch"
     # NOTE: the load-rendering-throttle patches are GONE (dropped after builds
     # 465-471). Coalescing main-thread rendering updates during load to cut the
     # paint storm (~340 Mpx/franceinfo load) fundamentally deadlocks the

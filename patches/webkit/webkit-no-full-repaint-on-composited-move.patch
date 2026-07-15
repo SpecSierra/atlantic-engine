@@ -1,0 +1,90 @@
+Don't full-repaint a self-painting composited layer that merely moved.
+
+Root cause of the franceinfo.fr scroll slowness (device-proven, build 524):
+the page runs a full document layout on ~every scroll frame, and the
+post-layout RenderLayer::recursiveUpdateLayerPositions ->
+RenderElement::repaintAfterLayoutIfNeeded fully repaints each composited
+section layer whose outline-bounds *location* changed (RenderElement.cpp
+~L1439: "if our outline bounds rect moved, we have to repaint everything").
+franceinfo has ~14 such composited section layers (each 1-2 viewports tall);
+each one full-repaints per scroll frame. Measured against onche.org with an
+identical scroll (WEBKIT_PAINT_LOG): franceinfo 70 full-layer invalidations /
+76.7 Mpx vs onche 14 / 6.6 Mpx = 11.6x, i.e. the felt ~10x slowdown. 38 of 95
+layers were seen oscillating +/-1px in height per scroll (subpixel layout
+jitter) -> a full-layer repaint each.
+
+For a *self-painting composited layer* (its own coordinated backing store),
+a pure move -- or a <=1px size jitter -- does NOT require re-rastering the
+whole backing: the compositor repositions the layer (setPosition during the
+compositing geometry update) and the tiled backing paints any newly exposed
+tiles on demand (exactly the invariant webkit-no-full-repaint-on-layer-grow
+already relies on). So skip the redundant whole-layer content repaint.
+
+Guarded tightly to stay correct: only when the full repaint is due to a
+move/jitter (both rects non-empty and intersecting, size delta <=1px, no
+decoration-size repaint required) and NOT a forced full repaint
+(RequiresFullRepaint::Yes, e.g. style-driven), and only for a layer that owns
+its backing store (!paintsIntoCompositedAncestor && !paintsIntoWindow) -- a
+layer painting into an ancestor still needs the ancestor invalidated at both
+positions. WEBKIT_REPAINT_ON_COMPOSITED_MOVE=1 restores stock behaviour (A/B).
+
+--- a/Source/WebCore/rendering/RenderElement.cpp
++++ b/Source/WebCore/rendering/RenderElement.cpp
+@@ -74,6 +74,7 @@
+ #include "RenderInline.h"
+ #include "RenderIterator.h"
+ #include "RenderLayer.h"
++#include "RenderLayerBacking.h"
+ #include "RenderLayerCompositor.h"
+ #include "RenderLayerInlines.h"
+ #include "RenderLayerScrollableArea.h"
+@@ -109,6 +110,7 @@
+ #include "Styleable.h"
+ #include "TextAutoSizing.h"
+ #include "ViewTransition.h"
++#include <cstdlib>
+ #include <wtf/MathExtras.h>
+ #include <wtf/StackStats.h>
+ #include <wtf/TZoneMallocInlines.h>
+@@ -1450,6 +1452,41 @@
+     if (!repaintContainer)
+         repaintContainer = &view();
+ 
++#if USE(COORDINATED_GRAPHICS)
++    // A self-painting composited layer that merely moved during layout (or
++    // jittered <=1px in size) does not need its whole backing store re-rastered:
++    // the compositor repositions the layer and the coordinated tiled backing
++    // paints newly exposed tiles on demand (same invariant as
++    // webkit-no-full-repaint-on-layer-grow). franceinfo.fr relayouts on ~every
++    // scroll frame, so without this each of ~14 composited section layers
++    // full-repaints per frame (device-proven: ~11x onche.org's full-layer paint
++    // = the felt ~10x scroll slowdown). WEBKIT_REPAINT_ON_COMPOSITED_MOVE=1
++    // restores stock behaviour.
++    if (fullRepaint && requiresFullRepaint != RequiresFullRepaint::Yes && haveOutlinesBoundsRects
++        && !oldClippedOverflowRect.isEmpty() && !newClippedOverflowRect.isEmpty()
++        && oldClippedOverflowRect.intersects(newClippedOverflowRect)) {
++        auto widthDelta = newRects.outlineBoundsRect->width() - oldRects.outlineBoundsRect->width();
++        auto heightDelta = newRects.outlineBoundsRect->height() - oldRects.outlineBoundsRect->height();
++        if (widthDelta < 0)
++            widthDelta = -widthDelta;
++        if (heightDelta < 0)
++            heightDelta = -heightDelta;
++        static bool repaintOnCompositedMove = [] {
++            const char* v = getenv("WEBKIT_REPAINT_ON_COMPOSITED_MOVE");
++            return v && *v && *v != '0';
++        }();
++        if (!repaintOnCompositedMove && widthDelta <= LayoutUnit(1) && heightDelta <= LayoutUnit(1)
++            && !mustRepaintBackgroundOrBorderOnSizeChange(*oldRects.outlineBoundsRect, *newRects.outlineBoundsRect)) {
++            if (auto* layerModelObject = dynamicDowncast<RenderLayerModelObject>(*this)) {
++                if (auto* layer = layerModelObject->layer(); layer && layer->isComposited()) {
++                    if (auto* backing = layer->backing(); backing && !backing->paintsIntoCompositedAncestor() && !backing->paintsIntoWindow())
++                        return true; // compositor moves the backing; skip the redundant full content repaint
++                }
++            }
++        }
++    }
++#endif
++
+     if (fullRepaint) {
+         if (newClippedOverflowRect.contains(oldClippedOverflowRect))
+             repaintUsingContainer(WeakPtr { repaintContainer }, newClippedOverflowRect);

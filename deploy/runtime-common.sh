@@ -471,6 +471,14 @@ atlantic_export_browser_env() {
     # not an engine over-invalidation). 0 = stock full-page repaint (the A/B switch).
     export WEBKIT_SKIP_ROOT_CUSTOMPROP_REPAINT="${WEBKIT_SKIP_ROOT_CUSTOMPROP_REPAINT:-1}"
 
+    # webkit-no-full-repaint-on-composited-move.patch is default-ON (baked into the
+    # patch, no export needed): a self-painting composited layer that merely moved (or
+    # jittered <=1px) during layout is NOT whole-backing repainted -- the compositor
+    # repositions it and the tiled backing paints exposed tiles. Fixes franceinfo.fr's
+    # per-scroll-frame full-layer repaint of ~14 section layers (11x onche.org's paint
+    # volume = the felt ~10x scroll slowdown). A/B kill-switch: run the browser with
+    # WEBKIT_REPAINT_ON_COMPOSITED_MOVE=1 to restore stock behaviour.
+
     # Honoured by webkit-damage-limited-composite-env.patch. Enables WebKit's
     # compiled-in but WPE-disabled damage subsystem so a composite is scissored
     # to the region that actually changed (glScissor to the buffer-age-correct
