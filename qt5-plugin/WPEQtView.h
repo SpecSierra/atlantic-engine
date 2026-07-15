@@ -87,6 +87,23 @@ public:
     void setWebKitVisible(bool visible);
     bool webKitVisible() const { return m_webKitVisible; }
 
+    // Private (incognito) browsing. MUST be set before the web view is created
+    // (i.e. before the item is parented into a window), otherwise it is ignored:
+    // the web view's network session is construct-only. When true, the view is
+    // created against a process-wide ephemeral WebKitNetworkSession, so cookies,
+    // cache, localStorage/IndexedDB and disk cache stay in memory only and never
+    // touch the persistent profile. All private views share one session (so a
+    // link opened in a new private tab keeps its login) — see privateSession().
+    void setPrivateBrowsing(bool p) { m_privateBrowsing = p; }
+    bool privateBrowsing() const { return m_privateBrowsing; }
+
+    // The shared ephemeral session backing every private view (lazily created).
+    static WebKitNetworkSession* privateSession();
+    // Drop all in-memory data of the private session (cookies/cache/storage).
+    // Call when the last private tab closes so re-entering private mode starts
+    // clean within a single browser run.
+    static void clearPrivateBrowsingData();
+
     // Direct-composite: the web content wl_surface (void*), so the browser can create a
     // chrome overlay subsurface place_above it. Null unless the direct-composite
     // subsurface is active. See WPEWaylandSubsurface::webContentSurface.
@@ -168,6 +185,7 @@ private:
     // once the web subsurface exists. M1 validation hook (defers to createChromeOverlayNow).
     void maybeCreateChromeOverlay();
     bool m_webKitVisible { true };
+    bool m_privateBrowsing { false };
     bool m_errorOccured { false };
     qreal m_pendingDeviceScaleFactor { 1.0 };
     QString m_pendingUserAgent;

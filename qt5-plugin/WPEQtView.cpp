@@ -213,11 +213,26 @@ void WPEQtView::createWebView()
 
     auto* settings = webkit_settings_new_with_settings("enable-developer-extras", TRUE,
         "enable-webgl", TRUE, "enable-mediasource", TRUE, nullptr);
-    m_webView = WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW,
-        "backend", webkit_web_view_backend_new(m_backend->backend(), [](gpointer data) {
-            delete static_cast<WPEQtViewBackend*>(data);
-        }, backend.release()),
-        "settings", settings, nullptr));
+    // backend.release() may only be consumed once, so build the view backend value
+    // up front and reuse it across the private/persistent construction branches.
+    WebKitWebViewBackend* viewBackend = webkit_web_view_backend_new(
+        m_backend->backend(),
+        [](gpointer data) { delete static_cast<WPEQtViewBackend*>(data); },
+        backend.release());
+    if (m_privateBrowsing) {
+        // Private tabs run against the shared ephemeral session: nothing (cookies,
+        // cache, localStorage/IndexedDB, disk cache) is written to the persistent
+        // profile. "network-session" is construct-only, hence set here at creation.
+        m_webView = WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW,
+            "backend", viewBackend,
+            "settings", settings,
+            "network-session", WPEQtView::privateSession(),
+            nullptr));
+    } else {
+        m_webView = WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW,
+            "backend", viewBackend,
+            "settings", settings, nullptr));
+    }
     g_clear_object(&settings);
 
     g_signal_connect_swapped(m_webView, "notify::uri", G_CALLBACK(notifyUrlChangedCallback), this);
@@ -738,6 +753,27 @@ void WPEQtView::touchEvent(QTouchEvent* event)
 WebKitWebView* WPEQtView::webView() const
 {
     return m_webView;
+}
+
+WebKitNetworkSession* WPEQtView::privateSession()
+{
+    // One ephemeral session shared by every private view, created on first use.
+    // Ephemeral => the NetworkProcess keeps cookies/cache/storage in memory only
+    // and discards them when the session is destroyed (process exit). Never freed
+    // here: it outlives individual private views, which hold their own ref.
+    static WebKitNetworkSession* s_session = nullptr;
+    if (!s_session)
+        s_session = webkit_network_session_new_ephemeral();
+    return s_session;
+}
+
+void WPEQtView::clearPrivateBrowsingData()
+{
+    WebKitWebsiteDataManager* manager =
+        webkit_network_session_get_website_data_manager(privateSession());
+    if (manager)
+        webkit_website_data_manager_clear(manager, WEBKIT_WEBSITE_DATA_ALL,
+                                          0, nullptr, nullptr, nullptr);
 }
 
 void WPEQtView::setUserAgent(const QString& userAgent)
