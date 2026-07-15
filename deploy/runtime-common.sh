@@ -428,6 +428,14 @@ atlantic_export_browser_env() {
     export WEBKIT_CHECKERBOARD_SETTLE_MS="${WEBKIT_CHECKERBOARD_SETTLE_MS:-200}"
     export WEBKIT_COVER_AREA_MULTIPLIER="${WEBKIT_COVER_AREA_MULTIPLIER:-2}"
 
+    # Drop a backgrounded tab's tiled-backing tiles so a hidden tab holds ~0 GPU
+    # tile memory instead of pinning its full cover (~1 GB measured). Rebuilt on
+    # show. Honoured by webkit-drop-tiles-when-hidden-env.patch. DEFAULT OFF
+    # (=0): freeing GPU while hidden needs a forced composite to land during the
+    # hide transition (compositor-timing-sensitive), so validate via A/B on
+    # device before flipping this on. Set to 1 to enable.
+    export WEBKIT_DROP_TILES_WHEN_HIDDEN="${WEBKIT_DROP_TILES_WHEN_HIDDEN:-0}"
+
     # ── Fling throttle: starve page work during fast scroll ──────────────────
     # Honoured by webkit-fling-throttle-env.patch. On main-thread-bound pages
     # (franceinfo/radiofrance: scroll <1fps, style resolution dominates) scroll-

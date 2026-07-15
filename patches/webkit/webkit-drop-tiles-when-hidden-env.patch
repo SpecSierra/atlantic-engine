@@ -1,0 +1,131 @@
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h
+@@ -22,6 +22,7 @@
+ #if USE(COORDINATED_GRAPHICS)
+ #include "FloatPoint.h"
+ #include "IntPoint.h"
++#include "PlatformExportMacros.h"
+ #include "IntPointHash.h"
+ #include "IntRect.h"
+ #include <wtf/Assertions.h>
+@@ -45,6 +46,17 @@
+ 
+     static constexpr int s_defaultCPUTileSize = 256;
+ 
++    // WEBKIT_DROP_TILES_WHEN_HIDDEN (default off): with one WebKitWebView per
++    // WebProcess, a backgrounded tab keeps its full tiled-backing cover
++    // resident (~1 GB of GPU tile textures measured on device) because the
++    // cover rect is computed purely from the visible rect and never considers
++    // page visibility. When the process's page is hidden, every backing store
++    // computes an empty cover rect so all tiles drop; they rebuild on show
++    // (resumePainting already issues a full setNeedsDisplay). Process-global
++    // because there is exactly one page per WebProcess here.
++    WEBCORE_EXPORT static bool dropTilesWhenHiddenEnabled();
++    WEBCORE_EXPORT static void setProcessPageHidden(bool);
++
+     const IntRect& coverRect() const { return m_coverRect; }
+ 
+     class Update {
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
+@@ -41,6 +41,7 @@
+     }();
+     return enabled;
+ }
++#include <atomic>
+ #include <wtf/MemoryPressureHandler.h>
+ #include <wtf/SystemTracing.h>
+ #include <wtf/TZoneMallocInlines.h>
+@@ -101,6 +102,34 @@
+     return enabled;
+ }
+ 
++// WEBKIT_DROP_TILES_WHEN_HIDDEN: drop this WebProcess's tiled-backing tiles
++// while its page is hidden (backgrounded tab), so a hidden tab holds ~0 GPU
++// tile memory instead of pinning its full cover (~1 GB measured). Rebuilt on
++// show. Default off — enabled per-build for A/B until device-validated (the
++// tiles only actually leave GPU once a composite runs while hidden).
++static std::atomic<bool> s_processPageHidden { false };
++
++bool CoordinatedBackingStoreProxy::dropTilesWhenHiddenEnabled()
++{
++    static bool enabled = [] {
++        const char* env = getenv("WEBKIT_DROP_TILES_WHEN_HIDDEN");
++        return env && *env && strcmp(env, "0");
++    }();
++    return enabled;
++}
++
++void CoordinatedBackingStoreProxy::setProcessPageHidden(bool hidden)
++{
++    s_processPageHidden.store(hidden, std::memory_order_relaxed);
++}
++
++// True when we should treat the page as having no tile cover at all.
++static bool shouldDropAllTilesNow()
++{
++    return CoordinatedBackingStoreProxy::dropTilesWhenHiddenEnabled()
++        && s_processPageHidden.load(std::memory_order_relaxed);
++}
++
+ // Aggressive checkerboard during fast scroll. The coordinated-graphics port
+ // always rasterizes at least the visible rect every time the viewport moves, so
+ // a fast fling pays the per-tile paint cost (serialized by gpu-sync glFinish) on
+@@ -429,7 +458,10 @@
+ 
+ void CoordinatedBackingStoreProxy::createOrDestroyTiles(const IntRect& unscaledVisibleRect, const IntRect& unscaledContentsRect, const IntSize& unscaledViewportSize, float contentsScale, int maxTextureSize, Damage& damage, Vector<uint32_t>& tilesToCreate, Vector<uint32_t>& tilesToRemove)
+ {
+-    float coverAreaMultiplier = MemoryPressureHandler::singleton().isUnderMemoryPressure() ? 1.0f : coverAreaMultiplierFromEnvironment();
++    // A hidden page (backgrounded tab) gets zero cover: multiplier 0 forces
++    // geometryChanged below (0 != prior) so tiles are recomputed and dropped.
++    float coverAreaMultiplier = shouldDropAllTilesNow() ? 0.0f
++        : (MemoryPressureHandler::singleton().isUnderMemoryPressure() ? 1.0f : coverAreaMultiplierFromEnvironment());
+     bool contentsScaleChanged = m_contentsScale != contentsScale;
+     m_contentsScale = contentsScale;
+ 
+@@ -755,6 +787,11 @@
+ 
+ std::pair<IntRect, IntRect> CoordinatedBackingStoreProxy::computeCoverAndKeepRect() const
+ {
++    // Hidden page: no cover and no keep, so every existing tile is dropped
++    // (nothing intersects an empty keepRect) and none are created.
++    if (shouldDropAllTilesNow())
++        return { IntRect { }, IntRect { } };
++
+     IntRect coverRect = m_visibleRect;
+     IntRect keepRect = m_visibleRect;
+ 
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/DrawingAreaCoordinatedGraphics.cpp
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/DrawingAreaCoordinatedGraphics.cpp
+@@ -37,6 +37,7 @@
+ #include "WebPageInlines.h"
+ #include "WebPreferencesKeys.h"
+ #include "WebProcess.h"
++#include <WebCore/CoordinatedBackingStoreProxy.h>
+ #include <WebCore/GraphicsContext.h>
+ #include <WebCore/LocalFrameInlines.h>
+ #include <WebCore/LocalFrameView.h>
+@@ -374,10 +375,21 @@
+ void DrawingAreaCoordinatedGraphics::activityStateDidChange(OptionSet<ActivityState> changed, ActivityStateChangeID, CompletionHandler<void()>&& completionHandler)
+ {
+     if (changed & ActivityState::IsVisible) {
+-        if (m_webPage->isVisible())
++        if (m_webPage->isVisible()) {
++            // Show: allow normal tile cover again, then repaint (resumePainting
++            // issues a full setNeedsDisplay so the dropped tiles rebuild).
++            CoordinatedBackingStoreProxy::setProcessPageHidden(false);
+             resumePainting();
+-        else
++        } else {
++            // Hide (backgrounded tab): mark the page hidden so every backing
++            // store computes an empty cover, then run one forced update while
++            // still able to composite — with empty cover this paints nothing
++            // but drops all tiles and frees their GPU memory — before pausing.
++            CoordinatedBackingStoreProxy::setProcessPageHidden(true);
++            if (m_layerTreeHost && CoordinatedBackingStoreProxy::dropTilesWhenHiddenEnabled())
++                updateRenderingWithForcedRepaint();
+             suspendPainting();
++        }
+     }
+     completionHandler();
+ }

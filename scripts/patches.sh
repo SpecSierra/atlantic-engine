@@ -437,6 +437,21 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # NOT fix the separate settle "blinking" - that's progressive image loads + flex reflow,
     # not the root repaint - and it risked increasing per-settle tile cost.)
     "patches/webkit/webkit-root-customprop-repaint-skip-env.patch"
+
+    # webkit-drop-tiles-when-hidden-env.patch: WEBKIT_DROP_TILES_WHEN_HIDDEN=1
+    # (default OFF, A/B) makes a backgrounded tab drop its tiled-backing tiles.
+    # Device-measured: a hidden tab pins ~1 GB of GPU tile textures forever (the
+    # cover rect in CoordinatedBackingStoreProxy is computed from the visible
+    # rect only and never considers page visibility; on hide WebKit merely
+    # suspendPainting()s). With one WebKitWebView per WebProcess we track a
+    # process-global "page hidden" flag: when set, every backing store computes
+    # an EMPTY cover rect so all tiles drop and none are created; on show they
+    # rebuild (resumePainting already issues setNeedsDisplay). DrawingArea forces
+    # one updateRenderingWithForcedRepaint() on hide (empty cover -> paints
+    # nothing, just drops tiles + frees GPU) before pausing. Default off until
+    # device-validated (freeing GPU requires that forced composite to land while
+    # hidden -- the deadlock-prone compositor-timing area, so A/B first).
+    "patches/webkit/webkit-drop-tiles-when-hidden-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(
