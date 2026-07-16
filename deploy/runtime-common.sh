@@ -498,8 +498,25 @@ atlantic_export_browser_env() {
     # bargain as APZ: scroll-linked JS/`scroll` events fire at main-thread cadence,
     # and newly-exposed content is painted only when the main thread runs (more
     # low-res tiles on slow pages instead of a freeze).
-    # OFF pending device A/B — set to 1 at launch to test. 0/unset = stock.
-    export WEBKIT_INDEPENDENT_SCROLL="${WEBKIT_INDEPENDENT_SCROLL:-0}"
+    #
+    # SHIPPED ON, device-verified user-validated (build 540, franceinfo). Three
+    # patches act on this one flag:
+    #   webkit-independent-scroll-env.patch          — scheduling: the scrolling
+    #     thread stops waiting on the main thread's rendering update.
+    #   webkit-scrolling-thread-display-link-env.patch — EventDispatcher keeps a
+    #     display-link observer of its own for the duration of a scroll.
+    #   webkit-scrolling-thread-tick-env.patch       — the one that mattered: a
+    #     16ms timer on the SCROLLING THREAD's own run loop drives its tick, so it
+    #     no longer has to be handed a clock by the main thread / UIProcess at all
+    #     (WEBKIT_INDEPENDENT_SCROLL_TICK_MS overrides the interval).
+    # Measured on franceinfo (single-instance foreground rig, automated flicks),
+    # off -> on: scroll offsets applied on the scrolling thread 5.1/s -> 28.7/s
+    # (thr=M 20 -> 9), AsyncScrolling composites requested 3/s -> 26/s, composites
+    # 5.5/s -> 8.0/s, and composite gap p95 1438ms -> 111ms — a 13x improvement in
+    # frame consistency, i.e. the page still repaints slowly but the scroll keeps
+    # moving over the tiles that already exist instead of freezing.
+    # 0 = stock (the A/B switch).
+    export WEBKIT_INDEPENDENT_SCROLL="${WEBKIT_INDEPENDENT_SCROLL:-1}"
 
     # Honoured by webkit-root-customprop-repaint-skip-env.patch. SHIPPED ON: skip the
     # full-page view().repaintRootContents() in RenderBox::styleWillChange when a
