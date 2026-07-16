@@ -86,9 +86,17 @@ for lib in \
     libjpeg.so.8.2.2 \
     libgbm.so.1.0.0 \
     libenchant-2.so.2.3.3 \
-    libhunspell-1.7.so.0.0.1; do
+    libhunspell-1.7.so.0.0.1 \
+    libdav1d.so.7.0.0; do
     cp "${UBUNTU_LIBS}/${lib}" "${COMPAT_BUILD}/${lib}"
 done
+
+# libavif (decode-only, dav1d) built from source into WPE_PREFIX by build-engine.sh
+# step [8]. WebKit links libavif.so.16; at runtime it pulls libdav1d.so.7 (copied
+# above) — both resolve from wpe-compat via the browser's LD_LIBRARY_PATH. Copy the
+# real versioned file; the soname symlinks are created in build-rpms-native.sh.
+avif_real="$(readlink -f "${WPE_PREFIX}/lib/libavif.so")"
+cp "${avif_real}" "${COMPAT_BUILD}/$(basename "${avif_real}")"
 
 # Spellcheck: enchant loads its hunspell backend from the Ubuntu-baked module
 # path (/usr/lib/aarch64-linux-gnu/enchant-2), so the rpm installs it there on

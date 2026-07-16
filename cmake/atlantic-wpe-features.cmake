@@ -81,5 +81,12 @@ set(USE_LIBBACKTRACE OFF CACHE BOOL "" FORCE)
 set(USE_LIBHYPHEN OFF CACHE BOOL "" FORCE)
 set(USE_OPENJPEG OFF CACHE BOOL "" FORCE)
 set(USE_WOFF2 ON CACHE BOOL "" FORCE)
-set(USE_AVIF OFF CACHE BOOL "" FORCE)
+# AVIF image decoding. libavif is built decode-only (dav1d) by build-engine.sh
+# and installed into WPE_PREFIX, where WebKit's FindAVIF picks it up via the
+# PKG_CONFIG_PATH set in build-webkit.sh. Runtime libs (libavif + libdav1d) are
+# bundled into wpe-sfos-compat. NOTE: AVIF decode is software (dav1d) — no HW
+# AVIF decode on this device — so it is lighter on bandwidth/memory but heavier
+# on CPU per image than JPEG. Primarily a compatibility fix (render AVIF images
+# that currently fail) rather than a scroll-perf win.
+set(USE_AVIF ON CACHE BOOL "" FORCE)
 set(USE_SYSTEM_SYSPROF_CAPTURE OFF CACHE BOOL "" FORCE)

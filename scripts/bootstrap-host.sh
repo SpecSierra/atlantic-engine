@@ -140,6 +140,7 @@ apt-get install -y \
     libharfbuzz-dev libfontconfig1-dev libfreetype6-dev \
     libicu-dev libsqlite3-dev libxml2-dev libxslt1-dev \
     libpng-dev libjpeg-dev libwebp-dev zlib1g-dev \
+    libdav1d-dev \
     libdrm-dev libgbm-dev libcap-dev \
     libsoup-3.0-dev libsystemd-dev \
     libgstreamer-plugins-bad1.0-dev libnice-dev hunspell-en-us libenchant-2-dev \

@@ -370,6 +370,14 @@ maybe_patch_glibc_versions "${S}/usr/lib64/gstreamer-1.0/libgstdroidcamdevicepro
     ln -sfn libgbm.so.1.0.0         libgbm.so.1
     ln -sfn libenchant-2.so.2.3.3   libenchant-2.so.2
     ln -sfn libhunspell-1.7.so.0.0.1 libhunspell-1.7.so.0
+    ln -sfn libdav1d.so.7.0.0       libdav1d.so.7
+    # libavif is source-built, so derive its soname from the real file rather
+    # than hardcode the version (libavif.so.16.0.4 -> libavif.so.16 + libavif.so).
+    avif_real="$(ls libavif.so.*.*.* 2>/dev/null | head -1)"
+    if [ -n "${avif_real}" ]; then
+        ln -sfn "${avif_real}" "${avif_real%.*.*}"   # -> libavif.so.16
+        ln -sfn "${avif_real}" libavif.so
+    fi
 )
 
 # Spellcheck support files: enchant loads its backend from the Ubuntu-baked
