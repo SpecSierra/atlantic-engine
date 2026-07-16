@@ -158,7 +158,39 @@ def launch(url: str | None = None, *, inspector: bool = True,
     )
     time.sleep(wait)
     if url:
+        # Wait for the name rather than firing blind: dbus-send to an activatable
+        # name that nobody owns yet spawns a second browser (see wait_for_ui_name).
+        if not wait_for_ui_name():
+            raise DeviceError(
+                "browser never claimed org.atlantic.browser.ui — refusing to "
+                "openUrl (it would D-Bus-activate a second instance)")
         open_url(url)
+
+
+def wait_for_ui_name(timeout: float = 25.0) -> bool:
+    """Block until the running browser owns org.atlantic.browser.ui on the bus.
+
+    MUST be called before open_url().  org.atlantic.browser.ui is D-Bus
+    ACTIVATABLE (/usr/share/dbus-1/services/org.atlantic.browser.ui.service), so
+    a dbus-send to it before the freshly-launched browser has claimed the name
+    activates a SECOND browser instance: the first one is left minimized while
+    the new one loads the page.  Two browsers then compete for CPU/GPU and one of
+    them is suspended, which silently invalidates any measurement taken
+    afterwards.  Polling NameHasOwner (rather than sleeping a fixed few seconds)
+    keeps the launch to exactly one instance.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        r = ssh(
+            "dbus-send --session --print-reply --dest=org.freedesktop.DBus "
+            "/org/freedesktop/DBus org.freedesktop.DBus.NameHasOwner "
+            "string:org.atlantic.browser.ui",
+            session_env=True,
+        )
+        if "true" in r.stdout:
+            return True
+        time.sleep(0.5)
+    return False
 
 
 def open_url(url: str) -> subprocess.CompletedProcess:

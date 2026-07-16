@@ -1,0 +1,122 @@
+--- a/Source/WebCore/page/scrolling/ThreadedScrollingTree.h	2026-02-23 14:40:55.459300500 +0000
++++ b/Source/WebCore/page/scrolling/ThreadedScrollingTree.h	2026-07-16 15:24:49.660493946 +0000
+@@ -107,6 +107,11 @@
+     void didCommitTreeOnScrollingThread() WTF_REQUIRES_LOCK(m_treeLock);
+ 
+     void displayDidRefreshOnScrollingThread();
++
++    // WEBKIT_INDEPENDENT_SCROLL: scrolling-thread-owned tick. See the comment on
++    // ensureIndependentTick() in the implementation.
++    void ensureIndependentTick();
++    void independentTickFired();
+     void waitForRenderingUpdateCompletionOrTimeout() WTF_REQUIRES_LOCK(m_treeLock);
+ 
+     bool canUpdateLayersOnScrollingThread() const WTF_REQUIRES_LOCK(m_treeLock);
+@@ -144,6 +149,9 @@
+ 
+     // Dynamically allocated because it has to use the ScrollingThread's runloop.
+     std::unique_ptr<RunLoop::Timer> m_delayedRenderingUpdateDetectionTimer WTF_GUARDED_BY_LOCK(m_treeLock);
++    // WEBKIT_INDEPENDENT_SCROLL: created, started, stopped and fired only on the
++    // scrolling thread (its own run loop), so it needs no lock.
++    std::unique_ptr<RunLoop::Timer> m_independentTickTimer;
+ 
+     HashMap<ScrollingNodeID, RequestedScrollData> m_nodesWithPendingScrollAnimations WTF_GUARDED_BY_LOCK(m_treeLock);
+     HashMap<ScrollingNodeID, RequestedKeyboardScrollData> m_nodesWithPendingKeyboardScrollAnimations WTF_GUARDED_BY_LOCK(m_treeLock);
+--- a/Source/WebCore/page/scrolling/ThreadedScrollingTree.cpp	2026-07-16 14:39:08.136842912 +0000
++++ b/Source/WebCore/page/scrolling/ThreadedScrollingTree.cpp	2026-07-16 15:24:49.661493951 +0000
+@@ -310,6 +310,11 @@
+ 
+     LOG_WITH_STREAM(Scrolling, stream << "ThreadedScrollingTree::scrollingTreeNodeDidScroll " << node.scrollingNodeID() << " to " << scrollPosition << " triggering main thread rendering update");
+ 
++    // Independent scrolling: we are on the scrolling thread and actually
++    // scrolling, so make sure our own tick is running (see ensureIndependentTick).
++    if (independentScrollEnabled() && ScrollingThread::isCurrentThread())
++        ensureIndependentTick();
++
+     addPendingScrollUpdate(WTF::move(scrollUpdate));
+ 
+     auto deferrer = ScrollingTreeWheelEventTestMonitorCompletionDeferrer { *this, node.scrollingNodeID(), WheelEventTestMonitor::DeferReason::ScrollingThreadSyncNeeded };
+@@ -558,6 +563,83 @@
+     m_state = SynchronizationState::Desynchronized;
+ }
+ 
++// WEBKIT_INDEPENDENT_SCROLL: give the scrolling thread a tick of its own.
++//
++// displayDidRefreshOnScrollingThread() -- which services scroll animations,
++// commits layer positions and requests the AsyncScrolling composite -- is the
++// scrolling thread's whole heartbeat, and everything that delivers it is owned by
++// somebody else:
++//
++//   - the tick only reaches EventDispatcher when the UIProcess has decided the
++//     client wants full-speed updates (DisplayLinkProcessProxyClient), which it
++//     derives from wheel-event hysteresis in WebPageProxy;
++//   - the display link's only observer is normally the main thread's
++//     WebDisplayRefreshMonitor, which stops it after one unscheduled fire;
++//   - ScrollingTree::displayDidRefresh() then drops the tick entirely unless
++//     hasRecentActivity().
++//
++// Device-measured on franceinfo, with both the scheduling patch and an
++// EventDispatcher-owned display-link observer in place: the scrolling thread still
++// only ticked ~5-19/s instead of 60, AsyncScrolling composites were requested
++// ~10/s, and a 10s freeze contained exactly ONE scrollapply -- during a fling,
++// when no input is needed and the scroll should be pure animation, the ticks dry
++// up. Forcing a free-running 60Hz vblank (WEBKIT_FORCE_VBLANK_TIMER=1) made it
++// worse (5.2/s, and layer positions went back to being applied on the main
++// thread), which rules the clock source out: the problem is that the scrolling
++// thread has to be *given* a tick by machinery the main thread and UIProcess
++// gate.
++//
++// So stop asking. While a scroll is live, run a plain repeating timer on the
++// scrolling thread's own run loop and drive displayDidRefreshOnScrollingThread()
++// from it. No display link, no IPC routing, no main thread. The timer is armed
++// whenever the scrolling thread actually scrolls (scrollingTreeNodeDidScroll) and
++// disarms itself once hasRecentActivity() goes false (no wheel event within 50ms
++// and no running scroll animation), so an idle page costs nothing. A fling is
++// self-sustaining: each tick services the animation, which scrolls, which re-arms.
++//
++// Deliberately not vsync-aligned -- the compositor still throttles itself on
++// frameComplete, so this sets the pace of scroll offsets, not of buffer swaps.
++// WEBKIT_INDEPENDENT_SCROLL_TICK_MS overrides the interval (default 16ms).
++static Seconds independentTickInterval()
++{
++    static double ms = [] {
++        if (const char* env = getenv("WEBKIT_INDEPENDENT_SCROLL_TICK_MS")) {
++            double v = atof(env);
++            if (v >= 1 && v <= 100)
++                return v;
++        }
++        return 16.0;
++    }();
++    return Seconds::fromMilliseconds(ms);
++}
++
++void ThreadedScrollingTree::ensureIndependentTick()
++{
++    ASSERT(ScrollingThread::isCurrentThread());
++
++    if (!m_independentTickTimer) {
++        m_independentTickTimer = makeUnique<RunLoop::Timer>(RunLoop::currentSingleton(), "ThreadedScrollingTree::IndependentTickTimer"_s, this, &ThreadedScrollingTree::independentTickFired);
++    }
++
++    if (!m_independentTickTimer->isActive())
++        m_independentTickTimer->startRepeating(independentTickInterval());
++}
++
++void ThreadedScrollingTree::independentTickFired()
++{
++    ASSERT(ScrollingThread::isCurrentThread());
++
++    // Disarm once the gesture and any fling have finished. Never delete the timer
++    // from inside its own callback -- just stop it and let ensureIndependentTick()
++    // restart it on the next scroll.
++    if (!hasRecentActivity()) {
++        m_independentTickTimer->stop();
++        return;
++    }
++
++    displayDidRefreshOnScrollingThread();
++}
++
+ void ThreadedScrollingTree::displayDidRefreshOnScrollingThread()
+ {
+     TraceScope tracingScope(ScrollingThreadDisplayDidRefreshStart, ScrollingThreadDisplayDidRefreshEnd, displayID());
