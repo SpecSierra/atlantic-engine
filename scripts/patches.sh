@@ -340,6 +340,21 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # Must apply AFTER webkit-lowres-tiles-during-scroll-env.patch (and after the
     # scrolltier-log diagnostic, contexts overlap in SkiaPaintingEngine.cpp).
     "patches/webkit/webkit-lowres-tiles-cpu-path.patch"
+    # webkit-fling-throttle-env.patch: fling degradation for main-thread-bound
+    # pages (franceinfo/radiofrance scroll <1fps, 44% style resolution). While the
+    # scrolling thread reports a fast fling (velocity sampled in
+    # ScrollingTree::scrollingTreeNodeDidScroll, settle window like the
+    # checkerboard patch), LayerTreeHost caps main-thread rendering updates to one
+    # per WEBKIT_FLING_THROTTLE_MS. Page::updateRendering is where scroll DOM
+    # events, rAF, IntersectionObserver, style, layout and paint all run, so this
+    # one gate starves scroll-triggered page work during the fling; the compositor
+    # keeps scrolling already-painted tiles. Deliberately lossy (lazy-load/sticky
+    # JS lags until settle). SAFE vs the builds-465..471 deadlock: the repeating
+    # RenderingUpdate observer is never invalidated/deferred — the gate just
+    # early-returns and leaves it polling, plus a one-shot wakeup timer for quiet
+    # loops. Unset/0 = bit-for-bit stock scheduling. Must apply AFTER the
+    # composite-scroll-sync patches (contexts overlap in LayerTreeHost.cpp).
+    "patches/webkit/webkit-fling-throttle-env.patch"
     # webkit-force-async-scroll-env.patch: WEBKIT_FORCE_ASYNC_SCROLL — device-
     # root-caused (franceinfo, build 491): the page's non-composited fixed/sticky
     # elements set SynchronousScrollingReason::HasNonLayerViewportConstrainedObjects,
@@ -450,7 +465,7 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # along the scroll direction (leading edge first) and stops at budget
     # exhaustion, so fill-in reads as a progressive wave, not random squares.
     # No-op when the budget is 0. Must apply AFTER tile-upload-budget-env and
-    # (contexts overlap in CoordinatedBackingStoreTile.* and
+    # fling-throttle-env (contexts overlap in CoordinatedBackingStoreTile.* and
     # ScrollingTree.*).
     "patches/webkit/webkit-tile-upload-scroll-gate.patch"
     # webkit-tile-upload-nonblocking-settle.patch: the scroll gate's settled
@@ -480,7 +495,7 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # changed instead of redrawing the whole scene (WEBKIT_DAMAGE_COMPOSITING,
     # default OFF in runtime-common.sh). Only touches LayerTreeHost.cpp; must
     # apply AFTER every other patch that touches that file (raster-on-compositor,
-    # the composite-scroll-sync trio) so its context matches the
+    # the composite-scroll-sync trio, fling-throttle) so its context matches the
     # fully-patched tree.
     "patches/webkit/webkit-damage-limited-composite-env.patch"
 
