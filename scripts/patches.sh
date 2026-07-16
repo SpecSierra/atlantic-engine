@@ -392,6 +392,31 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # (more low-res/checkerboard on slow pages instead of a freeze) — pairs with
     # the directional-coverage / lowres-tiles patches. Unset/0 = stock.
     "patches/webkit/webkit-independent-scroll-env.patch"
+    # webkit-scrolling-thread-display-link-env.patch: the other half of
+    # WEBKIT_INDEPENDENT_SCROLL, and the one that makes it actually do anything.
+    # The scheduling half above lets the scrolling thread commit layer positions
+    # without waiting for the main thread, but the scrolling thread's only
+    # HEARTBEAT (displayDidRefresh -> displayDidRefreshOnScrollingThread ->
+    # applyLayerPositions -> requestComposition(AsyncScrolling)) is still owned by
+    # the main thread, so independence was impossible by construction: the only
+    # display-link observer ever registered on WPE is the main thread's
+    # WebDisplayRefreshMonitor (EventDispatcher::startDisplayDidRefreshCallbacks
+    # exists but is called only by MomentumEventDispatcher, which is not ENABLE()d
+    # for WPE), DisplayRefreshMonitor drops ticks while !isPreviousFrameDone() and
+    # stops the mechanism after ONE unscheduled fire (m_maxUnscheduledFireCount=0),
+    # and DisplayLink::notifyObserversDisplayDidRefresh skips any client whose
+    # observer list is empty. So a stalled main thread (franceinfo,
+    # m_isWaitingForRenderer stuck — device-measured 59/59 sched calls) kills the
+    # display link and with it the scrolling thread's tick: scroll composites
+    # (ftrace reqcomp r=8) at 7.3/s and scrollapply ~11/s instead of 60, 1.3s
+    # gaps, compositor thread ~84% idle. The vblank source is fine (the timer
+    # fallback alone is 60fps) — it is the observer bookkeeping that dies. This
+    # patch gives EventDispatcher its own observer, held while the scrolling tree
+    # reports hasRecentActivity() and released as soon as scrolling settles (an
+    # idle page costs nothing). Touches EventDispatcher.{h,cpp}; relies on
+    # <cstring>/<cstdlib> added by the force-async-scroll patch above, so it must
+    # apply after it. Unset/0 = stock.
+    "patches/webkit/webkit-scrolling-thread-display-link-env.patch"
     # webkit-tile-upload-budget-env.patch: WEBKIT_TILE_UPLOAD_BUDGET_MB — cap the
     # tile work one composite may do. Device-root-caused (build 495): after each
     # ~1s main-thread pass commits screenfuls of CPU-painted tiles, the next
