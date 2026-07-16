@@ -68,6 +68,14 @@ set(ENABLE_MEDIA_SOURCE ON CACHE BOOL "" FORCE)
 # Enable adaptive bitrate streaming support
 set(ENABLE_VIDEO_TRACK ON CACHE BOOL "" FORCE)
 
+# Encrypted Media Extensions (EME v3) API. This compiles in the EME JS surface
+# and the software ClearKey key system only — ENABLE_THUNDER stays OFF, so there
+# is NO Widevine/PlayReady CDM (real DRM would need the Thunder/OpenCDM stack +
+# a proprietary libwidevinecdm.so, which is L3-only and not redistributable).
+# Purpose here is API presence: sites that feature-detect EME can negotiate/
+# degrade instead of throwing. Runtime pref is enabled in qt5-plugin WPEQtView.
+set(ENABLE_ENCRYPTED_MEDIA ON CACHE BOOL "" FORCE)
+
 set(USE_LCMS OFF CACHE BOOL "" FORCE)
 set(USE_LIBBACKTRACE OFF CACHE BOOL "" FORCE)
 set(USE_LIBHYPHEN OFF CACHE BOOL "" FORCE)

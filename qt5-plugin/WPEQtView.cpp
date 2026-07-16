@@ -211,8 +211,15 @@ void WPEQtView::createWebView()
         }
     }
 
+    // enable-encrypted-media: EME v3 API (compiled in via ENABLE_ENCRYPTED_MEDIA).
+    // WPE defaults the runtime pref off (UnifiedWebPreferences: WPE=false), so it
+    // must be turned on explicitly. Without a Thunder/OpenCDM backend this only
+    // provides the software ClearKey key system — no Widevine/PlayReady — but it
+    // makes navigator.requestMediaKeySystemAccess exist so players can feature-
+    // detect EME and degrade gracefully instead of hard-failing.
     auto* settings = webkit_settings_new_with_settings("enable-developer-extras", TRUE,
-        "enable-webgl", TRUE, "enable-mediasource", TRUE, nullptr);
+        "enable-webgl", TRUE, "enable-mediasource", TRUE,
+        "enable-encrypted-media", TRUE, nullptr);
     // backend.release() may only be consumed once, so build the view backend value
     // up front and reuse it across the private/persistent construction branches.
     WebKitWebViewBackend* viewBackend = webkit_web_view_backend_new(
