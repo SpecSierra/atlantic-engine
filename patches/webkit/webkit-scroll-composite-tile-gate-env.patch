@@ -1,0 +1,55 @@
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp	2026-07-16 13:02:25.595055367 +0000
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp	2026-07-16 14:01:08.646104125 +0000
+@@ -196,6 +196,39 @@
+     m_renderTimer.stop();
+ }
+ 
++// WEBKIT_INDEPENDENT_SCROLL (see ThreadedScrollingTree.cpp for the main half):
++// let a scroll composite proceed while the compositor is waiting for tiles.
++//
++// isOnlyRenderingUpdatePendingAndWaitingForTiles() below encodes the rule that
++// *only* a RenderingUpdate-reason composite should be held back for tiles -- an
++// AsyncScrolling composite may go ahead and re-composite the committed scene with
++// whatever tiles it already has. resume() (:227) and frameComplete() (:632) both
++// honour that rule, but scheduleUpdateLocked()'s State::Idle branch does not: it
++// tests the raw m_state.isWaitingForTiles, so it parks the composite in
++// State::Scheduled and never starts the render timer, whatever the reason.
++//
++// That is the whole ballgame on a page like franceinfo, which repaints the
++// document every scroll frame: didChangeTiles() only clears isWaitingForTiles
++// once pendingTiles() drains to zero (:260), so under a continuous repaint storm
++// it never clears, and scroll composites are starved while the compositor thread
++// sits ~84% idle (device-measured: main thread 92% pinned, compositor 16%,
++// 6.3 composites/s, and every ftrace freeze classified TILES PAINTING even though
++// the scrolling thread was committing offsets independently, scrollapply thr=S
++// 197 vs thr=M 37).
++//
++// With this on, the Idle branch uses the same reason-aware predicate as its two
++// siblings, so scrolling composites keep flowing against already-committed tiles
++// while the main thread repaints. Lossy in the intended way: those frames show
++// stale/low-res tiles for newly-exposed content instead of freezing.
++static bool independentScrollEnabled()
++{
++    static bool enabled = [] {
++        const char* env = getenv("WEBKIT_INDEPENDENT_SCROLL");
++        return env && *env && strcmp(env, "0");
++    }();
++    return enabled;
++}
++
+ bool ThreadedCompositor::isOnlyRenderingUpdatePendingAndWaitingForTiles() const
+ {
+     ASSERT(m_state.lock.isHeld());
+@@ -595,7 +628,11 @@
+     switch (m_state.state) {
+     case State::Idle:
+         m_state.state = State::Scheduled;
+-        if (!m_state.isWaitingForTiles && !m_suspendedCount.load())
++        // Independent scrolling: match resume()/frameComplete() and only hold the
++        // composite back when the sole pending reason is a RenderingUpdate. A
++        // scroll composite must not wait for tiles that a repainting main thread
++        // may never finish.
++        if ((independentScrollEnabled() ? !isOnlyRenderingUpdatePendingAndWaitingForTiles() : !m_state.isWaitingForTiles) && !m_suspendedCount.load())
+             startRenderTimer();
+         break;
+     case State::Scheduled:

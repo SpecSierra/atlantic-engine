@@ -84,6 +84,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("url", nargs="?")
     sp.add_argument("--no-inspector", action="store_true")
     sp.add_argument("--gst-debug", help="GST_DEBUG spec, e.g. 'webkit*:4,droid*:5'")
+    sp.add_argument("--env", action="append", metavar="KEY=VAL",
+                    help="extra engine env, repeatable "
+                         "(e.g. --env WEBKIT_INDEPENDENT_SCROLL=1)")
     sp.set_defaults(func=misc.launch)
 
     sp = sub.add_parser("open", help="navigate the running browser")

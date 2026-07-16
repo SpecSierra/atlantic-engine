@@ -7,11 +7,25 @@ import json
 from .. import cdp, device, ui
 
 
+def _parse_env(pairs):
+    """--env KEY=VAL … → dict, for A/B-ing the engine's env flags."""
+    env = {}
+    for pair in pairs or []:
+        key, sep, value = pair.partition("=")
+        if not sep or not key:
+            raise SystemExit(f"--env expects KEY=VALUE, got {pair!r}")
+        env[key] = value
+    return env
+
+
 def launch(args):
     ui.heading("launch")
     ui.info("(re)starting the browser with the remote inspector enabled…")
+    extra_env = _parse_env(getattr(args, "env", None))
+    for k, v in extra_env.items():
+        ui.info(f"env {k}={v}")
     device.launch(args.url, inspector=not args.no_inspector,
-                  gst_debug=args.gst_debug)
+                  gst_debug=args.gst_debug, extra_env=extra_env)
     procs = device.processes()
     if procs["ui"]:
         ui.ok(f"UI pid {procs['ui']}, WebProcess {procs['web']}")
