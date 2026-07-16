@@ -109,6 +109,19 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # All footprint-bounding purges (decoded images, bfcache, caches, GC) are kept.
     # WEBKIT_PURGE_STYLE_ON_MEMORY_PRESSURE=1 restores upstream behaviour.
     "patches/webkit/webkit-preserve-style-resolver-on-memory-pressure.patch"
+    # webkit-skia-image-subsampling.patch: enable image subsampling on the
+    # Skia/WPE port (upstream gates it to Apple/CG only). Images displayed
+    # smaller than their natural size now decode at 1/2, 1/4 or 1/8 resolution
+    # (JPEG via libjpeg IDCT scaling), cutting BOTH decode CPU and decoded-bitmap
+    # RAM — the RAM-safe way to speed up image-heavy pages on this ~3.5 GB device
+    # (raising the decoded-image cache / memory threshold is not an option: it
+    # OOMs). Un-gates BitmapImageDescriptor::subsamplingLevelForScaleFactor for
+    # USE(SKIA), threads the level through ScalableImageDecoder into a scaled
+    # JPEG decode, and lowers the "min area worth subsampling" from Apple's 5 MP
+    # to ~1 MP (tunable via WEBKIT_IMAGE_SUBSAMPLE_MIN_AREA) so 1-3 MP feed photos
+    # — the actual decode-cost offenders — are covered. Non-JPEG decoders opt out
+    # via supportsSubsampling() and stay full-resolution (WebP/PNG = follow-up).
+    "patches/webkit/webkit-skia-image-subsampling.patch"
     "patches/webkit/webkit-renderbox-isnan.patch"
     "patches/webkit/webkit-shapeoutside-isnan.patch"
     # webkit-gpu-process-by-default-wpe.patch: DISABLED. It hard-enables
