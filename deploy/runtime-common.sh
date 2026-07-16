@@ -447,7 +447,25 @@ atlantic_export_browser_env() {
     # scrolling already-painted tiles at full rate and the page catches up on
     # settle. Deliberately lossy: lazy-load/sticky-header JS lags during the fling.
     # 0/unset = fully disabled (stock scheduling) — the A/B switch. 200 = 5Hz.
-    export WEBKIT_FLING_THROTTLE_MS="${WEBKIT_FLING_THROTTLE_MS:-400}"
+    #
+    # SHIPPED OFF since WEBKIT_INDEPENDENT_SCROLL: this whole mechanism exists only
+    # because main-thread work used to sit ON the scroll path. It no longer does —
+    # the scrolling thread has its own tick and commits scroll offsets and
+    # AsyncScrolling composites without the main thread — so throttling the main
+    # thread buys nothing and only costs page freshness during a fling. Device A/B
+    # on franceinfo (build 540, single-instance foreground rig, identical automated
+    # flicks): 400 -> composite 8.9/s, gap p95 156.9ms, worst 2913ms, scrollapply
+    # thr=S 525; 0 -> composite 9.7/s, gap p95 129.5ms, worst 3501ms, thr=S 551.
+    # Neutral-to-better without it.
+    #
+    # The patch itself is kept (not deleted) purely for patch-stack reasons:
+    # webkit-tile-upload-scroll-gate.patch carries fling-throttle's added lines
+    # (flingThrottleEnabled()/noteScrollForFlingThrottle, m_flingThrottleSampleTime,
+    # m_flingThrottleActiveUntilSeconds) as unchanged CONTEXT, so dropping
+    # fling-throttle from scripts/patches.sh makes scroll-gate fail to apply (CI
+    # run 29512769122). Deleting it for real needs scroll-gate regenerated against
+    # a fling-free tree. Setting it to 0 here is bit-for-bit the same at runtime.
+    export WEBKIT_FLING_THROTTLE_MS="${WEBKIT_FLING_THROTTLE_MS:-0}"
     export WEBKIT_FLING_THROTTLE_SPEED="${WEBKIT_FLING_THROTTLE_SPEED:-400}"
     export WEBKIT_FLING_THROTTLE_SETTLE_MS="${WEBKIT_FLING_THROTTLE_SETTLE_MS:-300}"
 
