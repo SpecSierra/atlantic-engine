@@ -300,7 +300,22 @@ void WPEQtView::createWebView()
                 || !g_strcmp0(identifier, "HiddenPageCSSAnimationSuspension")
                 // WebRTC: compiled in (GstWebRTC) but the runtime prefs default off.
                 || !g_strcmp0(identifier, "PeerConnection")
-                || !g_strcmp0(identifier, "MediaDevices")) {
+                || !g_strcmp0(identifier, "MediaDevices")
+                // HTML5 form input types. WPE defaults every one of these runtime
+                // prefs OFF (unlike GTK/Cocoa/iOS), so <input type=date|month|week|
+                // time|datetime-local|color> silently degrade to type=text. There
+                // is no dedicated enable-* GObject property for them, so flip them
+                // here through the feature list (identifiers are the pref names with
+                // the trailing "Enabled" stripped). This restores API/type presence
+                // for feature detection; the date/time fields render as editable
+                // component fields and color as a swatch (no native calendar/color
+                // picker chrome on this port).
+                || !g_strcmp0(identifier, "InputTypeDate")
+                || !g_strcmp0(identifier, "InputTypeDateTimeLocal")
+                || !g_strcmp0(identifier, "InputTypeMonth")
+                || !g_strcmp0(identifier, "InputTypeWeek")
+                || !g_strcmp0(identifier, "InputTypeTime")
+                || !g_strcmp0(identifier, "InputTypeColor")) {
                 webkit_settings_set_feature_enabled(attachedSettings, feature, TRUE);
                 qDebug() << "[WPE-FEAT]" << identifier << "set, readback="
                          << webkit_settings_get_feature_enabled(attachedSettings, feature);
