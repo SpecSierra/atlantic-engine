@@ -467,6 +467,22 @@ atlantic_export_browser_env() {
     # pinning perfectly. 0/unset = stock (the A/B switch).
     export WEBKIT_FORCE_ASYNC_SCROLL="${WEBKIT_FORCE_ASYNC_SCROLL:-1}"
 
+    # Honoured by webkit-independent-scroll-env.patch. Fully separate scrolling
+    # from the main-thread rendering update (Gecko/APZ, like the EmbedLite port).
+    # force-async-scroll above stops the main thread from *vetoing* async scroll;
+    # this stops it from *pacing* it: upstream makes the scrolling thread wait up
+    # to half a frame for the main thread's rendering update on every refresh and
+    # only self-commits layer positions when that times out. With this on, the
+    # scrolling thread commits offsets and requests an AsyncScrolling composite on
+    # every refresh unconditionally, and the willStartRenderingUpdate handshake
+    # (main-thread BinarySemaphore + scrolling-thread condition wait) is skipped —
+    # so a slow main thread can no longer drag or freeze the scroll. Lossy, same
+    # bargain as APZ: scroll-linked JS/`scroll` events fire at main-thread cadence,
+    # and newly-exposed content is painted only when the main thread runs (more
+    # low-res tiles on slow pages instead of a freeze).
+    # OFF pending device A/B — set to 1 at launch to test. 0/unset = stock.
+    export WEBKIT_INDEPENDENT_SCROLL="${WEBKIT_INDEPENDENT_SCROLL:-0}"
+
     # Honoured by webkit-root-customprop-repaint-skip-env.patch. SHIPPED ON: skip the
     # full-page view().repaintRootContents() in RenderBox::styleWillChange when a
     # <html>/<body> style change is a CSS custom property. franceinfo updates :root

@@ -368,6 +368,30 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # choke point; lossy: affected fixed/sticky elements lag at main-thread cadence
     # during scroll. Unset/0 = stock. Pairs with the fling throttle above.
     "patches/webkit/webkit-force-async-scroll-env.patch"
+    # webkit-independent-scroll-env.patch: WEBKIT_INDEPENDENT_SCROLL — fully
+    # separate scrolling from the main-thread rendering update (Gecko/APZ, i.e.
+    # what the EmbedLite port does). Upstream is a *conditional* desync: on every
+    # display refresh the scrolling thread blocks on m_stateCondition for up to
+    # half a frame waiting for the main thread's rendering update, and only when
+    # that times out may it write scroll offsets into the compositor scene itself
+    # (SynchronizationState::Desynchronized). So every scroll frame pays a
+    # main-thread latency tax and a merely-slow main thread drags the scroll with
+    # it. The off-main-thread path already exists and is exercised (that timeout
+    # fallback); this flag makes it the default: (1) the scrolling thread applies
+    # layer positions + requests an AsyncScrolling composite on EVERY refresh, not
+    # only when m_state != Idle; (2) willStartRenderingUpdate stops round-tripping
+    # through the scrolling thread (no main-thread BinarySemaphore, no half-frame
+    # m_stateCondition wait); (3) sync-scrolling reasons stop vetoing
+    # canUpdateLayersOnScrollingThread — force-async-scroll above already accepts
+    # that trade-off at the dispatch choke point. Nothing in the compositor needs
+    # the main thread to recomposite a committed scene: requestComposition(
+    # AsyncScrolling) reaches renderLayerTree with no main-thread hop, and
+    # m_isWaitingForRenderer only gates RenderingUpdate-reason composites. Lossy,
+    # same bargain as APZ: scroll-linked JS/`scroll` events fire at main-thread
+    # cadence, and newly-exposed content is painted only once the main thread runs
+    # (more low-res/checkerboard on slow pages instead of a freeze) — pairs with
+    # the directional-coverage / lowres-tiles patches. Unset/0 = stock.
+    "patches/webkit/webkit-independent-scroll-env.patch"
     # webkit-tile-upload-budget-env.patch: WEBKIT_TILE_UPLOAD_BUDGET_MB — cap the
     # tile work one composite may do. Device-root-caused (build 495): after each
     # ~1s main-thread pass commits screenfuls of CPU-painted tiles, the next
