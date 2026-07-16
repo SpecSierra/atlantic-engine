@@ -465,28 +465,6 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # touching it.
     "patches/webkit/webkit-frame-trace-env.patch"
 
-    # webkit-scroll-composite-tile-gate-env.patch: second half of
-    # WEBKIT_INDEPENDENT_SCROLL (first half is webkit-independent-scroll-env.patch
-    # on ThreadedScrollingTree). Device-measured on franceinfo with the first half
-    # on: the scrolling thread WAS committing offsets independently (ftrace
-    # scrollapply thr=S 197 vs thr=M 37) yet the screen still froze — all 14 ftrace
-    # freezes classified TILES PAINTING, 6.3 composites/s, with the main thread
-    # pinned at 92% CPU while the compositor thread sat at 16%. The compositor was
-    # not busy, it was BLOCKED: scheduleUpdateLocked()'s State::Idle branch tests
-    # the raw m_state.isWaitingForTiles, so it parks the composite in
-    # State::Scheduled and never starts the render timer regardless of reason —
-    # even for AsyncScrolling. Its two siblings, resume() and frameComplete(), use
-    # the reason-aware isOnlyRenderingUpdatePendingAndWaitingForTiles() instead;
-    # the Idle branch is simply inconsistent with them. franceinfo exposes it
-    # because didChangeTiles() only clears isWaitingForTiles once pendingTiles()
-    # drains to zero, and its ~2270-tile repaint batches never drain (that residual
-    # repaint storm is separate and still unfixed — SKIP_ROOT_CUSTOMPROP_REPAINT is
-    # on and does not cover it). Lossy as intended: scroll frames show stale/low-res
-    # tiles for newly-exposed content instead of freezing. Unset/0 = stock.
-    # Touches ThreadedCompositor.cpp: MUST apply after all the other patches that
-    # touch it (it also relies on <cstdlib>/<cstring> they add).
-    "patches/webkit/webkit-scroll-composite-tile-gate-env.patch"
-
     # THE franceinfo scroll-freeze fix: WEBKIT_SKIP_ROOT_CUSTOMPROP_REPAINT=1 (default ON)
     # stops RenderBox::styleWillChange from repainting the whole page when a :root/<body>
     # custom-property changes (the site updates --offset-sticky-* on <html> every scroll
