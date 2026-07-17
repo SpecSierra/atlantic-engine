@@ -157,14 +157,24 @@ atlantic_export_helper_env() {
     # future Mali device, or unset to remove the ceiling.
     export WEBKIT_GST_VIDEO_DECODING_LIMIT="${WEBKIT_GST_VIDEO_DECODING_LIMIT:-1920x1080@60}"
     # GStreamer GL video sink (USE_GSTREAMER_GL, video-playback plan Phase 3):
-    # compiled in but DISABLED by default until device-verified — the GL sink
-    # shares the compositor's hybris EGL context from GStreamer's GL thread,
-    # the one pattern that has bitten this driver before. Launch with
-    # WEBKIT_GST_DISABLE_GL_SINK=0 to A/B it: decoded frames then reach the
-    # compositor as GL textures (upload+YUV conversion on the GStreamer GL
-    # thread) instead of being mapped and uploaded on the compositor thread at
-    # every composite. Flip the default to 0 once validated.
-    export WEBKIT_GST_DISABLE_GL_SINK="${WEBKIT_GST_DISABLE_GL_SINK:-1}"
+    # decoded frames reach the compositor as GL textures — upload + YUV
+    # conversion happen once per frame on GStreamer's GL thread (context
+    # shared with the compositor's) instead of on the compositor thread at
+    # every composite. Device-verified Jul 17 2026 (YouTube 1080p, droidvdec):
+    # gstglcontext thread carries the conversion, compositor thread drops to
+    # ~idle, no artifacts. webKitGLVideoSinkProbePlatform() still falls back
+    # to the system-memory sink if the GL context can't be created. Set 1 to
+    # disable (the A/B / kill switch).
+    export WEBKIT_GST_DISABLE_GL_SINK="${WEBKIT_GST_DISABLE_GL_SINK:-0}"
+    # libsyncskip.so (wpe-compat preload): skip the libhybris eglSwapBuffers
+    # sync_wait GPU-fence CPU wait on the WebKit ThreadedCompositor and Qt
+    # QSGRenderThread. That wait serialized CPU and GPU per frame (~30-40ms of
+    # every composite cycle during video). Device-verified with the GL sink +
+    # pipelined ack: YouTube 1080p composites 74ms -> 37ms, visually clean.
+    # Decoder/codec threads always keep their fences. Set 0 to restore the
+    # blocking waits (kill switch; suspect first on any new GPU corruption or
+    # GPU-related crash).
+    export ATLANTIC_SKIP_SWAP_FENCE="${ATLANTIC_SKIP_SWAP_FENCE:-1}"
     # Make the SFOS system media volume (the hardware volume keys / MainVolume2 /
     # module-meego-mainvolume) control browser audio natively. That policy only
     # steps PulseAudio streams whose media.role is "x-maemo"; WebKit hardcodes
@@ -597,13 +607,14 @@ atlantic_export_browser_env() {
     # with a single credit replenished per Qt-rendered frame: the WebProcess
     # composites frame N+1 while Qt renders frame N, but can never run more
     # than one frame ahead. 0 = stock lock-step (the A/B switch).
-    # Ships 0: device A/B (franceinfo + example.com, CSS animation rAF-rate,
-    # build 511, Jul 2026) measured IDENTICAL ~56fps in both modes — the stock
-    # ack round trip already fits within one vsync, so the serialization
-    # hypothesis for the ~28fps scroll ceiling was wrong (that ceiling is
-    # per-composite paint/upload cost). Kept for experiments on slower-UI
-    # scenarios; no measured benefit on the Xperia 10 II.
-    export ATLANTIC_PIPELINED_FRAME_ACK="${ATLANTIC_PIPELINED_FRAME_ACK:-0}"
+    # History: shipped 0 through beta5 — the build-511 A/B (franceinfo CSS
+    # animation) measured no benefit because the stock round trip was then
+    # dwarfed by the per-composite fence wait + video upload. beta6 removed
+    # both (libsyncskip + GL video sink), and the stock ack became the pacer
+    # again: YouTube 1080p A/B (Jul 17 2026) measured composites 58ms
+    # lock-step vs 37ms (~27fps) pipelined, video playing, no artifacts.
+    # Default 1 since beta6; set 0 to restore the stock lock-step handshake.
+    export ATLANTIC_PIPELINED_FRAME_ACK="${ATLANTIC_PIPELINED_FRAME_ACK:-1}"
 
     # Honoured by webkit-tile-upload-budget-env.patch. Cap the tile work a single
     # composite may do: don't block on buffers the Skia workers are still
