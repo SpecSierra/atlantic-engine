@@ -309,12 +309,20 @@ void WPEQtViewBackend::didRenderFrame()
     if (eagerFrameComplete()) {
         // nothing to ack here
     } else if (pipelinedFrameAck()) {
-        // Pipelined: pay the owed ack, or replenish the credit (cap 1).
+        // Pipelined: pay the owed ack if any, and ALWAYS replenish the credit
+        // (cap 1). The original "pay OR replenish" was an absorbing trap: one
+        // transient frame that arrived before Qt sampled its predecessor set
+        // m_ackOwed, this branch then paid the debt without re-granting the
+        // credit, and every subsequent frame was owed again — permanently
+        // degrading to the stock lock-step (device-measured: cycle = sum of
+        // all stages, acks always trailing the Qt paint). Re-granting per
+        // Qt-rendered frame keeps the bound (at most one unacked frame
+        // outstanding) while making the pipeline self-healing after hiccups.
         if (m_ackOwed) {
             m_ackOwed = false;
             wpe_view_backend_exportable_fdo_dispatch_frame_complete(m_exportable);
-        } else
-            m_ackCredit = true;
+        }
+        m_ackCredit = true;
     } else
         wpe_view_backend_exportable_fdo_dispatch_frame_complete(m_exportable);
     if (m_committedImage)
