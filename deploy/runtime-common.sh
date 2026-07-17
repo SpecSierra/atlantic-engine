@@ -157,15 +157,16 @@ atlantic_export_helper_env() {
     # future Mali device, or unset to remove the ceiling.
     export WEBKIT_GST_VIDEO_DECODING_LIMIT="${WEBKIT_GST_VIDEO_DECODING_LIMIT:-1920x1080@60}"
     # GStreamer GL video sink (USE_GSTREAMER_GL, video-playback plan Phase 3):
-    # decoded frames reach the compositor as GL textures — upload + YUV
-    # conversion happen once per frame on GStreamer's GL thread (context
-    # shared with the compositor's) instead of on the compositor thread at
-    # every composite. Device-verified Jul 17 2026 (YouTube 1080p, droidvdec):
-    # gstglcontext thread carries the conversion, compositor thread drops to
-    # ~idle, no artifacts. webKitGLVideoSinkProbePlatform() still falls back
-    # to the system-memory sink if the GL context can't be created. Set 1 to
-    # disable (the A/B / kill switch).
-    export WEBKIT_GST_DISABLE_GL_SINK="${WEBKIT_GST_DISABLE_GL_SINK:-0}"
+    # compiled in but DISABLED by default. At small video sizes it works and
+    # moves the upload+YUV conversion off the compositor thread, but at
+    # 1920x1080 the shared-EGL-context uploads STALL THE DECODE PIPELINE on
+    # hybris (device-measured Jul 17 2026: element playing/HAVE_ENOUGH_DATA
+    # with 5 decoded frames total, ~1fps visible; same stream with the sink
+    # disabled decodes 26.8fps with 0 drops). Suspected GstGL-thread vs
+    # compositor-thread contention on the wrapped context. Set 0 to
+    # re-enable for experiments; do not ship 0 until the 1080p stall is
+    # solved (next step: droidmedia gralloc EGLImage zero-copy instead).
+    export WEBKIT_GST_DISABLE_GL_SINK="${WEBKIT_GST_DISABLE_GL_SINK:-1}"
     # libsyncskip.so (wpe-compat preload): skip the libhybris eglSwapBuffers
     # sync_wait GPU-fence CPU wait on the WebKit ThreadedCompositor and Qt
     # QSGRenderThread. That wait serialized CPU and GPU per frame (~30-40ms of
