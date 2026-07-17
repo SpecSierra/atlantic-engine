@@ -156,6 +156,15 @@ atlantic_export_helper_env() {
     # 3.5 GB RAM and OOM-kill the WebProcess. Override with a larger value on the
     # future Mali device, or unset to remove the ceiling.
     export WEBKIT_GST_VIDEO_DECODING_LIMIT="${WEBKIT_GST_VIDEO_DECODING_LIMIT:-1920x1080@60}"
+    # GStreamer GL video sink (USE_GSTREAMER_GL, video-playback plan Phase 3):
+    # compiled in but DISABLED by default until device-verified — the GL sink
+    # shares the compositor's hybris EGL context from GStreamer's GL thread,
+    # the one pattern that has bitten this driver before. Launch with
+    # WEBKIT_GST_DISABLE_GL_SINK=0 to A/B it: decoded frames then reach the
+    # compositor as GL textures (upload+YUV conversion on the GStreamer GL
+    # thread) instead of being mapped and uploaded on the compositor thread at
+    # every composite. Flip the default to 0 once validated.
+    export WEBKIT_GST_DISABLE_GL_SINK="${WEBKIT_GST_DISABLE_GL_SINK:-1}"
     # Make the SFOS system media volume (the hardware volume keys / MainVolume2 /
     # module-meego-mainvolume) control browser audio natively. That policy only
     # steps PulseAudio streams whose media.role is "x-maemo"; WebKit hardcodes

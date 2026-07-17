@@ -55,10 +55,20 @@ set(USE_GSTREAMER ON CACHE BOOL "" FORCE)
 # WebKit 2.52.4 in this tree registers webkitwebsrc, but does not expose a
 # USE_GSTREAMER_WEBKIT_HTTP_SRC CMake toggle to force here.
 
-# Keep GL integration off for now: hybris EGL in the WPEWebProcess subprocess
-# has historically been unstable on SFOS. Revisit when subprocesses are stable.
-# set(USE_GSTREAMER_GL ON CACHE BOOL "" FORCE)
-set(USE_GSTREAMER_GL OFF CACHE BOOL "" FORCE)
+# GStreamer GL integration: ON (video-playback plan Phase 3). The old "hybris
+# EGL in the WebProcess is unstable" concern is stale — the WebProcess has been
+# doing all compositing through hybris EGL for hundreds of builds. With GL off,
+# every decoded frame is mapped from system memory and uploaded to a texture ON
+# THE COMPOSITOR THREAD per composite (CoordinatedPlatformLayerBufferVideo
+# fallback path) — device-measured as a major part of the 25-30ms composite
+# cost during video playback. With GL on, webkitglvideosink (glupload !
+# glcolorconvert) moves the upload+conversion to GStreamer's own GL thread
+# (context shared with the compositor's), and the compositor just draws the
+# resulting texture. Runtime safety: webKitGLVideoSinkProbePlatform() falls
+# back to the old sink if the GL context can't be created, and
+# WEBKIT_GST_DISABLE_GL_SINK=1 is a full kill switch —
+# deploy/runtime-common.sh ships that default until device-verified.
+set(USE_GSTREAMER_GL ON CACHE BOOL "" FORCE)
 
 # Enable Media Source Extensions (MSE) — required for YouTube, Twitch, etc.
 # MSE-based players do not use GStreamer HTTP source directly; they push buffers
