@@ -68,3 +68,4 @@ done
 %{_libdir}/wpe-compat/libglibc-compat.so
 %{_libdir}/wpe-compat/libsigill_skip.so
 %{_libdir}/wpe-compat/libegl-stubs.so
+%{_libdir}/wpe-compat/libsyncskip.so

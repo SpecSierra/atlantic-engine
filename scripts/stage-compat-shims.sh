@@ -30,6 +30,12 @@ done
 $CC -O2 -march=armv8-a -mtune=cortex-a73.cortex-a53 -fPIC $SHARED \
     -o "${COMPAT_BUILD}/libegl-stubs.so" "${COMPAT_SRC}/libegl-stubs.c"
 
+# libsyncskip.so: interposes libsync's sync_wait (needs a globally visible
+# symbol, so no -fvisibility=hidden; the source marks it default-visibility).
+# Inert unless ATLANTIC_SKIP_SWAP_FENCE=1 at runtime.
+$CC -O2 -march=armv8-a -mtune=cortex-a73.cortex-a53 -fPIC $SHARED \
+    -o "${COMPAT_BUILD}/libsyncskip.so" "${COMPAT_SRC}/libsyncskip.c"
+
 # libglibc-compat.so: needs version script (GLIBC_2.17 + GLIBC_2.34 sections)
 # and must export dlopen/dlsym/dlerror@GLIBC_2.34 for binaries built on glibc 2.34+
 if [ "${USE_GLIBC_COMPAT}" = "1" ]; then

@@ -78,6 +78,12 @@ atlantic_build_ld_preload() {
     fi
     if [ "${USE_EGL_STUBS:-0}" = "1" ]; then
         preload="${preload}${sep}${ATLANTIC_COMPAT_DIR}/libegl-stubs.so"
+        sep=":"
+    fi
+    if [ "${USE_SYNC_FENCE_SKIP:-0}" = "1" ]; then
+        # Always preloaded when built in, but inert until the user (or a
+        # profile) sets ATLANTIC_SKIP_SWAP_FENCE=1 — see shims/compat/libsyncskip.c.
+        preload="${preload}${sep}${ATLANTIC_COMPAT_DIR}/libsyncskip.so"
     fi
 
     printf '%s' "${preload}"
