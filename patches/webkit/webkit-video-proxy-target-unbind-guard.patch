@@ -1,0 +1,83 @@
+Video contents-buffer proxy: don't let a dying GraphicsLayer unbind the
+proxy from its successor.
+
+The media player's CoordinatedPlatformLayerBufferProxy outlives the
+GraphicsLayer backing the <video> element. When the element's backing is
+rebuilt (element fullscreen enter/exit, reparenting, page navigation reusing
+the player), the NEW GraphicsLayerCoordinated binds the proxy to its platform
+layer first, and the OLD layer is destroyed afterwards - and its destructor
+(and the delegate/replacement paths) called setTargetLayer(nullptr)
+unconditionally on the SHARED proxy, wiping the fresh binding.
+
+From then on every decoded video frame takes the silent m_pendingBuffer path
+(no per-frame CompositionReason::VideoFrame request), consumed only during
+main-thread rendering updates. On an idle fullscreen page those run at timer
+cadence (~4/s device-measured on YouTube 1080p fullscreen: rendering updates
+p50 257ms while the compositor redrew the stale frame at 30fps) - the video
+visibly plays at ~4fps. Inline playback masks the bug because page animations
+keep the rendering-update rate at display cadence.
+
+Fix: clearing paths go through clearTargetLayerIfEqual(expected), which
+unbinds only if the proxy still points at the caller's platform layer.
+
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferProxy.h
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferProxy.h
+@@ -43,6 +43,7 @@
+     ~CoordinatedPlatformLayerBufferProxy();
+ 
+     void setTargetLayer(CoordinatedPlatformLayer*);
++    void clearTargetLayerIfEqual(CoordinatedPlatformLayer*);
+     void consumePendingBufferIfNeeded();
+     void setDisplayBuffer(std::unique_ptr<CoordinatedPlatformLayerBuffer>&&);
+ 
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferProxy.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferProxy.cpp
+@@ -68,6 +68,19 @@
+     }
+ }
+ 
++void CoordinatedPlatformLayerBufferProxy::clearTargetLayerIfEqual(CoordinatedPlatformLayer* layer)
++{
++    ASSERT(RunLoop::isMain());
++    Locker locker { m_lock };
++    if (m_layer != layer)
++        return;
++    m_layer = nullptr;
++    m_pendingBuffer = nullptr;
++#if ENABLE(VIDEO) && USE(GSTREAMER)
++    m_compositingRunLoop = nullptr;
++#endif
++}
++
+ void CoordinatedPlatformLayerBufferProxy::consumePendingBufferIfNeeded()
+ {
+     ASSERT(RunLoop::isMain());
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp
+@@ -82,7 +82,7 @@
+ GraphicsLayerCoordinated::~GraphicsLayerCoordinated()
+ {
+     if (m_contentsBufferProxy)
+-        m_contentsBufferProxy->setTargetLayer(nullptr);
++        m_contentsBufferProxy->clearTargetLayerIfEqual(m_platformLayer.ptr());
+     m_platformLayer->setOwner(nullptr);
+     if (m_parent)
+         downcast<GraphicsLayerCoordinated>(*m_parent).noteLayerPropertyChanged(Change::Children, ScheduleFlush::Yes);
+@@ -415,7 +415,7 @@
+         return;
+ 
+     if (m_contentsBufferProxy)
+-        m_contentsBufferProxy->setTargetLayer(nullptr);
++        m_contentsBufferProxy->clearTargetLayerIfEqual(m_platformLayer.ptr());
+ 
+     m_contentsBufferProxy = contentsLayer;
+ 
+@@ -438,7 +438,7 @@
+     OptionSet<Change> change = { Change::ContentsBuffer };
+     if (m_contentsDisplayDelegate) {
+         if (m_contentsBufferProxy) {
+-            m_contentsBufferProxy->setTargetLayer(nullptr);
++            m_contentsBufferProxy->clearTargetLayerIfEqual(m_platformLayer.ptr());
+             m_contentsBufferProxy = nullptr;
+         }
+         change.add(Change::ContentsBufferNeedsDisplay);

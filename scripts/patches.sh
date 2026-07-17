@@ -490,6 +490,14 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # (WEBKIT_NO_FAKE_MOUSE_MOVE, default 1 in runtime-common.sh).
     "patches/webkit/webkit-no-fake-mouse-move-env.patch"
 
+    # Video contents-buffer proxy: when the <video> element's backing layer is
+    # rebuilt (fullscreen enter/exit, navigation), the OLD GraphicsLayer's
+    # teardown unbound the shared buffer proxy AFTER the new layer had bound
+    # it, silently degrading video to the main-thread pending-buffer path
+    # (~4fps on an idle fullscreen page). Guarded unbind: clear only if the
+    # proxy still points at the caller's platform layer.
+    "patches/webkit/webkit-video-proxy-target-unbind-guard.patch"
+
     # Damage-limited compositing: enable WebKit's compiled-in-but-WPE-disabled
     # damage subsystem so a composite is scissored to the region that actually
     # changed instead of redrawing the whole scene (WEBKIT_DAMAGE_COMPOSITING,
