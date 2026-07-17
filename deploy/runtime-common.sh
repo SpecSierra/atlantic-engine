@@ -608,14 +608,17 @@ atlantic_export_browser_env() {
     # with a single credit replenished per Qt-rendered frame: the WebProcess
     # composites frame N+1 while Qt renders frame N, but can never run more
     # than one frame ahead. 0 = stock lock-step (the A/B switch).
-    # History: shipped 0 through beta5 — the build-511 A/B (franceinfo CSS
-    # animation) measured no benefit because the stock round trip was then
-    # dwarfed by the per-composite fence wait + video upload. beta6 removed
-    # both (libsyncskip + GL video sink), and the stock ack became the pacer
-    # again: YouTube 1080p A/B (Jul 17 2026) measured composites 58ms
-    # lock-step vs 37ms (~27fps) pipelined, video playing, no artifacts.
-    # Default 1 since beta6; set 0 to restore the stock lock-step handshake.
-    export ATLANTIC_PIPELINED_FRAME_ACK="${ATLANTIC_PIPELINED_FRAME_ACK:-1}"
+    # DEFAULT 0 (stock lock-step). The credit-starvation bug that made this
+    # mode a no-op was fixed (WPEQtViewBackend didRenderFrame re-grants the
+    # credit), and with it actually working the compositor free-runs
+    # back-to-back with no idle — and STARVES THE VIDEO DECODE PIPELINE:
+    # device A/B (build 547, progressive 1080p H.264, fresh codec service):
+    # pipelined=1 -> 0 decoded frames reach the sink (OMX decodes, frames die
+    # at the WebKit sink; media clock stalls); pipelined=0 -> normal playback.
+    # The compositor monopolizes the layer lock / thread when never ack-
+    # throttled. Do not re-enable until composites are vsync-paced instead of
+    # free-running. The stock handshake also acts as the de-facto pacer.
+    export ATLANTIC_PIPELINED_FRAME_ACK="${ATLANTIC_PIPELINED_FRAME_ACK:-0}"
 
     # Honoured by webkit-tile-upload-budget-env.patch. Cap the tile work a single
     # composite may do: don't block on buffers the Skia workers are still
