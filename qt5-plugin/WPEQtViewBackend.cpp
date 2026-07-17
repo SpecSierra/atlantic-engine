@@ -25,6 +25,7 @@
 #include "WPEWaylandSubsurface.h"
 #include <QGuiApplication>
 #include <QMetaObject>
+#include <QTimer>
 #include <cstdlib>
 #include <cstring>
 #include <QOpenGLFunctions>
@@ -244,9 +245,55 @@ GLuint WPEQtViewBackend::texture(QOpenGLContext* context)
     imageTargetTexture2DOES(GL_TEXTURE_2D, wpe_fdo_egl_exported_image_get_egl_image(image));
     glFunctions->glBindTexture(GL_TEXTURE_2D, 0);
 
+    // ATLANTIC_ACK_ON_SAMPLE (default via runtime-common.sh): ack the frame
+    // the moment Qt SAMPLES it (here, on the QSG render thread, right after
+    // the EGLImage bind) instead of after the full scene-graph render + swap
+    // (frameSwapped -> didRenderFrame, ~10-15ms later). The WebProcess can
+    // start compositing the next frame while Qt finishes this one. Still
+    // strictly one ack per Qt render pass that consumed a NEW frame — unlike
+    // the pipelined free-run mode this cannot outrun Qt, so it keeps the
+    // pacing that protects the GStreamer streaming thread (see the
+    // ATLANTIC_PIPELINED_FRAME_ACK=0 rationale in runtime-common.sh). The
+    // fdo dispatch must happen on the GUI thread, so hop via the view.
+    if (m_pendingImage && ackOnSample() && m_view) {
+        m_earlyAckArmed.store(true, std::memory_order_release);
+        QTimer::singleShot(0, m_view, [this] { dispatchEarlyAck(); });
+    }
+
     m_frameUpdateRequested = m_pendingImage;
 
     return m_textureId;
+}
+
+static bool eagerFrameComplete();
+static bool pipelinedFrameAck();
+
+// ATLANTIC_ACK_ON_SAMPLE=1: see texture(). Mutually exclusive with the eager
+// and pipelined modes (those manage acks in displayImage).
+static bool ackOnSampleEnv()
+{
+    static const bool on = [] {
+        const char* env = getenv("ATLANTIC_ACK_ON_SAMPLE");
+        return env && env[0] && strcmp(env, "0");
+    }();
+    return on;
+}
+
+bool WPEQtViewBackend::ackOnSample() const
+{
+    return ackOnSampleEnv() && !eagerFrameComplete() && !pipelinedFrameAck();
+}
+
+void WPEQtViewBackend::dispatchEarlyAck()
+{
+    // GUI thread. No-op unless texture() armed us and didRenderFrame has not
+    // already acked this Qt frame.
+    if (!m_earlyAckArmed.exchange(false, std::memory_order_acq_rel))
+        return;
+    if (!m_exportable || m_ackedEarly)
+        return;
+    m_ackedEarly = true;
+    wpe_view_backend_exportable_fdo_dispatch_frame_complete(m_exportable);
 }
 
 // ATLANTIC_EAGER_FRAME_COMPLETE=1: acknowledge each exported web frame the
@@ -323,8 +370,16 @@ void WPEQtViewBackend::didRenderFrame()
             wpe_view_backend_exportable_fdo_dispatch_frame_complete(m_exportable);
         }
         m_ackCredit = true;
-    } else
+    } else if (m_ackedEarly) {
+        // Ack-on-sample already dispatched this frame's ack from
+        // dispatchEarlyAck(); don't double-ack.
+        m_ackedEarly = false;
+    } else {
+        // Disarm any not-yet-delivered early ack for the frame we are about
+        // to ack here, so a stale queued dispatchEarlyAck() can't double-ack.
+        m_earlyAckArmed.store(false, std::memory_order_release);
         wpe_view_backend_exportable_fdo_dispatch_frame_complete(m_exportable);
+    }
     if (m_committedImage)
         wpe_view_backend_exportable_fdo_egl_dispatch_release_exported_image(m_exportable, m_committedImage);
     m_committedImage = m_pendingImage;

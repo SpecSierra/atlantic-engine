@@ -620,6 +620,14 @@ atlantic_export_browser_env() {
     # free-running. The stock handshake also acts as the de-facto pacer.
     export ATLANTIC_PIPELINED_FRAME_ACK="${ATLANTIC_PIPELINED_FRAME_ACK:-0}"
 
+    # Honoured by the qt5 plugin (WPEQtViewBackend::texture). Ack the web
+    # frame when Qt SAMPLES it (EGLImage bind on the render thread, ack hopped
+    # to the GUI thread) instead of after Qt's full render+swap — removes the
+    # ~10-15ms Qt tail from the serialized composite->ack loop while keeping
+    # strictly one ack per Qt render pass, so unlike the pipelined free-run it
+    # cannot starve the video decode pipeline. Set 0 to restore ack-at-swap.
+    export ATLANTIC_ACK_ON_SAMPLE="${ATLANTIC_ACK_ON_SAMPLE:-1}"
+
     # Honoured by webkit-tile-upload-budget-env.patch. Cap the tile work a single
     # composite may do: don't block on buffers the Skia workers are still
     # painting, and upload at most this many MB of CPU tile pixels per frame —

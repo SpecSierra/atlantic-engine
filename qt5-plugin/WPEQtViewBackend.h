@@ -26,6 +26,7 @@
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
+#include <atomic>
 #include <memory>
 
 #include <QHoverEvent>
@@ -50,6 +51,8 @@ public:
     void resize(const QSizeF&);
     GLuint texture(QOpenGLContext*);
     void didRenderFrame();
+    void dispatchEarlyAck();
+    bool ackOnSample() const;
     bool hasValidSurface() const { return m_surface.isValid(); };
 
     void dispatchHoverEnterEvent(QHoverEvent*);
@@ -89,6 +92,11 @@ private:
     // frameSwapped->didRenderFrame both run there).
     bool m_ackCredit { true };
     bool m_ackOwed { false };
+    // Ack-on-sample state (ATLANTIC_ACK_ON_SAMPLE): armed on the QSG render
+    // thread in texture() when a new frame is bound, consumed on the GUI
+    // thread (dispatchEarlyAck / didRenderFrame). m_ackedEarly is GUI-only.
+    std::atomic<bool> m_earlyAckArmed { false };
+    bool m_ackedEarly { false };
 
     WPEWaylandSubsurface* m_subsurface { nullptr };
 
