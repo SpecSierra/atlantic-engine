@@ -546,6 +546,20 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # device-validated (freeing GPU requires that forced composite to land while
     # hidden -- the deadlock-prone compositor-timing area, so A/B first).
     "patches/webkit/webkit-drop-tiles-when-hidden-env.patch"
+
+    # webkit-svg-raster-cache.patch: WebKit has NO raster cache for SVG-as-image
+    # (SVGImageCache caches only size wrappers): SVGImage::draw re-lays-out and
+    # re-paints the whole embedded SVG document on EVERY draw, so each tile
+    # record re-vectors every visible SVG on the main thread and the CPU raster
+    # workers re-rasterize the path ops per tile. Device-proven (build 550):
+    # 2.3-2.8 ms/draw per 360px 300-path icon vs 0.05 ms bitmap (>=50x); a flick
+    # over an SVG grid leaves the whole viewport blank while the identical PNG
+    # grid paints fully mid-scroll. Fix: cache the rasterized container in
+    # SVGImage (keyed on container size/zoom/fragment/backing px, 2-entry LRU,
+    # skip animating documents + luminance masks, area-capped via
+    # WEBKIT_SVG_RASTER_CACHE_MAX_AREA_PX, invalidated on data change and
+    # chrome-client invalidations). WEBKIT_SVG_RASTER_CACHE=0 restores upstream.
+    "patches/webkit/webkit-svg-raster-cache.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

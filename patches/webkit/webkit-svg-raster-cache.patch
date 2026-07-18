@@ -1,0 +1,195 @@
+--- a/Source/WebCore/svg/graphics/SVGImage.h	2026-07-18 10:28:37.143169292 +0000
++++ b/Source/WebCore/svg/graphics/SVGImage.h	2026-07-18 10:28:58.380314063 +0000
+@@ -29,6 +29,7 @@
+ #include <WebCore/Image.h>
+ #include <WebCore/Timer.h>
+ #include <wtf/URL.h>
++#include <wtf/Vector.h>
+ 
+ namespace WebCore {
+ 
+@@ -108,11 +109,28 @@
+     WEBCORE_EXPORT explicit SVGImage(ImageObserver*);
+     ImageDrawResult draw(GraphicsContext&, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions = { }) final;
+     ImageDrawResult drawForContainer(GraphicsContext&, const FloatSize containerSize, float containerZoom, const URL& initialFragmentURL, const FloatRect& dstRect, const FloatRect& srcRect, ImagePaintingOptions = { });
++
++    // WebKit has no raster cache for SVG-as-image: every draw re-lays-out and
++    // re-paints the whole embedded SVG document, which dominates tile paint on
++    // CPU-raster devices. Cache the rasterized container and blit it on
++    // subsequent draws (WEBKIT_SVG_RASTER_CACHE=0 restores upstream behaviour).
++    struct RasterCacheEntry {
++        FloatSize containerSize;
++        float containerZoom { 1 };
++        URL initialFragmentURL;
++        IntSize backingSize;
++        RefPtr<NativeImage> image;
++    };
++    std::optional<ImageDrawResult> tryDrawCachedRasterForContainer(GraphicsContext&, const FloatSize& containerSize, float containerZoom, const URL& initialFragmentURL, const FloatRect& dstRect, const FloatRect& srcRect, ImagePaintingOptions);
++    void invalidateRasterCache() { m_rasterCache.clear(); }
+     void drawPatternForContainer(GraphicsContext&, const FloatSize& containerSize, float containerZoom, const URL& initialFragmentURL, const FloatRect& srcRect, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, const FloatRect&, ImagePaintingOptions = { });
+ 
+     RefPtr<Page> m_page;
+     FloatSize m_intrinsicSize;
+ 
++    Vector<RasterCacheEntry, 2> m_rasterCache;
++    bool m_paintingForRasterCache { false };
++
+     Timer m_startAnimationTimer;
+ };
+ 
+--- a/Source/WebCore/svg/graphics/SVGImage.cpp	2026-07-18 10:28:37.150169340 +0000
++++ b/Source/WebCore/svg/graphics/SVGImage.cpp	2026-07-18 10:30:12.769820719 +0000
+@@ -66,6 +66,9 @@
+ #include "TypedElementDescendantIteratorInlines.h"
+ #include <JavaScriptCore/JSCInlines.h>
+ #include <JavaScriptCore/JSLock.h>
++#include <cstdlib>
++#include <cstring>
++#include <wtf/SetForScope.h>
+ #include <wtf/text/TextStream.h>
+ 
+ #if PLATFORM(MAC)
+@@ -184,11 +187,112 @@
+     return IntSize(currentSize);
+ }
+ 
++static bool svgRasterCacheEnabled()
++{
++    static bool enabled = [] {
++        const char* env = getenv("WEBKIT_SVG_RASTER_CACHE");
++        return !env || !*env || strcmp(env, "0");
++    }();
++    return enabled;
++}
++
++static double svgRasterCacheMaxAreaPx()
++{
++    static double maxArea = [] {
++        if (const char* env = getenv("WEBKIT_SVG_RASTER_CACHE_MAX_AREA_PX")) {
++            if (double value = strtod(env, nullptr); value > 0)
++                return value;
++        }
++        return 4194304.; // 16 MB of BGRA backing.
++    }();
++    return maxArea;
++}
++
++std::optional<ImageDrawResult> SVGImage::tryDrawCachedRasterForContainer(GraphicsContext& context, const FloatSize& containerSize, float containerZoom, const URL& initialFragmentURL, const FloatRect& dstRect, const FloatRect& srcRect, ImagePaintingOptions options)
++{
++    if (!svgRasterCacheEnabled() || m_paintingForRasterCache)
++        return std::nullopt;
++
++    // An animating document invalidates every frame; caching would only add
++    // buffer churn on top of the repaint. Luminance masks need the vector paint.
++    if (isAnimating() || context.drawLuminanceMask())
++        return std::nullopt;
++
++    FloatRect zoomedContainerRect(FloatPoint(), containerSize);
++    zoomedContainerRect.scale(containerZoom);
++    if (zoomedContainerRect.isEmpty() || srcRect.isEmpty() || dstRect.isEmpty())
++        return std::nullopt;
++
++    // Rasterize at the resolution the destination actually needs: device pixels
++    // per zoomed-container unit, i.e. the context scale combined with the
++    // srcRect -> dstRect mapping.
++    auto ctm = context.getCTM();
++    FloatSize scale(std::abs(ctm.xScale()) * dstRect.width() / srcRect.width(), std::abs(ctm.yScale()) * dstRect.height() / srcRect.height());
++    if (scale.isEmpty())
++        return std::nullopt;
++
++    FloatSize backingSize = zoomedContainerRect.size();
++    backingSize.scale(scale.width(), scale.height());
++    IntSize roundedBackingSize = expandedIntSize(backingSize);
++    if (roundedBackingSize.isEmpty())
++        return std::nullopt;
++    if (static_cast<double>(roundedBackingSize.width()) * roundedBackingSize.height() > svgRasterCacheMaxAreaPx())
++        return std::nullopt;
++
++    RefPtr<NativeImage> image;
++    for (size_t i = 0; i < m_rasterCache.size(); ++i) {
++        auto& entry = m_rasterCache[i];
++        if (entry.containerSize == containerSize && entry.containerZoom == containerZoom && entry.initialFragmentURL == initialFragmentURL && entry.backingSize == roundedBackingSize) {
++            image = entry.image;
++            if (i)
++                std::swap(m_rasterCache[0], m_rasterCache[i]);
++            break;
++        }
++    }
++
++    if (!image) {
++        // Force an unaccelerated buffer: this runs on the main thread during
++        // tile recording, and a Ganesh surface + readback there is the slow
++        // path on drivers without cross-context fence support.
++        RefPtr buffer = ImageBuffer::create(FloatSize(roundedBackingSize), RenderingMode::Unaccelerated, RenderingPurpose::DOM, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8, nullptr);
++        if (!buffer)
++            return std::nullopt;
++        {
++            SetForScope paintingForRasterCache(m_paintingForRasterCache, true);
++            auto& bufferContext = buffer->context();
++            bufferContext.scale(FloatSize(roundedBackingSize.width() / zoomedContainerRect.width(), roundedBackingSize.height() / zoomedContainerRect.height()));
++            if (drawForContainer(bufferContext, containerSize, containerZoom, initialFragmentURL, zoomedContainerRect, zoomedContainerRect) != ImageDrawResult::DidDraw)
++                return std::nullopt;
++        }
++        image = ImageBuffer::sinkIntoNativeImage(WTF::move(buffer));
++        if (!image)
++            return std::nullopt;
++
++        static constexpr size_t maxRasterCacheEntries = 2;
++        if (m_rasterCache.size() >= maxRasterCacheEntries)
++            m_rasterCache.removeLast();
++        m_rasterCache.insert(0, RasterCacheEntry { containerSize, containerZoom, initialFragmentURL, roundedBackingSize, image });
++    }
++
++    // Map srcRect (zoomed-container coordinates) into backing pixels.
++    FloatRect scaledSrcRect = srcRect;
++    scaledSrcRect.scale(roundedBackingSize.width() / zoomedContainerRect.width(), roundedBackingSize.height() / zoomedContainerRect.height());
++    context.drawNativeImage(*image, dstRect, scaledSrcRect, options);
++
++    if (RefPtr observer = imageObserver())
++        observer->didDraw(*this);
++
++    return ImageDrawResult::DidDraw;
++}
++
+ ImageDrawResult SVGImage::drawForContainer(GraphicsContext& context, const FloatSize containerSize, float containerZoom, const URL& initialFragmentURL, const FloatRect& dstRect, const FloatRect& srcRect, ImagePaintingOptions options)
+ {
+     if (!m_page)
+         return ImageDrawResult::DidNothing;
+ 
++    if (auto cachedResult = tryDrawCachedRasterForContainer(context, containerSize, containerZoom, initialFragmentURL, dstRect, srcRect, options))
++        return *cachedResult;
++
+     RefPtr observer = imageObserver();
+ 
+     // Temporarily reset image observer, we don't want to receive any changeInRect() calls due to this relayout.
+@@ -480,6 +584,8 @@
+ 
+ EncodedDataStatus SVGImage::dataChanged(bool allDataReceived)
+ {
++    invalidateRasterCache();
++
+     // Don't do anything; it is an empty image.
+     if (!data()->size())
+         return EncodedDataStatus::Complete;
+--- a/Source/WebCore/svg/graphics/SVGImageClients.h	2026-07-18 10:28:37.155169374 +0000
++++ b/Source/WebCore/svg/graphics/SVGImageClients.h	2026-07-18 10:30:07.582785413 +0000
+@@ -64,6 +64,8 @@
+         if (!image || !image->internalPage())
+             return;
+ 
++        image->invalidateRasterCache();
++
+         if (RefPtr imageObserver = image->imageObserver())
+             imageObserver->imageContentChanged(*image);
+     }
+@@ -76,6 +78,10 @@
+         if (!image || !image->internalPage())
+             return;
+ 
++        // The document's rendering changed (animation tick, resource load,
++        // interactive update): any cached rasterization is stale.
++        image->invalidateRasterCache();
++
+         RefPtr imageObserver = image->imageObserver();
+         if (!imageObserver)
+             return;
