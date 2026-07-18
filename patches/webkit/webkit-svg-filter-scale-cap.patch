@@ -1,0 +1,29 @@
+--- a/Source/WebCore/rendering/svg/legacy/LegacyRenderSVGResourceFilter.cpp	2026-07-18 11:38:18.669637234 +0000
++++ b/Source/WebCore/rendering/svg/legacy/LegacyRenderSVGResourceFilter.cpp	2026-07-18 11:38:40.394776749 +0000
+@@ -153,6 +153,26 @@
+     // Eliminate shear of the absolute transformation matrix, to be able to produce unsheared tile images for feTile.
+     FloatSize filterScale(absoluteTransform.xScale(), absoluteTransform.yScale());
+ 
++    // Software filters are per-pixel work on the main thread, and this port's
++    // 3x UI scale is implemented as page zoom — so filter buffers come out at
++    // 9x the CSS-nominal pixel count. Cap the filter resolution: the result is
++    // upscaled at draw time, which is visually benign for the blurry effects
++    // (turbulence, lighting, blur) software filters are typically used for.
++    // WEBKIT_SVG_FILTER_SCALE_CAP=<float> tunes the cap; 0 disables it.
++    static const float filterScaleCap = [] {
++        if (const char* env = getenv("WEBKIT_SVG_FILTER_SCALE_CAP")) {
++            char* end = nullptr;
++            float value = strtof(env, &end);
++            if (end != env && value >= 0)
++                return value;
++        }
++        return 2.0f;
++    }();
++    if (filterScaleCap > 0) {
++        filterScale.setWidth(std::min(filterScale.width(), filterScaleCap));
++        filterScale.setHeight(std::min(filterScale.height(), filterScaleCap));
++    }
++
+     // Determine absolute boundaries of the filter and the drawing region.
+     filterData->sourceImageRect = renderer.strokeBoundingBox();
+     filterData->sourceImageRect.intersect(filterRegion);

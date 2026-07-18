@@ -576,6 +576,17 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # clearing via markFilterForRepaint incl. the stash, and the stash is
     # capped at 8 entries. WEBKIT_SVG_FILTER_RESULTS_REUSE=0 restores upstream.
     "patches/webkit/webkit-svg-filter-results-reuse.patch"
+
+    # webkit-svg-filter-scale-cap.patch: cap the SVG filter rasterization scale
+    # (default 2.0, WEBKIT_SVG_FILTER_SCALE_CAP env-tunable, 0 = off). Atlantic's
+    # 3x UI scale is page zoom, so software filter buffers (feTurbulence/
+    # lighting/blur — per-pixel main-thread work) come out at 9x the CSS-nominal
+    # pixel count; the AnTuTu SVG subtest recomputes them every frame by design
+    # (the noise field scrolls through the moving region — NOT cacheable, see
+    # results-reuse patch above for what IS). Capping at 2.0 cuts filter pixels
+    # 2.25x and upscales at draw time — visually benign for the blurry effects
+    # these filters produce. Must apply AFTER results-reuse (same function).
+    "patches/webkit/webkit-svg-filter-scale-cap.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(
