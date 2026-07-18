@@ -625,8 +625,10 @@ atlantic_export_browser_env() {
     # to the GUI thread) instead of after Qt's full render+swap — removes the
     # ~10-15ms Qt tail from the serialized composite->ack loop while keeping
     # strictly one ack per Qt render pass, so unlike the pipelined free-run it
-    # cannot starve the video decode pipeline. Set 0 to restore ack-at-swap.
-    export ATLANTIC_ACK_ON_SAMPLE="${ATLANTIC_ACK_ON_SAMPLE:-1}"
+    # cannot starve the video decode pipeline. DEFAULT 0: in the Jul 17
+    # device session with it default-on, pages stopped loading fully
+    # (unattributed but correlated); reverted to opt-in pending a clean A/B.
+    export ATLANTIC_ACK_ON_SAMPLE="${ATLANTIC_ACK_ON_SAMPLE:-0}"
 
     # Honoured by webkit-tile-upload-budget-env.patch. Cap the tile work a single
     # composite may do: don't block on buffers the Skia workers are still
