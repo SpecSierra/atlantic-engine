@@ -560,6 +560,22 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # WEBKIT_SVG_RASTER_CACHE_MAX_AREA_PX, invalidated on data change and
     # chrome-client invalidations). WEBKIT_SVG_RASTER_CACHE=0 restores upstream.
     "patches/webkit/webkit-svg-raster-cache.patch"
+
+    # webkit-svg-filter-results-reuse.patch: animated/transformed elements with
+    # SVG filters re-ran the ENTIRE filter graph every frame: any client
+    # invalidation (a per-frame transform translate is the common case) destroys
+    # the legacy FilterData, and with it the FilterResults cache — so
+    # feTurbulence noise, lighting and blurs recompute per frame on the main
+    # thread (AnTuTu HTML5 SVG subtest: ~16 iter/s, main thread 80%+ in
+    # FETurbulence/FELighting/FEGaussianBlur software appliers, device-sampled).
+    # Effect instances are cached on the SVG primitive elements, so results keyed
+    # by them stay valid across rebuilds: retire FilterResults on client removal
+    # and re-seed the rebuilt filter when the geometry (referenceBox, region,
+    # scale, source rect) is unchanged. Source-dependent results are always
+    # cleared (new clearSourceImageDependentResults cascade), param changes keep
+    # clearing via markFilterForRepaint incl. the stash, and the stash is
+    # capped at 8 entries. WEBKIT_SVG_FILTER_RESULTS_REUSE=0 restores upstream.
+    "patches/webkit/webkit-svg-filter-results-reuse.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(
