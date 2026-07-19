@@ -54,6 +54,7 @@ fetch_content_blocker_list easylist    "${EASYLIST_URL}"    "${EASYLIST_SHA256:-
 fetch_content_blocker_list easyprivacy "${EASYPRIVACY_URL}" "${EASYPRIVACY_SHA256:-}"
 
 # Adblock engine filter lists (cookie consent, annoyance, cosmetic)
+fetch_content_blocker_list ubo-filters      "${UBO_FILTERS_URL}"       "${UBO_FILTERS_SHA256:-}"
 fetch_content_blocker_list fanboy-annoyance "${FANBOY_ANNOYANCE_URL}"  "${FANBOY_ANNOYANCE_SHA256:-}"
 fetch_content_blocker_list ubo-annoyances   "${UBO_ANNOYANCES_URL}"    "${UBO_ANNOYANCES_SHA256:-}"
 fetch_content_blocker_list fanboy-social     "${FANBOY_SOCIAL_URL}"    "${FANBOY_SOCIAL_SHA256:-}"
@@ -90,6 +91,7 @@ BUILDER_ARGS=(
     "${CONTENT_BLOCKER_BUILD_DIR}/engine.dat"
     "${CONTENT_BLOCKER_FETCH_DIR}/easylist.txt"
     "${CONTENT_BLOCKER_FETCH_DIR}/easyprivacy.txt"
+    "${CONTENT_BLOCKER_FETCH_DIR}/ubo-filters.txt"
     "${CONTENT_BLOCKER_FETCH_DIR}/fanboy-annoyance.txt"
     "${CONTENT_BLOCKER_FETCH_DIR}/ubo-annoyances.txt"
     "${CONTENT_BLOCKER_FETCH_DIR}/fanboy-social.txt"
