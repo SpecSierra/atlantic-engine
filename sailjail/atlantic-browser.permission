@@ -68,4 +68,6 @@ whitelist   ${HOME}/android_storage/Download
 # D-Bus (browser UI service)
 dbus-user.own org.atlantic.browser.ui
 dbus-user.talk org.atlantic.browser.ui
+# Popup-menu "Downloads" opens Settings > Transfers (mirrors stock sailfish-browser).
+dbus-user.call com.jolla.settings=com.jolla.settings.ui.showTransfers@/com/jolla/settings/ui
 

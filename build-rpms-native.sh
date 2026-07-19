@@ -694,6 +694,10 @@ whitelist ${HOME}/android_storage/Download
 dbus-user.own org.atlantic.browser
 dbus-user.own org.atlantic.browser.ui
 
+# Popup-menu "Downloads" opens Settings > Transfers (same rule as the stock
+# sailfish-browser profile); without it the dbus proxy drops the call silently.
+dbus-user.call com.jolla.settings=com.jolla.settings.ui.showTransfers@/com/jolla/settings/ui
+
 # ── Runtime environment (generated — mirrors runtime-common.sh) ──────────────
 PROFHDR
 printf '%s\n' "${PROFILE_ENV_LINES}"
