@@ -43,9 +43,19 @@ extern void atlantic_adblock_free_match_result(MatchResult result);
 #define ATL_ENGINE_DAT "/usr/share/atlantic-browser/engine.dat"
 #define ATL_RESOURCES_JSON "/usr/share/atlantic-browser/adblock-resources.json"
 #define ATL_TOGGLE_MESSAGE "atlantic-adblock-set-enabled"
+#define ATL_ALLOWLIST_MESSAGE "atlantic-adblock-set-allowlist"
 
 static AtlanticAdblockEngine *g_engine = NULL;
 static gboolean g_enabled = TRUE;
+/* Per-site allowlist: NULL-terminated host vector; blocking is skipped when
+ * the page host is one of these (or a subdomain, per hosts_related). */
+static char **g_allowlist = NULL;
+
+static void set_allowlist(const char *joined)
+{
+    g_strfreev(g_allowlist);
+    g_allowlist = (joined && *joined) ? g_strsplit(joined, "\n", -1) : NULL;
+}
 
 /* Map a request to a Brave resource-type string. An empty/unknown type makes
  * the engine return no-match, so we always return a concrete string. The
@@ -120,6 +130,23 @@ static gboolean hosts_related(const char *a, const char *b)
     return FALSE;
 }
 
+static gboolean page_allowlisted(const char *page_uri)
+{
+    if (!g_allowlist || !page_uri || !*page_uri)
+        return FALSE;
+    GUri *pu = g_uri_parse(page_uri, G_URI_FLAGS_NONE, NULL);
+    if (!pu)
+        return FALSE;
+    const char *host = g_uri_get_host(pu);
+    gboolean allowed = FALSE;
+    for (char **h = g_allowlist; host && *h && !allowed; h++) {
+        if (**h)
+            allowed = hosts_related(host, *h);
+    }
+    g_uri_unref(pu);
+    return allowed;
+}
+
 static int is_third_party(const char *page_uri, const char *req_uri)
 {
     if (!page_uri || !*page_uri) return 0; /* unknown source -> treat as first-party */
@@ -146,6 +173,8 @@ static gboolean on_send_request(WebKitWebPage *page, WebKitURIRequest *request,
         return FALSE;
 
     const char *page_uri = webkit_web_page_get_uri(page);
+    if (page_allowlisted(page_uri))
+        return FALSE;
     const char *src = page_uri ? page_uri : "";
     const char *rtype = resource_type_for(request, req_uri);
     int third_party = is_third_party(page_uri, req_uri);
@@ -176,6 +205,14 @@ static gboolean on_user_message(WebKitWebPage *page, WebKitUserMessage *message,
         g_debug("[ATL-ADBLOCK-EXT] enabled=%d (toggle)", g_enabled);
         return TRUE;
     }
+    if (name && !strcmp(name, ATL_ALLOWLIST_MESSAGE)) {
+        GVariant *params = webkit_user_message_get_parameters(message);
+        if (params && g_variant_is_of_type(params, G_VARIANT_TYPE_STRING))
+            set_allowlist(g_variant_get_string(params, NULL));
+        g_debug("[ATL-ADBLOCK-EXT] allowlist updated (%d hosts)",
+                g_allowlist ? (int)g_strv_length(g_allowlist) : 0);
+        return TRUE;
+    }
     return FALSE;
 }
 
@@ -191,8 +228,15 @@ G_MODULE_EXPORT void
 webkit_web_process_extension_initialize_with_user_data(WebKitWebProcessExtension *extension,
                                                        GVariant *user_data)
 {
-    if (user_data && g_variant_is_of_type(user_data, G_VARIANT_TYPE_BOOLEAN))
+    if (user_data && g_variant_is_of_type(user_data, G_VARIANT_TYPE_BOOLEAN)) {
         g_enabled = g_variant_get_boolean(user_data);
+    } else if (user_data && g_variant_is_of_type(user_data, G_VARIANT_TYPE("(bs)"))) {
+        const char *joined = NULL;
+        gboolean enabled = TRUE;
+        g_variant_get(user_data, "(b&s)", &enabled, &joined);
+        g_enabled = enabled;
+        set_allowlist(joined);
+    }
 
     char *data = NULL;
     gsize len = 0;
