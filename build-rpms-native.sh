@@ -445,6 +445,16 @@ S="${STAGING}/atlantic-browser"; rm -rf "$S"; mkdir -p "$S"
 # shellcheck source=scripts/build-adblock-lists.sh
 . "${SCRIPT_DIR}/scripts/build-adblock-lists.sh"
 
+# Stage the filter payload for GitHub Pages publish (…/adblock/ next to the
+# rpm repo) — the on-device list updater downloads these between releases.
+if [ -n "${ARTIFACT_ROOT:-}" ]; then
+    mkdir -p "${ARTIFACT_ROOT}/adblock"
+    cp -a "${CONTENT_BLOCKER_BUILD_DIR}/engine.dat" \
+          "${CONTENT_BLOCKER_BUILD_DIR}/adblock-resources.json" \
+          "${CONTENT_BLOCKER_BUILD_DIR}/engine.version" \
+          "${ARTIFACT_ROOT}/adblock/"
+fi
+
 # Binary
 mkdir -p "${S}/usr/bin"
 cp -a "${BROWSER_SRC}/build_browser/atlantic-browser" "${S}/usr/bin/"
@@ -521,6 +531,8 @@ cp -a "${CONTENT_BLOCKER_BUILD_DIR}/engine.dat" \
       "${S}/usr/share/atlantic-browser/engine.dat"
 cp -a "${CONTENT_BLOCKER_BUILD_DIR}/adblock-resources.json" \
       "${S}/usr/share/atlantic-browser/adblock-resources.json"
+cp -a "${CONTENT_BLOCKER_BUILD_DIR}/engine.version" \
+      "${S}/usr/share/atlantic-browser/engine.version"
 # DuckDuckGo autoconsent bundle — injected by the browser as a document-start
 # user script to auto-reject CMP cookie banners
 cp -a "${CONTENT_BLOCKER_BUILD_DIR}/autoconsent.js" \

@@ -23,6 +23,7 @@ on:
       - sfos-toolchain*.cmake
       - qt5-plugin/**
       - adblock-engine/**
+      - web-extension/**
       # data/ carries vendored filter lists (atlantic-extra.txt) and other
       # shipped payload — changes there alter engine.dat.
       - data/**
@@ -187,6 +188,12 @@ jobs:
           rm -rf "${repo_root}"
           mkdir -p "${repo_arch_dir}"
           cp -a "${ARTIFACT_ROOT}/rpms/." "${repo_arch_dir}/"
+          # Adblock filter payload for the on-device list updater. The weekly
+          # refresh-adblock-lists workflow updates the same Pages path between
+          # builds (this publish is force_orphan, so it must re-add it).
+          if [ -d "${ARTIFACT_ROOT}/adblock" ]; then
+            cp -a "${ARTIFACT_ROOT}/adblock" "${repo_root}/adblock"
+          fi
           createrepo_c --update "${repo_arch_dir}"
           if [ -z "${ATLANTIC_RPM_SIGNING_KEY_ID:-}" ]; then
             echo "Missing ATLANTIC_RPM_SIGNING_KEY_ID for repository signing" >&2

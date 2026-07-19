@@ -108,6 +108,11 @@ if [ -s "${CONTENT_BLOCKER_DATA_DIR}/atlantic-extra.txt" ]; then
 fi
 "${SCRIPT_DIR}/adblock-engine/target/release/builder" "${BUILDER_ARGS[@]}"
 
+# Freshness stamp: build epoch, shipped/published next to engine.dat. The
+# browser's list updater and both engine loaders compare these to pick the
+# newer of the shipped and downloaded copies.
+date +%s > "${CONTENT_BLOCKER_BUILD_DIR}/engine.version"
+
 echo "--- Fetching DuckDuckGo autoconsent (cookie-banner auto-reject) ---"
 # The standalone dist bundle self-initializes (autoAction=optOut, embedded
 # compact rules) — the browser injects it verbatim as a document-start user

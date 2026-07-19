@@ -1,0 +1,52 @@
+name: Refresh adblock lists
+
+# Weekly rebuild of engine.dat from fresh upstream lists, published to the
+# Pages adblock/ path (keep_files leaves the rpm repo alone; the main build
+# workflow re-adds adblock/ itself since its publish is force_orphan). The
+# on-device AdBlockListUpdater polls engine.version there and downloads the
+# payload when it is newer than the installed copy.
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: refresh-adblock-lists
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Rebuild and publish filter lists
+    runs-on:
+      - self-hosted
+      - Linux
+      - ARM64
+      - atlantic
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rebuild filter payload from fresh lists
+        env:
+          STAGING: /opt/github-runner/builds/adblock-refresh-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          bash scripts/refresh-adblock-lists.sh adblock-out
+          rm -rf "${STAGING}"
+
+      - name: Publish to GitHub Pages (adblock/)
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: adblock-out
+          destination_dir: adblock
+          keep_files: true
+          enable_jekyll: false
+          commit_message: "ci: refresh adblock lists ${{ github.run_id }}"

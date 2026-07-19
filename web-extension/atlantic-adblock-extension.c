@@ -40,8 +40,11 @@ extern MatchResult atlantic_adblock_match_network(AtlanticAdblockEngine *engine,
                                                   const char *type, int third_party);
 extern void atlantic_adblock_free_match_result(MatchResult result);
 
-#define ATL_ENGINE_DAT "/usr/share/atlantic-browser/engine.dat"
-#define ATL_RESOURCES_JSON "/usr/share/atlantic-browser/adblock-resources.json"
+#define ATL_SHIPPED_DIR "/usr/share/atlantic-browser"
+/* Relative to g_get_user_cache_dir(); where the browser's AdBlockListUpdater
+ * downloads refreshed lists. Loaded instead of the shipped copy when its
+ * engine.version stamp is higher (same rule as the UI process). */
+#define ATL_UPDATED_SUBDIR "org.sailfishos/browser/adblock"
 #define ATL_TOGGLE_MESSAGE "atlantic-adblock-set-enabled"
 #define ATL_ALLOWLIST_MESSAGE "atlantic-adblock-set-allowlist"
 
@@ -238,26 +241,55 @@ webkit_web_process_extension_initialize_with_user_data(WebKitWebProcessExtension
         set_allowlist(joined);
     }
 
+    /* Pick the filter dir with the higher engine.version stamp (0 if absent). */
+    char *updated_dir = g_build_filename(g_get_user_cache_dir(), ATL_UPDATED_SUBDIR, NULL);
+    gint64 shipped_ver = 0, updated_ver = 0;
+    char *ver = NULL;
+    if (g_file_get_contents(ATL_SHIPPED_DIR "/engine.version", &ver, NULL, NULL)) {
+        shipped_ver = g_ascii_strtoll(ver, NULL, 10);
+        g_free(ver);
+        ver = NULL;
+    }
+    char *updated_ver_path = g_build_filename(updated_dir, "engine.version", NULL);
+    if (g_file_get_contents(updated_ver_path, &ver, NULL, NULL)) {
+        updated_ver = g_ascii_strtoll(ver, NULL, 10);
+        g_free(ver);
+    }
+    g_free(updated_ver_path);
+    const char *dir = updated_ver > shipped_ver ? updated_dir : ATL_SHIPPED_DIR;
+
+    char *dat_path = g_build_filename(dir, "engine.dat", NULL);
     char *data = NULL;
     gsize len = 0;
-    if (g_file_get_contents(ATL_ENGINE_DAT, &data, &len, NULL) && len > 0)
+    if (g_file_get_contents(dat_path, &data, &len, NULL) && len > 0)
         g_engine = atlantic_adblock_create_from_cache((const uint8_t *)data, len);
     g_free(data);
+    /* A corrupt/missing updated copy must not kill adblock entirely. */
+    if (!g_engine && dir != (const char *)ATL_SHIPPED_DIR) {
+        dir = ATL_SHIPPED_DIR;
+        if (g_file_get_contents(ATL_SHIPPED_DIR "/engine.dat", &data, &len, NULL) && len > 0)
+            g_engine = atlantic_adblock_create_from_cache((const uint8_t *)data, len);
+        g_free(data);
+    }
+    g_free(dat_path);
 
     /* Scriptlet/redirect resources are not part of the serialized cache; load
      * them so redirect= rules resolve to their surrogates instead of no-ops. */
     if (g_engine) {
+        char *res_path = g_build_filename(dir, "adblock-resources.json", NULL);
         char *res = NULL;
         gsize rlen = 0;
-        if (g_file_get_contents(ATL_RESOURCES_JSON, &res, &rlen, NULL) && rlen > 0) {
+        if (g_file_get_contents(res_path, &res, &rlen, NULL) && rlen > 0) {
             if (!atlantic_adblock_use_resources_json(g_engine, (const uint8_t *)res, rlen))
                 fprintf(stderr, "[ATL-ADBLOCK-EXT] resources.json failed to load\n");
         }
         g_free(res);
+        g_free(res_path);
     }
 
-    fprintf(stderr, "[ATL-ADBLOCK-EXT] initialized: engine=%s enabled=%d\n",
-            g_engine ? "loaded" : "FAILED", g_enabled);
+    fprintf(stderr, "[ATL-ADBLOCK-EXT] initialized: engine=%s (%s) enabled=%d\n",
+            g_engine ? "loaded" : "FAILED", dir, g_enabled);
+    g_free(updated_dir);
 
     g_signal_connect(extension, "page-created", G_CALLBACK(on_page_created), NULL);
 }
