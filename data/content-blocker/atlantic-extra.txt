@@ -20,3 +20,18 @@
 ! body.rpl-scroll-lock it stamps (a hidden modal would otherwise freeze
 ! scrolling behind it).
 reddit.com##.configured-xpromo
+!
+! pornhub first-click hijack (device-traced via [ADBLOCK] main-frame nav log,
+! build 564): tapping a video is intercepted and same-tab-navigated to the
+! FIRST-PARTY ad click-tracker /_xa/deep_click, which 302s onto rotating
+! unlisted casino landers (play.epicrespin.com -> epicbet.com,
+! respin-promo-en.webflow.io, ...). None of the hops are in EasyList, so the
+! decide-policy strict blocking and the redirect-hop check had nothing to
+! match. deep_click is the stable chokepoint (legit video navigation does not
+! route through it); the lander domains rotate but block the pair seen anyway.
+||pornhub.com/_xa/deep_click
+||youporn.com/_xa/deep_click
+||redtube.com/_xa/deep_click
+||tube8.com/_xa/deep_click
+||epicrespin.com^
+||epicbet.com^
