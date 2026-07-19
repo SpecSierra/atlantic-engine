@@ -155,6 +155,11 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # texture per scroll tick (unordered on this driver = stale/blank frames);
     # WEBKIT_SCROLLBAR_SMOOTHING low-pass filters the displayed position.
     "patches/webkit/webkit-scrollbar-sprite-and-smoothing.patch"
+    # webkit-scrollbar-no-hover-expand.patch: WEBKIT_SCROLLBAR_NO_HOVER=1 keeps the
+    # overlay scrollbar in its idle thin form — no hover/press expansion into the
+    # fat desktop bar + trough when touched (also keeps the sprite fast-path,
+    # which requires NoPart, active during drags).
+    "patches/webkit/webkit-scrollbar-no-hover-expand.patch"
     # webkit-kinetic-jank-resilient-end.patch: keep the kinetic fling alive across
     # main-thread jank stalls (the "lag spikes kill scroll inertia" on reddit). A
     # catch-up tick after a stall has near-zero dt, so the per-tick "moved <1px"

@@ -711,6 +711,10 @@ atlantic_export_browser_env() {
     # low-pass filters the displayed position so residual data jumps glide.
     export WEBKIT_SCROLLBAR_SPRITE="${WEBKIT_SCROLLBAR_SPRITE:-1}"
     export WEBKIT_SCROLLBAR_SMOOTHING="${WEBKIT_SCROLLBAR_SMOOTHING:-0.4}"
+    # Honoured by webkit-scrollbar-no-hover-expand.patch. Touching the scrollbar
+    # must not blow the thumb up into the fat desktop hover/press bar + trough:
+    # always paint the idle thin form. =0 restores upstream expansion.
+    export WEBKIT_SCROLLBAR_NO_HOVER="${WEBKIT_SCROLLBAR_NO_HOVER:-1}"
 
     # ── Skia painting backend ────────────────────────────────────────────────
     # WEBKIT_SKIA_ENABLE_CPU_RENDERING and WEBKIT_SKIA_GPU_PAINTING_THREADS are
