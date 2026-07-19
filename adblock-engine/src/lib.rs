@@ -101,13 +101,17 @@ pub unsafe extern "C" fn atlantic_adblock_match_network(
             return safe_match_result();
         }
 
-        let request = Request::preparsed(
-            req,
-            "",
-            if src.is_empty() || third_party { "" } else { src },
-            rtype,
-            third_party,
-        );
+        // Request::new parses the request/source hostnames itself. The old
+        // Request::preparsed call passed "" as the request HOSTNAME (and a full
+        // URL where a hostname was expected), so hostname-anchored ("||host^")
+        // filters could never match — device-proven with the deep_click rules:
+        // engine.dat matched via Request::new but the runtime never blocked.
+        // Third-party is derived from the parsed hostnames; the caller's flag
+        // is only a fallback when the source URL is unparseable.
+        let request = match Request::new(req, src, rtype) {
+            Ok(r) => r,
+            Err(_) => Request::preparsed(req, "", "", rtype, third_party),
+        };
 
         let result = eng.check_network_request(&request);
 
