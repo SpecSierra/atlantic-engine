@@ -1,0 +1,35 @@
+Forward the media player's Referer to adaptive-streaming child requests.
+
+Native HLS playback: the master manifest is fetched by WebKitWebSrc with the
+page's full request context, but variant playlists and media segments are
+fetched by souphttpsrc elements the adaptive demuxer spawns internally — with
+no Referer at all. CDN edges that validate it (device-proven on pornhub's
+*-h.phncdn.com: HTTP 412 with no Referer, 200 with any) kill playback right
+after the master manifest with MEDIA_ERR_SRC_NOT_SUPPORTED. Stamp the
+player's referrer into every souphttpsrc via its extra-headers property in
+configureElement (element-setup fires for elements created anywhere in the
+pipeline). WEBKIT_GST_NO_SOUP_REFERER=1 restores upstream behavior.
+
+--- a/Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp
++++ b/Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp
+@@ -2732,6 +2732,20 @@
+     if (gst_check_version(1, 22, 0) && startsWith(name.span(), "urisourcebin"_s) && (isBlob || isMediaSource() || isMediaStreamPlayer()))
+         g_object_set(element, "use-buffering", FALSE, "parse-streams", !isMediaStreamPlayer(), nullptr);
+ 
++    // HLS/DASH child fetches (variant playlists, media segments) are done by
++    // souphttpsrc elements the adaptive demuxer creates internally, bypassing
++    // WebKitWebSrc — so they carry no Referer. Some CDNs validate it
++    // (device-proven on pornhub's *-h.phncdn.com edges: HTTP 412 without a
++    // Referer, 200 with one), which kills native HLS playback right after the
++    // master manifest. Forward the player's referrer to every souphttpsrc.
++    // WEBKIT_GST_NO_SOUP_REFERER=1 restores upstream behavior.
++    if (startsWith(name.span(), "souphttpsrc"_s) && !m_referrer.isEmpty()
++        && !g_getenv("WEBKIT_GST_NO_SOUP_REFERER")) {
++        GUniquePtr<GstStructure> headers(gst_structure_new("extra-headers",
++            "Referer", G_TYPE_STRING, m_referrer.utf8().data(), nullptr));
++        g_object_set(element, "extra-headers", headers.get(), nullptr);
++    }
++
+     if (startsWith(name.span(), "parsebin"_s))
+         configureParsebin(element);
+ 

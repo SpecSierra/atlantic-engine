@@ -185,6 +185,11 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # PULSE_PROP_OVERRIDE can't do this — it only sets the context proplist, and
     # WebKit's explicit per-stream media.role wins. Unset = upstream behaviour.
     "patches/webkit/webkit-gst-media-role-env.patch"
+    # webkit-gst-soup-referer.patch: forward the player's Referer to the
+    # souphttpsrc elements the adaptive demuxer spawns for HLS variant/segment
+    # fetches — CDNs that validate Referer (phncdn: 412 without) killed native
+    # HLS right after the master manifest. WEBKIT_GST_NO_SOUP_REFERER=1 disables.
+    "patches/webkit/webkit-gst-soup-referer.patch"
     # webkit-volume-locked-env.patch: WEBKIT_VOLUME_LOCKED=1 — lock the HTML
     # media element volume to the system volume (upstream m_volumeLocked, the
     # iPhone model). Completes the media-role fix above: each new <video>
