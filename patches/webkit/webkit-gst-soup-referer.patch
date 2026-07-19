@@ -1,18 +1,26 @@
-Forward the media player's Referer to adaptive-streaming child requests.
+Send the page referrer on adaptive-streaming child requests.
 
-Native HLS playback: the master manifest is fetched by WebKitWebSrc with the
-page's full request context, but variant playlists and media segments are
-fetched by souphttpsrc elements the adaptive demuxer spawns internally — with
-no Referer at all. CDN edges that validate it (device-proven on pornhub's
-*-h.phncdn.com: HTTP 412 with no Referer, 200 with any) kill playback right
-after the master manifest with MEDIA_ERR_SRC_NOT_SUPPORTED. Stamp the
-player's referrer into every souphttpsrc via its extra-headers property in
-configureElement (element-setup fires for elements created anywhere in the
-pipeline). WEBKIT_GST_NO_SOUP_REFERER=1 restores upstream behavior.
+Native HLS: the master playlist is fetched by the pipeline's main
+WebKitWebSrc with the player's referrer, but variant playlists and media
+segments are fetched by child sources created inside the adaptive demuxer.
+Those children (a) never receive the player referrer (sourceSetup only fires
+for the main source) and (b) get Referer=<playlist URI> stamped by the
+demuxer via the extra-headers property, which is applied AFTER
+setHTTPReferrer and overrides it. CDNs that validate the page referer reject
+the result — device-proven on pornhub's phncdn HLS segments: 404 with the
+playlist referer (no ACAO on the error → CORS failure →
+MEDIA_ERR_SRC_NOT_SUPPORTED), 200 with the page referer and a browser UA.
+
+Three legs, all gated by WEBKIT_GST_NO_SOUP_REFERER=1 (unset = fix active):
+- configureElement hands every WebKitWebSrc (element-setup is deep, so this
+  reaches demuxer children) the player's referrer.
+- webKitWebSrcMakeRequest re-asserts that referrer after extra-headers.
+- souphttpsrc elements (not used by this port's demuxer, but harmless) get
+  the referrer via their own extra-headers.
 
 --- a/Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp
 +++ b/Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp
-@@ -2732,6 +2732,20 @@
+@@ -2732,6 +2732,30 @@
      if (gst_check_version(1, 22, 0) && startsWith(name.span(), "urisourcebin"_s) && (isBlob || isMediaSource() || isMediaStreamPlayer()))
          g_object_set(element, "use-buffering", FALSE, "parse-streams", !isMediaStreamPlayer(), nullptr);
  
@@ -30,6 +38,35 @@ pipeline). WEBKIT_GST_NO_SOUP_REFERER=1 restores upstream behavior.
 +        g_object_set(element, "extra-headers", headers.get(), nullptr);
 +    }
 +
++    // Same problem on the WebKitWebSrc path (which is what the adaptive
++    // demuxer actually uses in this port): child sources for variant
++    // playlists / segments never see sourceSetup, so their referrer stays
++    // empty and the demuxer's extra-headers Referer=<playlist URI> is what
++    // goes on the wire. Hand every WebKitWebSrc the player's referrer;
++    // webKitWebSrcMakeRequest re-asserts it over extra-headers.
++    if (WEBKIT_IS_WEB_SRC(element) && !m_referrer.isEmpty()
++        && !g_getenv("WEBKIT_GST_NO_SOUP_REFERER"))
++        webKitWebSrcSetReferrer(WEBKIT_WEB_SRC_CAST(element), m_referrer);
++
      if (startsWith(name.span(), "parsebin"_s))
          configureParsebin(element);
+ 
+--- a/Source/WebCore/platform/graphics/gstreamer/WebKitWebSourceGStreamer.cpp
++++ b/Source/WebCore/platform/graphics/gstreamer/WebKitWebSourceGStreamer.cpp
+@@ -691,6 +691,16 @@
+         });
+     }
+ 
++    // Re-assert the player's referrer over the demuxer-provided extra-headers:
++    // the adaptive demuxer stamps Referer=<playlist URI> on its child sources,
++    // and CDNs that validate the page referer reject those requests
++    // (device-proven on phncdn HLS segments: 404 with the playlist referer,
++    // 200 with the page referer). members->referrer is the page referrer,
++    // pushed to every WebKitWebSrc by MediaPlayerPrivateGStreamer's
++    // element-setup handler. WEBKIT_GST_NO_SOUP_REFERER=1 disables.
++    if (!members->referrer.isEmpty() && !g_getenv("WEBKIT_GST_NO_SOUP_REFERER"))
++        request.setHTTPReferrer(members->referrer);
++
+     // We always request Icecast/Shoutcast metadata, just in case ...
+     request.setHTTPHeaderField(HTTPHeaderName::IcyMetadata, "1"_s);
  
