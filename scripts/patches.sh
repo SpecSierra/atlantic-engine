@@ -265,6 +265,14 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # instruments TouchGestureController (touch motions in vs axis events out) to
     # localise the real loss in touch delivery. Applies on top of the patch above.
     "patches/webkit/webkit-kinetic-starved-gesture-mitigation.patch"
+    # webkit-kinetic-wheel-path-diagnostic.patch: (a) defaults the single-sample
+    # fallback OFF — measured, it fires on a lone -600px delta and pins the clamp at
+    # 10000 px/s, turning a dead fling into a violent one. (b) The touch layer was
+    # cleared by instrumentation (motions in == axis events out, 8-12 per flick) while
+    # the fling estimator still sees motion=0, so the wheel events are lost between
+    # the UIProcess and ScrollingEffectsController. Traces every wheel event reaching
+    # the kinetic path and every branch that can discard one. Applies on top of above.
+    "patches/webkit/webkit-kinetic-wheel-path-diagnostic.patch"
     # webkit-gst-buffer-tuning.patch: makes GstQueue2 high-watermark,
     # urisourcebin ring-buffer-max-size and uridecodebin buffer-size
     # configurable via WEBKIT_GST_QUEUE_HIGH_WATERMARK /
