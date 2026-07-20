@@ -1,0 +1,80 @@
+Fix the dead fling at its source: emit Phase::Began at the start of a touch scroll.
+
+This is the root cause behind the split-controller symptom the diagnostics found,
+and it is one line of missing state.
+
+The WPE touch gesture recogniser emitted every scroll event of a flick with
+WebWheelEvent::Phase::Changed and the terminal event with Phase::Ended - it never
+emitted Phase::Began. But the scrolling tree only latches a gesture to a node when
+isGestureStart() is true, and isGestureStart() is Began || MayBegin. With no Began,
+ScrollingTreeLatchingController::nodeDidHandleEvent()'s shouldLatch() never fired, so
+the gesture was never latched and every wheel event was hit-tested independently.
+
+Device-traced on franceinfo.fr with per-controller logging (ctrl=%p):
+
+  ctrl=0x70c6def4e0  wheel in: delta=0,-60  ... historySize=9..20   (motion events)
+  ctrl=0x70c5224740  wheel in: delta=0,0 endOfNonMomentum=1 historySize=0  (Ended)
+  -> SINGLE-SAMPLE motion=0 -> velocity 0,0 (NO MOMENTUM)
+
+The motion events accumulated one controller's velocity history while the Ended
+event - which arms the kinetic fling - landed on a different controller with an
+empty history, so the fling computed from a single sample and the page stopped
+dead. The un-latched motion controller never received an Ended event, so its
+history was never consumed either (visible as historySize persisting across
+gestures). This only manifested on pages with more than one scrollable node
+reachable under the touch point, i.e. heavy real sites, never a trivial page.
+
+Fix: send the first scroll event of each gesture with Phase::Began (tracked by a
+per-gesture flag reset on touch-down). Latching then binds the whole gesture -
+Began, the Changed motion stream, and the Ended terminator, all of which route to
+the latched node via useLatchedEventElement() - to one scrolling node. The fling
+arms on the node that actually accumulated the motion, with full velocity history.
+
+Complementary to webkit-wheel-coalesce-phase-split.patch: that stops distinct
+phases from being merged into one event; this ensures the gesture has a start
+phase to latch on in the first place. Both are needed.
+
+diff -ruN a/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.cpp b/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.cpp
+--- a/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.cpp	2026-07-20 21:14:37.645043293 +0000
++++ b/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.cpp	2026-07-20 21:15:24.135312113 +0000
+@@ -73,6 +73,7 @@
+         m_start = { true, touchPoint->time, touchPoint->x, touchPoint->y };
+         m_offset = { touchPoint->x, touchPoint->y };
+         m_xAxisLockBroken = m_yAxisLockBroken = false;
++        m_axisGestureStarted = false;
+         g_touchMotionsIn = 0;
+         g_axisEventsOut = 0;
+         break;
+@@ -105,7 +106,16 @@
+         case GesturedEvent::Axis:
+         {
+             AxisEvent generatedEvent;
+-            generatedEvent.phase = WebWheelEvent::Phase::Changed;
++            // The first scroll event of a gesture must be Phase::Began so the scrolling
++            // tree latches the whole gesture (motion events and the terminal Ended
++            // event alike) to a single node. Upstream WPE only ever emitted Changed,
++            // so isGestureStart() was never true, latching never engaged, and each
++            // event was hit-tested independently — device-traced on franceinfo.fr,
++            // the motion events built one controller's velocity history while the
++            // Ended event armed a different, empty controller, so the fling saw one
++            // sample and the page stopped dead. See webkit-touch-gesture-began-phase.patch.
++            generatedEvent.phase = m_axisGestureStarted ? WebWheelEvent::Phase::Changed : WebWheelEvent::Phase::Began;
++            m_axisGestureStarted = true;
+ 
+ #if WPE_CHECK_VERSION(1, 5, 0)
+             generatedEvent.event.base = {
+diff -ruN a/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.h b/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.h
+--- a/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.h	2026-07-20 21:14:59.131167355 +0000
++++ b/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.h	2026-07-20 21:15:05.360203379 +0000
+@@ -86,6 +86,11 @@
+ 
+     bool m_xAxisLockBroken { false };
+     bool m_yAxisLockBroken { false };
++    // True once this gesture has emitted its first axis (scroll) event. The first is
++    // sent with Phase::Began so the scrolling tree latches the gesture to one node;
++    // without it every event hit-tests independently and a flick splits across nodes,
++    // killing the kinetic fling. See webkit-touch-gesture-began-phase.patch.
++    bool m_axisGestureStarted { false };
+ };
+ 
+ } // namespace WebKit

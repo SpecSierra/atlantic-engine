@@ -289,6 +289,15 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # Logs `this` on the kinetic trace to confirm the motion/end split directly.
     # Diagnostic only. Applies on top of above.
     "patches/webkit/webkit-kinetic-controller-identity-diagnostic.patch"
+    # webkit-touch-gesture-began-phase.patch: THE ROOT-CAUSE FIX. The WPE touch
+    # recogniser never emitted Phase::Began, so isGestureStart() was never true and the
+    # scrolling tree never latched a flick to a node — every wheel event hit-tested
+    # independently, motion events built one controller's velocity history while the
+    # Ended event armed a different, empty one (device-traced ctrl=%p), so the fling
+    # saw one sample and the page stopped dead. Emits Began on the first scroll event
+    # of each gesture so latching binds the whole gesture to one node. Complementary to
+    # the phase-split patch. Applies on top of above.
+    "patches/webkit/webkit-touch-gesture-began-phase.patch"
     # webkit-gst-buffer-tuning.patch: makes GstQueue2 high-watermark,
     # urisourcebin ring-buffer-max-size and uridecodebin buffer-size
     # configurable via WEBKIT_GST_QUEUE_HIGH_WATERMARK /
