@@ -74,7 +74,7 @@ positions. WEBKIT_REPAINT_ON_COMPOSITED_MOVE=1 restores stock behaviour (A/B).
 +            return v && *v && *v != '0';
 +        }();
 +        if (!repaintOnCompositedMove && widthDelta <= LayoutUnit(1) && heightDelta <= LayoutUnit(1)
-+            && !mustRepaintBackgroundOrBorderOnSizeChange(*oldRects.outlineBoundsRect, *newRects.outlineBoundsRect)) {
++            && !mustFullRepaintOnSizeChange(*oldRects.outlineBoundsRect, *newRects.outlineBoundsRect)) {
 +            if (auto* layerModelObject = dynamicDowncast<RenderLayerModelObject>(*this)) {
 +                if (auto* layer = layerModelObject->layer(); layer && layer->isComposited()) {
 +                    if (auto* backing = layer->backing(); backing && !backing->paintsIntoCompositedAncestor() && !backing->paintsIntoWindow())
