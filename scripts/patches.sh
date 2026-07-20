@@ -282,6 +282,13 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # sites because coalescing needs a queue behind an un-acked WebProcess.
     # WEBKIT_WHEEL_COALESCE_PHASE_SPLIT=0 restores stock. Applies on top of above.
     "patches/webkit/webkit-wheel-coalesce-phase-split.patch"
+    # webkit-kinetic-controller-identity-diagnostic.patch: the phase-split fix removed
+    # the big merges but franceinfo still dies — historySize now shows motion events
+    # building one controller's history while the Ended event arms another with empty
+    # history (stale entries persist across gestures, proving no shared controller).
+    # Logs `this` on the kinetic trace to confirm the motion/end split directly.
+    # Diagnostic only. Applies on top of above.
+    "patches/webkit/webkit-kinetic-controller-identity-diagnostic.patch"
     # webkit-gst-buffer-tuning.patch: makes GstQueue2 high-watermark,
     # urisourcebin ring-buffer-max-size and uridecodebin buffer-size
     # configurable via WEBKIT_GST_QUEUE_HIGH_WATERMARK /

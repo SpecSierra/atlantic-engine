@@ -1,0 +1,37 @@
+Diagnostic: log the ScrollingEffectsController identity on the kinetic wheel path.
+
+The phase-split fix (webkit-wheel-coalesce-phase-split.patch) removed the giant
+coalesced merges but franceinfo still stops dead, and the historySize counter now
+shows why it is a different bug: on flick N the first motion event already sees a
+non-zero historySize (stale entries from flick N-1 that were never consumed), while
+the Ended event that arms the fling sees historySize=0. That is only possible if the
+motion events and the gesture-end event reach DIFFERENT ScrollingEffectsController
+instances - motion builds node A's history, the Ended event arms node B whose history
+is empty, so the fling computes from one sample. Log `this` on both trace lines to
+confirm the split directly rather than infer it. Diagnostic only.
+
+Must apply AFTER webkit-kinetic-wheel-path-diagnostic.patch (edits its log lines).
+
+diff -ruN a/Source/WebCore/platform/ScrollingEffectsController.cpp b/Source/WebCore/platform/ScrollingEffectsController.cpp
+--- a/Source/WebCore/platform/ScrollingEffectsController.cpp	2026-07-20 20:56:49.474501850 +0000
++++ b/Source/WebCore/platform/ScrollingEffectsController.cpp	2026-07-20 20:57:15.506661098 +0000
+@@ -321,8 +321,8 @@
+     // reaching this function and every path that can discard one, so the drop can be
+     // attributed instead of guessed at.
+     if (kineticFlingLogEnabled()) {
+-        fprintf(stderr, "[kinetic] wheel in: delta=%.1f,%.1f precise=%d endOfNonMomentum=%d toMomentum=%d historySize=%zu\n",
+-            event.deltaX(), event.deltaY(), event.hasPreciseScrollingDeltas(),
++        fprintf(stderr, "[kinetic] ctrl=%p wheel in: delta=%.1f,%.1f precise=%d endOfNonMomentum=%d toMomentum=%d historySize=%zu\n",
++            this, event.deltaX(), event.deltaY(), event.hasPreciseScrollingDeltas(),
+             event.isEndOfNonMomentumScroll(), event.isTransitioningToMomentumScroll(),
+             m_scrollHistory.size());
+     }
+@@ -341,7 +341,7 @@
+         return false;
+ 
+     if (kineticFlingLogEnabled())
+-        fprintf(stderr, "[kinetic] gesture end reached, history=%zu usesScrollSnap=%d\n", m_scrollHistory.size(), usesScrollSnap());
++        fprintf(stderr, "[kinetic] ctrl=%p gesture end reached, history=%zu usesScrollSnap=%d\n", this, m_scrollHistory.size(), usesScrollSnap());
+ 
+     if (m_currentAnimation && !is<ScrollAnimationKinetic>(m_currentAnimation.get())) {
+         m_currentAnimation->stop();
