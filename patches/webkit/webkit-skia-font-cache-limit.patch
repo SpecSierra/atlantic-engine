@@ -1,0 +1,37 @@
+--- a/Source/WebKit/WebProcess/glib/WebProcessGLib.cpp
++++ b/Source/WebKit/WebProcess/glib/WebProcessGLib.cpp
+@@ -99,6 +99,7 @@
+ 
+ #if USE(SKIA)
+ #include <WebCore/ProcessCapabilities.h>
++#include <skia/core/SkGraphics.h>
+ #endif
+ 
+ #define RELEASE_LOG_SESSION_ID (m_sessionID ? m_sessionID->toUInt64() : 0)
+@@ -199,6 +200,26 @@
+     if (enableCPURendering && strcmp(enableCPURendering, "0"))
+         ProcessCapabilities::setCanUseAcceleratedBuffers(false);
+     IGNORE_CLANG_WARNINGS_END
++
++    // Skia's global glyph (strike) cache defaults to SK_DEFAULT_FONT_CACHE_LIMIT,
++    // which is 2 MB -- a conservative default for arbitrary embedders, and never
++    // raised by WebKit itself. A browser holds a strike per font x size x weight x
++    // subpixel-position, so a text-heavy page overflows 2 MB and then evicts and
++    // re-rasterizes glyphs continuously. That costs more here than on ports that
++    // keep glyphs on the GPU: this port rasterizes on the CPU whenever CPU
++    // painting is selected (the default on the libhybris Adreno stack).
++    // WEBKIT_SKIA_FONT_CACHE_LIMIT_MB tunes it; 0 keeps Skia's own default.
++    size_t fontCacheLimitMB = 8;
++    IGNORE_CLANG_WARNINGS_BEGIN("unsafe-buffer-usage-in-libc-call")
++    if (const char* fontCacheLimitEnv = getenv("WEBKIT_SKIA_FONT_CACHE_LIMIT_MB")) {
++        char* parseEnd = nullptr;
++        unsigned long parsed = strtoul(fontCacheLimitEnv, &parseEnd, 10);
++        if (parseEnd && parseEnd != fontCacheLimitEnv)
++            fontCacheLimitMB = parsed;
++    }
++    IGNORE_CLANG_WARNINGS_END
++    if (fontCacheLimitMB)
++        SkGraphics::SetFontCacheLimit(fontCacheLimitMB * 1024 * 1024);
+ #endif
+ 
+ #if ENABLE(MEDIA_STREAM)

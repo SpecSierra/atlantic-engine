@@ -149,6 +149,17 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # destroyDecodedData(), so memory-pressure pruning reclaims it.
     # WEBKIT_CACHED_SUBIMAGE=0 restores stock behaviour for A/B.
     "patches/webkit/webkit-cached-subimage.patch"
+    # webkit-skia-font-cache-limit.patch: Skia's global glyph (strike) cache runs
+    # at SK_DEFAULT_FONT_CACHE_LIMIT = 2 MB, its conservative default for
+    # arbitrary embedders; WebKit never calls SkGraphics::SetFontCacheLimit() on
+    # any port. A browser keeps a strike per font x size x weight x subpixel
+    # position, so a text-heavy page overflows 2 MB and then evicts and
+    # re-rasterizes glyphs continuously -- and this port rasterizes glyphs on the
+    # CPU whenever CPU painting is selected (the default on the Adreno 610
+    # libhybris stack), so those re-rasterizations land on the paint threads.
+    # Raises it to 8 MB at WebProcess init. WEBKIT_SKIA_FONT_CACHE_LIMIT_MB tunes
+    # it (0 = Skia's stock 2 MB) for A/B. UNVERIFIED ON DEVICE.
+    "patches/webkit/webkit-skia-font-cache-limit.patch"
     "patches/webkit/webkit-renderbox-isnan.patch"
     "patches/webkit/webkit-shapeoutside-isnan.patch"
     # webkit-gpu-process-by-default-wpe.patch: DISABLED. It hard-enables
