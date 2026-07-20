@@ -133,6 +133,11 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # animated WebP, whose per-frame offsets and inter-frame blending are in
     # full-resolution canvas coordinates. PNG remains full-resolution — libpng
     # has no scaled-decode equivalent, so it needs a different mechanism.
+    # DEVICE-MEASURED (build 579, 40 stills 2000x1500 drawn at 750 device px =>
+    # scale 0.375 => level 2; fling paths disabled, purge pinned, n=3):
+    #   settled WebProcess RSS 638 MB -> 278 MB, i.e. -361 MB (-56%).
+    # Largest single win measured on this port. Note the same page in PNG holds
+    # the 638 MB figure permanently, which is the size of the remaining PNG gap.
     "patches/webkit/webkit-webp-subsampling.patch"
     # webkit-cached-subimage.patch: make WebCore's CachedSubimage reachable off
     # CG. Upstream ships the class but the only two hooks that drive it
@@ -148,18 +153,21 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # (WEBKIT_CACHED_SUBIMAGE_MIN_AREA); the cache is dropped on dataChanged() and
     # destroyDecodedData(), so memory-pressure pruning reclaims it.
     # WEBKIT_CACHED_SUBIMAGE=0 restores stock behaviour for A/B.
+    # DEVICE-MEASURED (build 579, local file:// benches, fling paths disabled so
+    # the paint path is actually exercised — a default `atldbg render --scroll`
+    # measures the fling path instead, see README "Benchmarking / A-B"):
+    #   steady state at scale 0.11 — 34.1 -> 44.1 fps (+29%), p95 64 -> 30 ms
+    #   (-53%), jank 19% -> 2%, Skia raster CPU 43% -> 4.5% (~9.5x). Cold cost is
+    #   one fill per image per scale: +12 ms median cold p95, cold jank actually
+    #   improves 29% -> 19%.
+    #   Memory: cache buffer is the DRAWN area, so it costs scale^2 of a decoded
+    #   frame while saving 1 - scale^2 of the resample — exact complements. At
+    #   0.11 that is ~1% of a decoded frame for ~99% of the win; at 0.94 it is
+    #   ~88% for ~12%. Measured at 0.94: +72..88 MB over 60 images, matching the
+    #   geometry (no leak/thrash, so no global budget needed). Hence the
+    #   max-scale gate at 0.5 (>=75% of the benefit for <=25% of a decoded
+    #   frame); WEBKIT_CACHED_SUBIMAGE_MAX_SCALE=1.0 restores "any downscale".
     "patches/webkit/webkit-cached-subimage.patch"
-    # webkit-skia-font-cache-limit.patch: Skia's global glyph (strike) cache runs
-    # at SK_DEFAULT_FONT_CACHE_LIMIT = 2 MB, its conservative default for
-    # arbitrary embedders; WebKit never calls SkGraphics::SetFontCacheLimit() on
-    # any port. A browser keeps a strike per font x size x weight x subpixel
-    # position, so a text-heavy page overflows 2 MB and then evicts and
-    # re-rasterizes glyphs continuously -- and this port rasterizes glyphs on the
-    # CPU whenever CPU painting is selected (the default on the Adreno 610
-    # libhybris stack), so those re-rasterizations land on the paint threads.
-    # Raises it to 8 MB at WebProcess init. WEBKIT_SKIA_FONT_CACHE_LIMIT_MB tunes
-    # it (0 = Skia's stock 2 MB) for A/B. UNVERIFIED ON DEVICE.
-    "patches/webkit/webkit-skia-font-cache-limit.patch"
     "patches/webkit/webkit-renderbox-isnan.patch"
     "patches/webkit/webkit-shapeoutside-isnan.patch"
     # webkit-gpu-process-by-default-wpe.patch: DISABLED. It hard-enables

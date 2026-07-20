@@ -736,16 +736,19 @@ atlantic_export_browser_env() {
     export WEBKIT_SKIA_CPU_PAINTING_THREADS="${WEBKIT_SKIA_CPU_PAINTING_THREADS:-2}"
 
     # ── Skia MSAA ────────────────────────────────────────────────────────────
-    # Upstream defaults non-x86 GTK/WPE to 4x MSAA (PlatformDisplaySkia.cpp
-    # s_defaultSampleCount) — "sacrifice a bit of quality on embedded" is relative
-    # to the 8x it uses on x86, NOT relative to off, so we were paying 4x
-    # multisampled render targets on an Adreno 610. Device A/B already showed this
-    # stack is GPU-submit-bound (all-CPU raster ~2x faster than GPU tile paint),
-    # so multisampled targets are on the wrong side of the bottleneck. Applies to
-    # accelerated ImageBuffers (canvas, filters, accelerated layers) even with CPU
-    # tile raster. 0/1 = MSAA off; set to 4 to restore upstream for A/B.
-    # UNVERIFIED ON DEVICE — this is the measurement, not a proven win.
-    export WEBKIT_SKIA_MSAA_SAMPLE_COUNT="${WEBKIT_SKIA_MSAA_SAMPLE_COUNT:-0}"
+    # DO NOT set WEBKIT_SKIA_MSAA_SAMPLE_COUNT=0 here. Build 579 shipped that as
+    # the default on the theory that 4x multisampled targets must be expensive on
+    # an Adreno 610. Device-measured on a canvas bench (1020x1400, 260 stroked
+    # non-axis-aligned paths/frame, the only live MSAA consumer on this config
+    # since CPU rendering disables accelerated buffers everywhere except
+    # RenderingPurpose::Canvas):
+    #     MSAA 4x (upstream) : 43 fps, p50 23 ms, p95 28 ms, jank 1%
+    #     MSAA off           :  5 fps, p50 191 ms, p95 205 ms, jank 99%
+    # i.e. disabling it is an ~8x REGRESSION. A multisampled target is what makes
+    # Skia's path antialiasing cheap; with sampleCount=0 it falls back to
+    # coverage/analytic AA and pays far more per-pixel and tessellation work for
+    # exactly the stroked-path content MSAA was meant to accelerate. Upstream's
+    # non-x86 default of 4 is correct here -- leave it alone.
 
     # ── Tile size alignment ───────────────────────────────────────────────────
     # 256 px tiles for Adreno 610 — smaller texture uploads reduce GPU pipeline
