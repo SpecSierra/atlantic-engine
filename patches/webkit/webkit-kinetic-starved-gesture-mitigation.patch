@@ -1,0 +1,213 @@
+Mitigate starved-gesture flings, and instrument the touch path that causes them.
+
+Follow-up to webkit-kinetic-fling-velocity-fixes.patch, whose end-event repair did
+NOT fix the dead flings: franceinfo.fr still lost 2 of 10 flicks after it landed
+(3 of 8 before). The diagnostic explains why - the degenerate case reports
+motion=1, not motion=0:
+
+  DEGENERATE samples=2 motion=1 span=0ms -> velocity 0,0 (NO MOMENTUM)
+
+The history was never being over-pruned. During post-load churn the entire flick
+arrives as a SINGLE motion wheel event instead of the usual 10-12, and a milder
+form shows the same starvation (motion=2, meanInterval=144ms -> 2500 px/s against
+a 4400 px/s norm). With one sample there is no interval to divide by, so no
+velocity is computable at any layer of the estimator. The loss happens upstream,
+in touch event delivery, when the main thread is saturated.
+
+Two changes, kept deliberately separate:
+
+1. MITIGATION (WEBKIT_KINETIC_SINGLE_SAMPLE_FALLBACK, default on): when exactly
+   one motion sample survives, charge its delta one nominal frame interval
+   (WEBKIT_KINETIC_NOMINAL_FRAME_MS, default 16.7) instead of returning zero, so
+   the flick produces a short fling rather than stopping dead. Clamped by
+   WEBKIT_KINETIC_MAX_VELOCITY, because a starved gesture can deliver the whole
+   flick distance in one event and 1200px/16ms would imply an absurd speed.
+   This papers over the starvation; it does not fix it.
+
+2. INSTRUMENTATION ([touchgesture], WEBKIT_FLINGVEL_LOG=1): count raw touch
+   motion events entering TouchGestureController against synthesized axis events
+   leaving it, per gesture. This localises the loss: "in" already ~1 means the
+   touch events never reached this layer and the repair belongs further down
+   (delivery/ack-timeout); healthy "in" with "out"=1 means the loss is here.
+
+Also bounds a wart introduced by the previous patch: zero-delta end events age
+out nothing, so a run of starved gestures left one stale end event behind per
+flick (visible as samples=2,3,4 while motion stayed 1). They are now collapsed
+to the newest.
+
+Must apply AFTER webkit-kinetic-fling-velocity-fixes.patch.
+
+diff -ruN a/Source/WebCore/platform/ScrollAnimationKinetic.cpp b/Source/WebCore/platform/ScrollAnimationKinetic.cpp
+--- a/Source/WebCore/platform/ScrollAnimationKinetic.cpp	2026-07-20 20:00:15.785246791 +0000
++++ b/Source/WebCore/platform/ScrollAnimationKinetic.cpp	2026-07-20 20:00:49.739457581 +0000
+@@ -196,6 +196,32 @@
+     return value;
+ }
+ 
++// Mitigation for starved gestures that deliver a single motion sample: charge that
++// lone delta one nominal frame interval rather than reporting zero velocity.
++// WEBKIT_KINETIC_SINGLE_SAMPLE_FALLBACK=0 disables it (restoring the dead fling);
++// WEBKIT_KINETIC_NOMINAL_FRAME_MS sets the assumed interval (default 16.7ms).
++static bool kineticSingleSampleFallbackEnabled()
++{
++    static bool enabled = [] {
++        const char* v = getenv("WEBKIT_KINETIC_SINGLE_SAMPLE_FALLBACK");
++        return !v || (*v && *v != '0');
++    }();
++    return enabled;
++}
++
++static double nominalFrameIntervalSeconds()
++{
++    static double value = [] {
++        if (const char* env = getenv("WEBKIT_KINETIC_NOMINAL_FRAME_MS")) {
++            double v = atof(env);
++            if (v >= 1.0 && v <= 200.0)
++                return v / 1000.0;
++        }
++        return 1.0 / 60.0;
++    }();
++    return value;
++}
++
+ // Absolute ceiling on accumulated fling velocity, in px/s. 0 disables the clamp.
+ // WEBKIT_KINETIC_MAX_VELOCITY tunes it.
+ static double kineticMaxVelocity()
+@@ -214,6 +240,12 @@
+ void ScrollAnimationKinetic::appendToScrollHistory(const PlatformWheelEvent& event)
+ {
+     if (kineticEndEventFixEnabled() && !wheelEventHasMotion(event)) {
++        // Keep the end event (its timestamp still bounds the gesture) but never let
++        // zero-delta events pile up: they age out nothing, so without this a run of
++        // starved gestures leaves one stale end event behind per flick.
++        m_scrollHistory.removeAllMatching([] (PlatformWheelEvent& otherEvent) -> bool {
++            return !wheelEventHasMotion(otherEvent);
++        });
+         m_scrollHistory.append(event);
+         return;
+     }
+@@ -265,18 +297,50 @@
+     auto first = kineticEndEventFixEnabled() && firstMotion ? *firstMotion : m_scrollHistory[0].timestamp();
+     auto last = kineticEndEventFixEnabled() && lastMotion ? *lastMotion : m_scrollHistory.rbegin()->timestamp();
+ 
+-    if (last == first) {
+-        if (flingVelLogEnabled())
+-            fprintf(stderr, "[flingvel] DEGENERATE samples=%zu motion=%zu span=0ms -> velocity 0,0 (NO MOMENTUM)\n", m_scrollHistory.size(), motionCount);
+-        return { };
+-    }
+-
+     FloatPoint accumDelta;
+     for (const auto& scrollEvent : m_scrollHistory)
+         accumDelta += FloatPoint(scrollEvent.deltaX(), scrollEvent.deltaY());
+ 
+     size_t samples = m_scrollHistory.size();
+ 
++    if (last == first) {
++        // Only one motion sample reached us, so there is no interval to divide by.
++        // This is not an arithmetic failure: on a busy page the touch->wheel motion
++        // events starve and the whole flick arrives as a single sample (measured on
++        // franceinfo.fr during post-load churn). Returning {0,0} makes the page stop
++        // dead under the finger.
++        //
++        // MITIGATION, not a fix: charge the lone delta one nominal frame interval so
++        // the gesture produces *a* fling instead of nothing. The real repair belongs
++        // in touch event delivery - see the [touchgesture] counters. The estimate is
++        // deliberately clamped, because a starved gesture can deliver the entire
++        // flick distance in one event, which over 16ms would imply an absurd speed.
++        double singleSampleVelocityY = 0;
++        double singleSampleVelocityX = 0;
++        if (kineticSingleSampleFallbackEnabled() && motionCount == 1) {
++            double interval = nominalFrameIntervalSeconds();
++            singleSampleVelocityX = accumDelta.x() * -1 / interval;
++            singleSampleVelocityY = accumDelta.y() * -1 / interval;
++            double ceiling = kineticMaxVelocity();
++            if (ceiling > 0) {
++                if (std::abs(singleSampleVelocityX) > ceiling)
++                    singleSampleVelocityX = std::copysign(ceiling, singleSampleVelocityX);
++                if (std::abs(singleSampleVelocityY) > ceiling)
++                    singleSampleVelocityY = std::copysign(ceiling, singleSampleVelocityY);
++            }
++        }
++
++        if (flingVelLogEnabled()) {
++            fprintf(stderr, "[flingvel] SINGLE-SAMPLE samples=%zu motion=%zu span=0ms accumDelta=%.1f,%.1f -> fallback velocity=%.0f,%.0f px/s%s\n",
++                m_scrollHistory.size(), motionCount, accumDelta.x(), accumDelta.y(),
++                singleSampleVelocityX, singleSampleVelocityY,
++                singleSampleVelocityY ? "" : " (NO MOMENTUM)");
++        }
++
++        m_scrollHistory.clear();
++        return FloatSize(singleSampleVelocityX, singleSampleVelocityY);
++    }
++
+     // FIXME: It's odd that computeVelocity() has the side effect of clearing history.
+     m_scrollHistory.clear();
+ 
+diff -ruN a/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.cpp b/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.cpp
+--- a/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.cpp	2026-07-20 20:00:15.788246810 +0000
++++ b/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.cpp	2026-07-20 20:01:19.714643647 +0000
+@@ -29,10 +29,31 @@
+ #if USE(LIBWPE) && ENABLE(TOUCH_EVENTS)
+ 
+ #include <WebCore/Scrollbar.h>
++#include <cstdio>
++#include <cstdlib>
+ #include <wtf/TZoneMallocInlines.h>
+ 
+ namespace WebKit {
+ 
++// Diagnostic (WEBKIT_FLINGVEL_LOG=1): the fling velocity estimator was measured
++// receiving a single motion sample for an entire flick on a busy page, which makes
++// the fling impossible to compute rather than merely weak. That starvation is
++// upstream of the estimator, so count what this controller is actually fed: raw
++// touch motion events in, versus synthesized axis events out, per gesture. If "in"
++// is already ~1 the touch events never arrived and the loss is below this layer;
++// if "in" is healthy but "out" is 1, the loss is here.
++static bool touchGestureLogEnabled()
++{
++    static bool enabled = [] {
++        const char* v = getenv("WEBKIT_FLINGVEL_LOG");
++        return v && *v && *v != '0';
++    }();
++    return enabled;
++}
++
++static unsigned g_touchMotionsIn = 0;
++static unsigned g_axisEventsOut = 0;
++
+ // FIXME: These ought to be either configurable or derived from system
+ //        properties, such as screen size and pixel density.
+ static constexpr uint32_t scrollCaptureThreshold { 200 };
+@@ -52,9 +73,12 @@
+         m_start = { true, touchPoint->time, touchPoint->x, touchPoint->y };
+         m_offset = { touchPoint->x, touchPoint->y };
+         m_xAxisLockBroken = m_yAxisLockBroken = false;
++        g_touchMotionsIn = 0;
++        g_axisEventsOut = 0;
+         break;
+     case wpe_input_touch_event_type_motion:
+     {
++        ++g_touchMotionsIn;
+         switch (m_gesturedEvent) {
+         case GesturedEvent::None:
+         case GesturedEvent::ContextMenu:
+@@ -114,6 +138,7 @@
+ #endif
+             m_offset.x = touchPoint->x;
+             m_offset.y = touchPoint->y;
++            ++g_axisEventsOut;
+             return generatedEvent;
+         }
+         }
+@@ -160,6 +185,11 @@
+         {
+             m_gesturedEvent = GesturedEvent::None;
+ 
++            if (touchGestureLogEnabled()) {
++                fprintf(stderr, "[touchgesture] gesture end: touchMotionsIn=%u axisEventsOut=%u gestureMs=%u\n",
++                    g_touchMotionsIn, g_axisEventsOut, touchPoint->time - m_start.time);
++            }
++
+             AxisEvent generatedEvent;
+             generatedEvent.phase = WebWheelEvent::Phase::Ended;
+ 

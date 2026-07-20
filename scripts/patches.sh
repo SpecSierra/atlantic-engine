@@ -257,6 +257,14 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # measured 1.09-1.12x N/(N-1) inflation in the same estimator. All three are
     # env-gated for A/B. Applies on top of the two diagnostics above.
     "patches/webkit/webkit-kinetic-fling-velocity-fixes.patch"
+    # webkit-kinetic-starved-gesture-mitigation.patch: the end-event repair above did
+    # NOT fix the dead flings (franceinfo still 2/10). Root cause per the diagnostic:
+    # motion=1 — the whole flick arrives as a SINGLE motion wheel event during churn,
+    # so no velocity is computable at this layer at all. Mitigates by charging that
+    # lone delta a nominal frame interval (clamped) so the flick still flings, and
+    # instruments TouchGestureController (touch motions in vs axis events out) to
+    # localise the real loss in touch delivery. Applies on top of the patch above.
+    "patches/webkit/webkit-kinetic-starved-gesture-mitigation.patch"
     # webkit-gst-buffer-tuning.patch: makes GstQueue2 high-watermark,
     # urisourcebin ring-buffer-max-size and uridecodebin buffer-size
     # configurable via WEBKIT_GST_QUEUE_HIGH_WATERMARK /
