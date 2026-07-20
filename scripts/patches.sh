@@ -241,6 +241,13 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # numerator and loses the denominator. Logs both ends of that chain. Applies on top
     # of the two kinetic patches above.
     "patches/webkit/webkit-flingvel-log-diagnostic.patch"
+    # webkit-flingvel-coast-log-diagnostic.patch: TEMPORARY follow-up to the above.
+    # The initial-velocity hypothesis was measured on device and refuted (franceinfo
+    # and a trivial local page both estimate ~4400 px/s for the same flick), so this
+    # logs what the user actually feels — coast distance vs the distance the model
+    # predicts, plus duration and tick count — to separate "fling cut short" from
+    # "fling correct but rendered too rarely". Applies on top of the patch above.
+    "patches/webkit/webkit-flingvel-coast-log-diagnostic.patch"
     # webkit-gst-buffer-tuning.patch: makes GstQueue2 high-watermark,
     # urisourcebin ring-buffer-max-size and uridecodebin buffer-size
     # configurable via WEBKIT_GST_QUEUE_HIGH_WATERMARK /
