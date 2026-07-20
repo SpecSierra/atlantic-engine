@@ -1,10 +1,10 @@
 Name:       wpewebkit2
-Summary:    WPE WebKit 2.52.4 for Sailfish OS
-Version:    2.52.4
+Summary:    WPE WebKit 2.52.5 for Sailfish OS
+Version:    2.52.5
 Release:    1
 License:    LGPLv2+ and BSD and MPLv2.0
 URL:        https://wpewebkit.org
-# Download from: https://wpewebkit.org/release/wpewebkit-2.52.4.tar.xz
+# Download from: https://wpewebkit.org/releases/wpewebkit-2.52.5.tar.xz
 Source0:    wpewebkit-%{version}.tar.xz
 Source1:    sfos-toolchain.cmake
 Source2:    webkit-quirks-no-video.patch
@@ -53,7 +53,7 @@ BuildRequires:  pkgconfig(epoxy)
 Requires:       wpe-sfos-compat
 
 %description
-WPE WebKit 2.52.4 built for Sailfish OS 5.1 aarch64 (Snapdragon 665,
+WPE WebKit 2.52.5 built for Sailfish OS 5.1 aarch64 (Snapdragon 665,
 ARMv8.0-A). This is the engine used by the WPE Sailfish Browser as a
 replacement for the Gecko/EmbedLite engine.
 
@@ -65,11 +65,11 @@ Build configuration:
   - glibc version tags downgraded to GLIBC_2.17
 
 %package devel
-Summary:    Development files for WPE WebKit 2.52.4
+Summary:    Development files for WPE WebKit 2.52.5
 Requires:   %{name} = %{version}-%{release}
 
 %description devel
-Headers and pkg-config files for building against WPE WebKit 2.52.4
+Headers and pkg-config files for building against WPE WebKit 2.52.5
 on Sailfish OS.
 
 # ===========================================================================

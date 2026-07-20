@@ -107,7 +107,7 @@ echo "--- wpewebkit ${LEGACY_WPEWEBKIT_VERSION} ---"
 if [ ! -f "$SOURCES_DIR/wpewebkit-${LEGACY_WPEWEBKIT_VERSION}.tar.xz" ]; then
   echo "  Downloading from wpewebkit.org..."
   curl -L --progress-bar \
-    "https://wpewebkit.org/release/wpewebkit-${LEGACY_WPEWEBKIT_VERSION}.tar.xz" \
+    "https://wpewebkit.org/releases/wpewebkit-${LEGACY_WPEWEBKIT_VERSION}.tar.xz" \
     -o "$SOURCES_DIR/wpewebkit-${LEGACY_WPEWEBKIT_VERSION}.tar.xz"
   echo "  Downloaded wpewebkit-${LEGACY_WPEWEBKIT_VERSION}.tar.xz"
 else

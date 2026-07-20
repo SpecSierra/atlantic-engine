@@ -7,12 +7,12 @@ Build, packaging, and compatibility work for **Atlantic Browser** on **Sailfish 
 This repo is now being used to move Atlantic onto a cleaner baseline:
 
 - **Target OS:** Sailfish OS **5.1.0.8**
-- **Target engine:** WPE WebKit **2.52.4**
+- **Target engine:** WPE WebKit **2.52.5**
 - **Priority:** smaller patch queue, simpler packaging, faster engine updates
 - **Sandboxing — bwrap WebProcess sandbox, ON by default (verified on-device):** `ENABLE_BUBBLEWRAP_SANDBOX=ON` + the ported SFOS patch; `ATLANTIC_ENABLE_SANDBOX` defaults to 1. Confirmed working on an Xperia 10 II (SFOS 5.1, kernel 4.14): the WebProcess and the xdg-dbus-proxy run inside `bwrap`. This is *more* renderer isolation than the stock Gecko browser, which has none (it relies solely on Sailjail). Sailjail-style firejail confinement is wired but **default-off / experimental**: on SFOS it must run via the booster (a direct `firejail --profile=` re-exec fails with a `seteuid` error) and SFOS firejail replaces the inner bwrap with `fbwrap`, so it cannot nest — bwrap-only is the chosen posture. Toggle with `ATLANTIC_ENABLE_SANDBOX` / `ATLANTIC_ENABLE_SAILJAIL`
 - **Not a priority right now:** growing the old preload stack
 
-The live scripts in this repo now default to the **SFOS 5.1.0.8 / WPE 2.52.4**
+The live scripts in this repo now default to the **SFOS 5.1.0.8 / WPE 2.52.5**
 line. The older **WPE 2.52.1** line is still available by explicit override. The
 Qt5 bridge is **no longer carried forward from the old 2.52.1 source snapshot**:
 it lives in this repo as a self-contained source tree (`qt5-plugin/`, adapted
@@ -73,7 +73,7 @@ The important pins now live in `versions.env`.
 | libwpe | `1.17.0` |
 | libepoxy | `1.5.11` |
 | WPEBackend-fdo | `1.17.0` |
-| WPE WebKit | `2.52.4` |
+| WPE WebKit | `2.52.5` |
 | Qt5 plugin source | in-repo `qt5-plugin/` (tracks the pinned WebKit; the `2.52.1` label in `versions.env` survives only for RPM snapshot-tarball naming) |
 
 ### Migration target
@@ -81,7 +81,7 @@ The important pins now live in `versions.env`.
 | Item | Version |
 | --- | --- |
 | SFOS baseline | `5.1.0.8` |
-| WPE WebKit | `2.52.4` |
+| WPE WebKit | `2.52.5` |
 
 ## Current script behavior
 
