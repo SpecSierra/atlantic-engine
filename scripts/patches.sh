@@ -232,72 +232,32 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # stop-test fired at high velocity and killed the fling; only trust that test
     # over a real frame interval. Applies on top of the friction patch above.
     "patches/webkit/webkit-kinetic-jank-resilient-end.patch"
-    # webkit-flingvel-log-diagnostic.patch: TEMPORARY env-gated (WEBKIT_FLINGVEL_LOG=1)
-    # tracing of the fling initial-velocity estimate, to explain why momentum is not
-    # harmonized across sites (barely coasts on some pages, launches on others).
-    # Suspected: the UIProcess wheel coalescer collapses touch-derived wheel events
-    # whenever the WebProcess main thread is slow to ack (a per-page property), merging
-    # deltas but keeping only the last timestamp — so computeVelocity() keeps the
-    # numerator and loses the denominator. Logs both ends of that chain. Applies on top
-    # of the two kinetic patches above.
-    "patches/webkit/webkit-flingvel-log-diagnostic.patch"
-    # webkit-flingvel-coast-log-diagnostic.patch: TEMPORARY follow-up to the above.
-    # The initial-velocity hypothesis was measured on device and refuted (franceinfo
-    # and a trivial local page both estimate ~4400 px/s for the same flick), so this
-    # logs what the user actually feels — coast distance vs the distance the model
-    # predicts, plus duration and tick count — to separate "fling cut short" from
-    # "fling correct but rendered too rarely". Applies on top of the patch above.
-    "patches/webkit/webkit-flingvel-coast-log-diagnostic.patch"
-    # webkit-kinetic-fling-velocity-fixes.patch: fixes the two fling defects the
-    # diagnostics above pinned down. (1) A late zero-delta end event pruned the whole
-    # scroll history on busy pages, yielding velocity 0 — the fling never started and
-    # scrolling stopped dead (franceinfo: 3 of 8 flicks, 0 of 5 on an idle page).
-    # (2) accumulateVelocity() compounds stacked flicks with an upstream cap of 6x,
-    # so feed-scrolling ran away ("scrolls too fast" on YouTube). Also corrects the
-    # measured 1.09-1.12x N/(N-1) inflation in the same estimator. All three are
-    # env-gated for A/B. Applies on top of the two diagnostics above.
-    "patches/webkit/webkit-kinetic-fling-velocity-fixes.patch"
-    # webkit-kinetic-starved-gesture-mitigation.patch: the end-event repair above did
-    # NOT fix the dead flings (franceinfo still 2/10). Root cause per the diagnostic:
-    # motion=1 — the whole flick arrives as a SINGLE motion wheel event during churn,
-    # so no velocity is computable at this layer at all. Mitigates by charging that
-    # lone delta a nominal frame interval (clamped) so the flick still flings, and
-    # instruments TouchGestureController (touch motions in vs axis events out) to
-    # localise the real loss in touch delivery. Applies on top of the patch above.
-    "patches/webkit/webkit-kinetic-starved-gesture-mitigation.patch"
-    # webkit-kinetic-wheel-path-diagnostic.patch: (a) defaults the single-sample
-    # fallback OFF — measured, it fires on a lone -600px delta and pins the clamp at
-    # 10000 px/s, turning a dead fling into a violent one. (b) The touch layer was
-    # cleared by instrumentation (motions in == axis events out, 8-12 per flick) while
-    # the fling estimator still sees motion=0, so the wheel events are lost between
-    # the UIProcess and ScrollingEffectsController. Traces every wheel event reaching
-    # the kinetic path and every branch that can discard one. Applies on top of above.
-    "patches/webkit/webkit-kinetic-wheel-path-diagnostic.patch"
-    # webkit-wheel-coalesce-phase-split.patch: THE FIX for the dead fling. Device-
-    # traced: on a heavy page the wheel coalescer merges a whole flick's motion events
-    # AND the zero-delta Ended event into one event carrying Phase::Ended, so the
-    # kinetic fling sees a single sample — zero span, zero velocity, page stops dead.
-    # canCoalesce()'s phase-equality guard is gated to Cocoa upstream; this applies it
-    # on WPE too so motion and Ended events stay distinct. Only reproduces on busy
-    # sites because coalescing needs a queue behind an un-acked WebProcess.
-    # WEBKIT_WHEEL_COALESCE_PHASE_SPLIT=0 restores stock. Applies on top of above.
-    "patches/webkit/webkit-wheel-coalesce-phase-split.patch"
-    # webkit-kinetic-controller-identity-diagnostic.patch: the phase-split fix removed
-    # the big merges but franceinfo still dies — historySize now shows motion events
-    # building one controller's history while the Ended event arms another with empty
-    # history (stale entries persist across gestures, proving no shared controller).
-    # Logs `this` on the kinetic trace to confirm the motion/end split directly.
-    # Diagnostic only. Applies on top of above.
-    "patches/webkit/webkit-kinetic-controller-identity-diagnostic.patch"
-    # webkit-touch-gesture-began-phase.patch: THE ROOT-CAUSE FIX. The WPE touch
-    # recogniser never emitted Phase::Began, so isGestureStart() was never true and the
-    # scrolling tree never latched a flick to a node — every wheel event hit-tested
-    # independently, motion events built one controller's velocity history while the
-    # Ended event armed a different, empty one (device-traced ctrl=%p), so the fling
-    # saw one sample and the page stopped dead. Emits Began on the first scroll event
-    # of each gesture so latching binds the whole gesture to one node. Complementary to
-    # the phase-split patch. Applies on top of above.
+    # Touch fling harmonization (device-verified on franceinfo.fr / YouTube, build
+    # 589). Three complementary patches fixing "scrolling acceleration not
+    # harmonized" — dead flings on heavy pages, runaway flings on feed-scroll:
+    #
+    # webkit-touch-gesture-began-phase.patch: ROOT CAUSE. The WPE touch recogniser
+    # never emitted Phase::Began, so isGestureStart() was never true and the scrolling
+    # tree never latched a flick to a node — every wheel event hit-tested independently,
+    # so on a page with nested scrollers the motion events built one scroll controller's
+    # velocity history while the Ended event that arms the fling landed on a different,
+    # empty one, and the fling saw a single sample (velocity 0, page stops dead). Emits
+    # Began on the first scroll event of each gesture so latching binds the whole
+    # gesture to one node. WEBKIT_* none (unconditional). Cut dead flings 8/9 -> ~1/9.
     "patches/webkit/webkit-touch-gesture-began-phase.patch"
+    # webkit-wheel-coalesce-phase-split.patch: complementary. canCoalesce()'s phase
+    # guard is Cocoa-only upstream, so on a busy page the coalescer could merge a whole
+    # flick's motion events and its zero-delta Ended event into one Phase::Ended event —
+    # the same single-sample dead fling by a second route. Applies the guard on WPE.
+    # WEBKIT_WHEEL_COALESCE_PHASE_SPLIT=0 restores stock.
+    "patches/webkit/webkit-wheel-coalesce-phase-split.patch"
+    # webkit-kinetic-fling-velocity-fixes.patch: velocity-estimate corrections in the
+    # same file — measure across motion samples only (WEBKIT_KINETIC_END_EVENT_FIX),
+    # remove the 1.09-1.12x N/(N-1) inflation (WEBKIT_KINETIC_VELOCITY_BIAS_FIX), and
+    # bound stacked-flick accumulation so feed-scrolling (YouTube) stops running away
+    # (WEBKIT_KINETIC_VELOCITY_ACCUM_MAX / WEBKIT_KINETIC_MAX_VELOCITY). Must come after
+    # the friction and jank-resilient-end patches (same file).
+    "patches/webkit/webkit-kinetic-fling-velocity-fixes.patch"
     # webkit-gst-buffer-tuning.patch: makes GstQueue2 high-watermark,
     # urisourcebin ring-buffer-max-size and uridecodebin buffer-size
     # configurable via WEBKIT_GST_QUEUE_HIGH_WATERMARK /
