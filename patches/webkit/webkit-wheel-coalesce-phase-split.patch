@@ -1,0 +1,84 @@
+Fix the dead fling: don't coalesce wheel events across scrolling phases on WPE.
+
+Root cause, device-traced on franceinfo.fr (WEBKIT_FLINGVEL_LOG=1):
+
+  [flingvel] COALESCE 9 events -> 1 ... mergedDelta=0.0,-660.0
+  [kinetic]  wheel in: delta=0.0,-660.0 ... endOfNonMomentum=1 historySize=0
+  [flingvel] SINGLE-SAMPLE samples=1 motion=1 span=0ms -> velocity 0,0 (NO MOMENTUM)
+
+The WPE touch gesture recogniser emits a flick as N Changed-phase motion events
+followed by one Ended-phase event (zero delta) that marks the gesture boundary
+the kinetic fling arms from. WebWheelEventCoalescer::canCoalesce() gates its
+phase-equality check to PLATFORM(COCOA), so on WPE nothing stops the Ended event
+from merging into the motion stream. When the WebProcess is slow to ack - i.e.
+on a heavy page - the queue fills and the coalescer merges the ENTIRE gesture,
+motion events and the Ended event alike, into a single wheel event that carries
+the summed delta and Phase::Ended. ScrollingEffectsController then sees one
+sample at gesture end: zero time span, zero velocity, no fling. The page stops
+dead under the finger.
+
+This is why the defect only appears on busy sites and never reproduced on a
+trivial local page: coalescing only engages when events queue behind an
+un-acked WebProcess, which a light page never causes. It also explains the
+milder half-speed flings (a partial merge leaves two samples ~140ms apart) and
+why the earlier hypotheses missed - the loss is neither in touch delivery
+(measured in==out) nor in the estimator, but in phase-blind coalescing between
+the two.
+
+Fix: apply the existing phase-inequality guard on WPE/GTK/libwpe, not just
+Cocoa. phase() is carried on all these ports (canCoalesce already reads it in
+the Cocoa arm and coalesce() reads it in the libwpe arm). Motion and Ended
+events now stay distinct, so the full motion history reaches the fling.
+WEBKIT_WHEEL_COALESCE_PHASE_SPLIT=0 restores the upstream Cocoa-only behaviour.
+
+Supersedes the single-sample fallback mitigation, which should now stay off:
+with the history intact there is no lone sample to rescue.
+
+Must apply AFTER webkit-flingvel-log-diagnostic.patch (shares the file's
+added includes).
+
+diff -ruN a/Source/WebKit/Shared/WebWheelEventCoalescer.cpp b/Source/WebKit/Shared/WebWheelEventCoalescer.cpp
+--- a/Source/WebKit/Shared/WebWheelEventCoalescer.cpp	2026-07-20 20:37:12.237498225 +0000
++++ b/Source/WebKit/Shared/WebWheelEventCoalescer.cpp	2026-07-20 20:37:36.821653050 +0000
+@@ -47,6 +47,17 @@
+     return enabled;
+ }
+ 
++// Whether events in different scrolling phases are kept from coalescing on non-Cocoa
++// ports. On by default (the fix); WEBKIT_WHEEL_COALESCE_PHASE_SPLIT=0 restores stock.
++static bool wheelCoalescePhaseSplitEnabled()
++{
++    static bool enabled = [] {
++        const char* v = getenv("WEBKIT_WHEEL_COALESCE_PHASE_SPLIT");
++        return !v || (*v && *v != '0');
++    }();
++    return enabled;
++}
++
+ // Represents the number of wheel events we can hold in the queue before we start pushing them preemptively.
+ constexpr unsigned wheelEventQueueSizeThreshold = 10;
+ 
+@@ -70,9 +81,21 @@
+         return false;
+     if (a.granularity() != b.granularity())
+         return false;
+-#if PLATFORM(COCOA)
+-    if (a.phase() != b.phase())
++#if PLATFORM(COCOA) || PLATFORM(GTK) || USE(LIBWPE) || ENABLE(WPE_PLATFORM)
++    // Events in different scrolling phases must never coalesce. On WPE the touch
++    // gesture recogniser emits Changed-phase motion events and a final Ended-phase
++    // event (zero delta) that marks the gesture boundary the kinetic fling is armed
++    // from. Upstream gates this check to Cocoa, so on WPE a whole flick's motion
++    // events plus the Ended event merged into ONE event carrying the merged delta and
++    // Phase::Ended — the fling then saw a single sample, zero time span, and computed
++    // zero velocity, so busy pages (franceinfo.fr) stopped dead under the finger
++    // instead of coasting. Device-traced: "COALESCE 9 events -> 1 ... endOfNonMomentum=1
++    // historySize=0". phase() is carried on all these ports, so apply the guard here.
++    // WEBKIT_WHEEL_COALESCE_PHASE_SPLIT=0 restores the upstream (Cocoa-only) behaviour.
++    if (wheelCoalescePhaseSplitEnabled() && a.phase() != b.phase())
+         return false;
++#endif
++#if PLATFORM(COCOA)
+     if (a.momentumPhase() != b.momentumPhase())
+         return false;
+ #endif

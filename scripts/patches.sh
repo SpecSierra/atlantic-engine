@@ -273,6 +273,15 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # the UIProcess and ScrollingEffectsController. Traces every wheel event reaching
     # the kinetic path and every branch that can discard one. Applies on top of above.
     "patches/webkit/webkit-kinetic-wheel-path-diagnostic.patch"
+    # webkit-wheel-coalesce-phase-split.patch: THE FIX for the dead fling. Device-
+    # traced: on a heavy page the wheel coalescer merges a whole flick's motion events
+    # AND the zero-delta Ended event into one event carrying Phase::Ended, so the
+    # kinetic fling sees a single sample — zero span, zero velocity, page stops dead.
+    # canCoalesce()'s phase-equality guard is gated to Cocoa upstream; this applies it
+    # on WPE too so motion and Ended events stay distinct. Only reproduces on busy
+    # sites because coalescing needs a queue behind an un-acked WebProcess.
+    # WEBKIT_WHEEL_COALESCE_PHASE_SPLIT=0 restores stock. Applies on top of above.
+    "patches/webkit/webkit-wheel-coalesce-phase-split.patch"
     # webkit-gst-buffer-tuning.patch: makes GstQueue2 high-watermark,
     # urisourcebin ring-buffer-max-size and uridecodebin buffer-size
     # configurable via WEBKIT_GST_QUEUE_HIGH_WATERMARK /
