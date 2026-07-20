@@ -232,6 +232,15 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # stop-test fired at high velocity and killed the fling; only trust that test
     # over a real frame interval. Applies on top of the friction patch above.
     "patches/webkit/webkit-kinetic-jank-resilient-end.patch"
+    # webkit-flingvel-log-diagnostic.patch: TEMPORARY env-gated (WEBKIT_FLINGVEL_LOG=1)
+    # tracing of the fling initial-velocity estimate, to explain why momentum is not
+    # harmonized across sites (barely coasts on some pages, launches on others).
+    # Suspected: the UIProcess wheel coalescer collapses touch-derived wheel events
+    # whenever the WebProcess main thread is slow to ack (a per-page property), merging
+    # deltas but keeping only the last timestamp — so computeVelocity() keeps the
+    # numerator and loses the denominator. Logs both ends of that chain. Applies on top
+    # of the two kinetic patches above.
+    "patches/webkit/webkit-flingvel-log-diagnostic.patch"
     # webkit-gst-buffer-tuning.patch: makes GstQueue2 high-watermark,
     # urisourcebin ring-buffer-max-size and uridecodebin buffer-size
     # configurable via WEBKIT_GST_QUEUE_HIGH_WATERMARK /
