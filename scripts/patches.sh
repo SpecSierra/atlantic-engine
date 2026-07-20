@@ -122,6 +122,33 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # — the actual decode-cost offenders — are covered. Non-JPEG decoders opt out
     # via supportsSubsampling() and stay full-resolution (WebP/PNG = follow-up).
     "patches/webkit/webkit-skia-image-subsampling.patch"
+    # webkit-webp-subsampling.patch: the WebP half of the follow-up noted above.
+    # libwebp rescales during decode (WebPDecoderConfig::options.use_scaling), so
+    # a downscaled draw decodes straight to the reduced size exactly like the
+    # JPEG/IDCT path — same CPU and decoded-RAM win, and WebP is what most sites
+    # now serve for the large hero/feed images that hurt most. Output dimensions
+    # come from scaledSizeForSubsamplingLevel() so they agree with what
+    # frameSizeAtIndex() reports (verified against libwebp at denominators 1-8
+    # incl. odd sizes). Still images ONLY: supportsSubsampling() stays false for
+    # animated WebP, whose per-frame offsets and inter-frame blending are in
+    # full-resolution canvas coordinates. PNG remains full-resolution — libpng
+    # has no scaled-decode equivalent, so it needs a different mechanism.
+    "patches/webkit/webkit-webp-subsampling.patch"
+    # webkit-cached-subimage.patch: make WebCore's CachedSubimage reachable off
+    # CG. Upstream ships the class but the only two hooks that drive it
+    # (Image::shouldDrawFromCachedSubimage / mustDrawFromCachedSubimage) return
+    # false with no non-Cocoa override, and the driver that fills and blits the
+    # cache does not exist in the tarball at all — so on WPE every repaint of a
+    # downscaled image resamples the full-resolution bitmap again. This adds the
+    # driver (Image::drawFromCachedSubimage) plus a BitmapImage override, so a
+    # large scaled-down image is rasterized once at display resolution and blitted
+    # thereafter. Complements the subsampling patches: those cut what is decoded,
+    # this cuts what is resampled per paint. Scoped to unrotated, source-over,
+    # non-animated draws that are actually downscaled and >=256x256 of source
+    # (WEBKIT_CACHED_SUBIMAGE_MIN_AREA); the cache is dropped on dataChanged() and
+    # destroyDecodedData(), so memory-pressure pruning reclaims it.
+    # WEBKIT_CACHED_SUBIMAGE=0 restores stock behaviour for A/B.
+    "patches/webkit/webkit-cached-subimage.patch"
     "patches/webkit/webkit-renderbox-isnan.patch"
     "patches/webkit/webkit-shapeoutside-isnan.patch"
     # webkit-gpu-process-by-default-wpe.patch: DISABLED. It hard-enables
