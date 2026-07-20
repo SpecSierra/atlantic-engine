@@ -120,7 +120,8 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # JPEG decode, and lowers the "min area worth subsampling" from Apple's 5 MP
     # to ~1 MP (tunable via WEBKIT_IMAGE_SUBSAMPLE_MIN_AREA) so 1-3 MP feed photos
     # — the actual decode-cost offenders — are covered. Non-JPEG decoders opt out
-    # via supportsSubsampling() and stay full-resolution (WebP/PNG = follow-up).
+    # via supportsSubsampling() and stay full-resolution (WebP + PNG followed,
+    # see the two patches below).
     "patches/webkit/webkit-skia-image-subsampling.patch"
     # webkit-webp-subsampling.patch: the WebP half of the follow-up noted above.
     # libwebp rescales during decode (WebPDecoderConfig::options.use_scaling), so
@@ -131,14 +132,33 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # frameSizeAtIndex() reports (verified against libwebp at denominators 1-8
     # incl. odd sizes). Still images ONLY: supportsSubsampling() stays false for
     # animated WebP, whose per-frame offsets and inter-frame blending are in
-    # full-resolution canvas coordinates. PNG remains full-resolution — libpng
-    # has no scaled-decode equivalent, so it needs a different mechanism.
+    # full-resolution canvas coordinates. (PNG needed a different mechanism —
+    # see webkit-png-subsampling.patch below.)
     # DEVICE-MEASURED (build 579, 40 stills 2000x1500 drawn at 750 device px =>
     # scale 0.375 => level 2; fling paths disabled, purge pinned, n=3):
     #   settled WebProcess RSS 638 MB -> 278 MB, i.e. -361 MB (-56%).
     # Largest single win measured on this port. Note the same page in PNG holds
     # the 638 MB figure permanently, which is the size of the remaining PNG gap.
     "patches/webkit/webkit-webp-subsampling.patch"
+    # webkit-png-subsampling.patch: the last format in the subsampling trio, and
+    # the one with no library support — libpng has no equivalent to libjpeg's
+    # IDCT scaling or libwebp's use_scaling. But rows arrive one at a time
+    # through libpng's progressive callback, so the reduced image is box-filtered
+    # as they stream in: only the smaller backing store plus ONE accumulator row
+    # is ever allocated, which cuts PEAK decode memory and not merely the
+    # retained copy (a decode-then-downscale would only do the latter).
+    # The accumulator keeps alpha-premultiplied r,g,b sums plus an alpha sum and
+    # a per-pixel sample count, so dividing by the alpha sum averages AND
+    # un-premultiplies in one step -- a transparent neighbour then contributes
+    # its alpha without tinting an opaque pixel's colour, and partial edge groups
+    # on non-multiple dimensions still average correctly. Verified standalone at
+    # denominators 2/4/8 incl. ragged 13x7.
+    # Restricted to non-interlaced, non-animated PNGs: Adam7 delivers each row
+    # across seven passes via a full-size interlace buffer (no peak win to be
+    # had), and APNG frames composite in full-resolution canvas coordinates.
+    # Motivation: a 24-image page measured 638 MB of WebProcess RSS in PNG vs
+    # 278 MB for the identical page in WebP.
+    "patches/webkit/webkit-png-subsampling.patch"
     # webkit-cached-subimage.patch: make WebCore's CachedSubimage reachable off
     # CG. Upstream ships the class but the only two hooks that drive it
     # (Image::shouldDrawFromCachedSubimage / mustDrawFromCachedSubimage) return
