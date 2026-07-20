@@ -248,6 +248,15 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # predicts, plus duration and tick count — to separate "fling cut short" from
     # "fling correct but rendered too rarely". Applies on top of the patch above.
     "patches/webkit/webkit-flingvel-coast-log-diagnostic.patch"
+    # webkit-kinetic-fling-velocity-fixes.patch: fixes the two fling defects the
+    # diagnostics above pinned down. (1) A late zero-delta end event pruned the whole
+    # scroll history on busy pages, yielding velocity 0 — the fling never started and
+    # scrolling stopped dead (franceinfo: 3 of 8 flicks, 0 of 5 on an idle page).
+    # (2) accumulateVelocity() compounds stacked flicks with an upstream cap of 6x,
+    # so feed-scrolling ran away ("scrolls too fast" on YouTube). Also corrects the
+    # measured 1.09-1.12x N/(N-1) inflation in the same estimator. All three are
+    # env-gated for A/B. Applies on top of the two diagnostics above.
+    "patches/webkit/webkit-kinetic-fling-velocity-fixes.patch"
     # webkit-gst-buffer-tuning.patch: makes GstQueue2 high-watermark,
     # urisourcebin ring-buffer-max-size and uridecodebin buffer-size
     # configurable via WEBKIT_GST_QUEUE_HIGH_WATERMARK /

@@ -1,0 +1,240 @@
+Fix two distinct kinetic-fling defects, both device-measured.
+
+BUG 1 - the fling dies outright on busy pages ("scrolling stops dead").
+
+A gesture's end (touch-up) event carries a zero delta. On a busy page the main
+thread stalls and that synthesized end event lands hundreds of ms late, so
+pruning the scroll history against its timestamp (a hardcoded 200ms window)
+discards every motion sample that preceded it. What remains is a single
+zero-delta event: one sample, zero span, zero accumulated delta, and therefore
+zero velocity. computeVelocity() returns {0,0} and the fling never starts - the
+page stops dead under the finger rather than coasting weakly.
+
+  Measured with WEBKIT_FLINGVEL_LOG=1, identical scripted flick:
+    franceinfo.fr          3 of 8 flicks -> velocity 0,0
+    trivial local page     0 of 5 flicks
+  When the fling does start, franceinfo is completely normal (coast 1038-1227px,
+  actual/predicted ratio 0.97-0.99) - identical to the local page. So momentum on
+  heavy sites is not weak, it is binary: full or absent. Alternating between the
+  two unpredictably is what makes scrolling feel unharmonized, and it is why
+  tuning WEBKIT_KINETIC_DECEL_FRICTION never evened it out - friction cannot
+  scale a velocity of zero.
+
+  Fix: only events that carry motion age out the history, and the velocity span
+  is measured across motion samples only, so a late zero-delta end event can
+  neither prune the samples nor stretch the denominator.
+  WEBKIT_KINETIC_END_EVENT_FIX=0 restores upstream behaviour.
+
+BUG 2 - repeated flicks run away ("scrolls way too fast", e.g. YouTube).
+
+accumulateVelocity() adds a multiple of the previous fling's velocity when a new
+flick lands in the same direction, and the sum becomes the *next* flick's
+previousVelocity. Upstream caps the multiplier at 6, so a single stacked flick
+can already reach 7x, and feed-scrolling compounds it geometrically into a
+scroll far faster than the finger ever asked for. The constant is desktop
+trackpad tuning; touch flick-stacking is a different regime.
+
+  Fix: default the accumulation cap to 1.0 (a deliberate second flick still adds
+  about one previous fling's worth - the familiar "flick again to go faster" -
+  without the blow-up) and bound the accumulated result absolutely.
+  WEBKIT_KINETIC_VELOCITY_ACCUM_MAX (0..6, 6 = upstream) and
+  WEBKIT_KINETIC_MAX_VELOCITY (px/s, 0 = no clamp) tune both.
+
+Also corrects a systematic bias in the same estimator: N samples contribute N
+deltas, but (last - first) spans only the N-1 intervals between them, inflating
+every fling by N/(N-1) - device-measured at a consistent 1.09-1.12x. Each delta
+is now charged one mean interval, making the estimate sample-count independent.
+WEBKIT_KINETIC_VELOCITY_BIAS_FIX=0 restores the upstream arithmetic.
+
+Note this leaves the reduced tick rate on franceinfo (~70/s vs ~120/s on an idle
+page) untouched: those flings coast the correct distance but are rendered less
+often, which is a paint-path issue, not a momentum one.
+
+Must apply AFTER the two webkit-flingvel-*-diagnostic.patch files (shares
+flingVelLogEnabled() and their computeVelocity context).
+
+diff -ruN a/Source/WebCore/platform/ScrollAnimationKinetic.cpp b/Source/WebCore/platform/ScrollAnimationKinetic.cpp
+--- a/Source/WebCore/platform/ScrollAnimationKinetic.cpp	2026-07-20 19:35:48.414047869 +0000
++++ b/Source/WebCore/platform/ScrollAnimationKinetic.cpp	2026-07-20 19:37:18.185622392 +0000
+@@ -29,9 +29,11 @@
+ 
+ #include "PlatformWheelEvent.h"
+ #include "ScrollExtents.h"
++#include <cmath>
+ #include <cstdio>
+ #include <cstdlib>
+ #include <cstring>
++#include <optional>
+ #include <wtf/TZoneMallocInlines.h>
+ #include <wtf/text/TextStream.h>
+ 
+@@ -150,8 +152,72 @@
+ 
+ ScrollAnimationKinetic::~ScrollAnimationKinetic() = default;
+ 
++// A gesture's end (touch-up) event carries a zero delta, and on a busy page it can
++// arrive long after the last real finger motion — the main thread stalls, and the
++// synthesized end event lands hundreds of ms late. Pruning the history against
++// *that* timestamp discards every motion sample that preceded it, leaving a single
++// zero-delta event: one sample, zero span, zero delta, and therefore zero velocity.
++// The fling does not merely weaken, it never starts, and the page stops dead under
++// the finger. Device-measured on franceinfo.fr: 3 of 8 flicks (0 of 5 on an idle
++// local page). Only let events that actually carry motion age out the history.
++// WEBKIT_KINETIC_END_EVENT_FIX=0 restores the upstream behaviour for A/B.
++static bool kineticEndEventFixEnabled()
++{
++    static bool enabled = [] {
++        const char* v = getenv("WEBKIT_KINETIC_END_EVENT_FIX");
++        return !v || (*v && *v != '0');
++    }();
++    return enabled;
++}
++
++static bool wheelEventHasMotion(const PlatformWheelEvent& event)
++{
++    return event.deltaX() || event.deltaY();
++}
++
++// Cap on how much of the previous fling's velocity a stacked flick may add.
++// Upstream's 6.0 is desktop trackpad tuning; on touch, feed-scrolling with repeated
++// flicks compounds it into a runaway. 1.0 still lets a deliberate second flick add
++// roughly the previous fling's velocity (the familiar "flick harder to go faster"),
++// without the geometric blow-up. WEBKIT_KINETIC_VELOCITY_ACCUM_MAX (0..6) tunes it;
++// 6 restores upstream.
++static double kineticAccumulationMax()
++{
++    static double value = [] {
++        if (const char* env = getenv("WEBKIT_KINETIC_VELOCITY_ACCUM_MAX")) {
++            double v = atof(env);
++            // velocityAccumulationMax is upstream's value and the upper bound here,
++            // so setting it explicitly restores stock behaviour.
++            if (v >= 0.0 && v <= velocityAccumulationMax)
++                return v;
++        }
++        return 1.0;
++    }();
++    return value;
++}
++
++// Absolute ceiling on accumulated fling velocity, in px/s. 0 disables the clamp.
++// WEBKIT_KINETIC_MAX_VELOCITY tunes it.
++static double kineticMaxVelocity()
++{
++    static double value = [] {
++        if (const char* env = getenv("WEBKIT_KINETIC_MAX_VELOCITY")) {
++            double v = atof(env);
++            if (v >= 0.0 && v <= 100000.0)
++                return v;
++        }
++        return 10000.0;
++    }();
++    return value;
++}
++
+ void ScrollAnimationKinetic::appendToScrollHistory(const PlatformWheelEvent& event)
+ {
++    if (kineticEndEventFixEnabled() && !wheelEventHasMotion(event)) {
++        m_scrollHistory.append(event);
++        return;
++    }
++
+     m_scrollHistory.removeAllMatching([&event] (PlatformWheelEvent& otherEvent) -> bool {
+         return (event.timestamp() - otherEvent.timestamp()) > scrollCaptureThreshold;
+     });
+@@ -180,12 +246,28 @@
+     if (m_scrollHistory.isEmpty())
+         return { };
+ 
+-    auto first = m_scrollHistory[0].timestamp();
+-    auto last = m_scrollHistory.rbegin()->timestamp();
++    // Velocity is defined by the samples that carry motion. A trailing zero-delta
++    // end event contributes nothing to the numerator, so letting its timestamp set
++    // `last` would stretch the denominator and under-report the fling — the same
++    // late-end-event problem that appendToScrollHistory() guards against.
++    size_t motionCount = 0;
++    std::optional<MonotonicTime> firstMotion;
++    std::optional<MonotonicTime> lastMotion;
++    for (const auto& scrollEvent : m_scrollHistory) {
++        if (!wheelEventHasMotion(scrollEvent))
++            continue;
++        ++motionCount;
++        if (!firstMotion)
++            firstMotion = scrollEvent.timestamp();
++        lastMotion = scrollEvent.timestamp();
++    }
++
++    auto first = kineticEndEventFixEnabled() && firstMotion ? *firstMotion : m_scrollHistory[0].timestamp();
++    auto last = kineticEndEventFixEnabled() && lastMotion ? *lastMotion : m_scrollHistory.rbegin()->timestamp();
+ 
+     if (last == first) {
+         if (flingVelLogEnabled())
+-            fprintf(stderr, "[flingvel] DEGENERATE samples=%zu span=0ms -> velocity 0,0 (NO MOMENTUM)\n", m_scrollHistory.size());
++            fprintf(stderr, "[flingvel] DEGENERATE samples=%zu motion=%zu span=0ms -> velocity 0,0 (NO MOMENTUM)\n", m_scrollHistory.size(), motionCount);
+         return { };
+     }
+ 
+@@ -198,7 +280,23 @@
+     // FIXME: It's odd that computeVelocity() has the side effect of clearing history.
+     m_scrollHistory.clear();
+ 
+-    auto velocity = FloatSize(accumDelta.x() * -1 / (last - first).value(), accumDelta.y() * -1 / (last - first).value());
++    // N samples contribute N deltas, but (last - first) spans only the N-1 intervals
++    // *between* them: the first sample's delta covers motion that happened before
++    // `first`. Dividing by the short denominator inflates every fling by N/(N-1) —
++    // device-measured at a consistent 1.09-1.12x on real gestures. Charge each delta
++    // one mean interval so the estimate is sample-count independent.
++    // WEBKIT_KINETIC_VELOCITY_BIAS_FIX=0 restores the upstream arithmetic.
++    static const bool biasFixEnabled = [] {
++        const char* v = getenv("WEBKIT_KINETIC_VELOCITY_BIAS_FIX");
++        return !v || (*v && *v != '0');
++    }();
++
++    size_t deltaSamples = kineticEndEventFixEnabled() ? motionCount : samples;
++    double spanSeconds = (last - first).value();
++    if (biasFixEnabled && deltaSamples > 1)
++        spanSeconds *= static_cast<double>(deltaSamples) / (deltaSamples - 1);
++
++    auto velocity = FloatSize(accumDelta.x() * -1 / spanSeconds, accumDelta.y() * -1 / spanSeconds);
+ 
+     if (flingVelLogEnabled()) {
+         // meanInterval is the per-sample spacing: a healthy ~60Hz touch stream is
+@@ -206,11 +304,11 @@
+         // UIProcess wheel coalescer, which merges deltas but keeps only the last
+         // timestamp - so the numerator survives while the denominator shrinks.
+         double spanMs = (last - first).milliseconds();
+-        double meanIntervalMs = spanMs / (samples - 1);
+-        fprintf(stderr, "[flingvel] samples=%zu span=%.1fms meanInterval=%.1fms accumDelta=%.1f,%.1f -> velocity=%.0f,%.0f px/s (N/(N-1) bias=%.2fx)\n",
+-            samples, spanMs, meanIntervalMs, accumDelta.x(), accumDelta.y(),
+-            velocity.width(), velocity.height(),
+-            static_cast<double>(samples) / (samples - 1));
++        double meanIntervalMs = deltaSamples > 1 ? spanMs / (deltaSamples - 1) : 0;
++        fprintf(stderr, "[flingvel] samples=%zu motion=%zu span=%.1fms effSpan=%.1fms meanInterval=%.1fms accumDelta=%.1f,%.1f -> velocity=%.0f,%.0f px/s\n",
++            samples, motionCount, spanMs, spanSeconds * 1000.0, meanIntervalMs,
++            accumDelta.x(), accumDelta.y(),
++            velocity.width(), velocity.height());
+     }
+ 
+     return velocity;
+@@ -237,9 +335,21 @@
+             double minVelocity = previousVelocity * velocityAccumulationFloor;
+             double maxVelocity = previousVelocity * velocityAccumulationCeil;
+             double accumulationMultiplier = (velocity - minVelocity) / (maxVelocity - minVelocity);
+-            velocity += previousVelocity * std::min(accumulationMultiplier, velocityAccumulationMax);
++            velocity += previousVelocity * std::min(accumulationMultiplier, kineticAccumulationMax());
+         }
+ 
++        // Flick-stacking compounds: each flick that lands while the previous fling
++        // is still coasting adds a multiple of the previous velocity, and the result
++        // becomes the next flick's previousVelocity. With the upstream cap of 6 a
++        // second flick can already reach 7x, and repeated feed-scrolling (YouTube)
++        // runs away into a scroll far faster than the finger ever asked for. Bound
++        // the accumulated result so stacking still feels responsive without becoming
++        // unbounded. A single unstacked flick measures ~4400 px/s on this device, so
++        // the default ceiling permits roughly two honest flicks' worth.
++        double ceiling = kineticMaxVelocity();
++        if (ceiling > 0 && std::abs(velocity) > ceiling)
++            velocity = std::copysign(ceiling, velocity);
++
+         return velocity;
+     };
+ 
