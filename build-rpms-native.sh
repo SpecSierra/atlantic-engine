@@ -180,22 +180,9 @@ sed -i "s|${WPE_PREFIX}|/usr|g" "${S}/usr/lib64/pkgconfig/wpebackend-fdo-1.0.pc"
 fpm_rpm wpebackend-fdo "$WPEBACKEND_FDO_VERSION" "WPE backend (freedesktop.org/Wayland) for Sailfish OS" "$S" \
     --depends libwpe --depends libepoxy
 
-# ===========================================================================
-# 3a. libsqlcipher (encrypted SQLite for the browser password manager)
-# ===========================================================================
-# Native-built into ${WPE_PREFIX} by scripts/build-sqlcipher.sh. Links
-# libcrypto.so.3, which the SFOS 5.1 base system provides, so no explicit
-# Requires is needed (same convention as libcap for bwrap above). The devel
-# header + pkgconfig are shipped so the browser can also be rebuilt on-device.
-echo "--- Staging libsqlcipher ---"
-S="${STAGING}/libsqlcipher"; rm -rf "$S"; mkdir -p "$S"
-stage_shared_library_family "${WPE_PREFIX}/lib/libsqlcipher.so" /usr/lib64 "$S"
-patch_staged_library_family "${S}/usr/lib64/libsqlcipher.so"
-stage_cp "${WPE_PREFIX}/include/sqlcipher" /usr/include "$S"
-mkdir -p "${S}/usr/lib64/pkgconfig"
-cp -a "${WPE_PREFIX}/lib/pkgconfig/sqlcipher.pc" "${S}/usr/lib64/pkgconfig/"
-sed -i "s|${WPE_PREFIX}|/usr|g" "${S}/usr/lib64/pkgconfig/sqlcipher.pc"
-fpm_rpm libsqlcipher "$SQLCIPHER_VERSION" "SQLCipher — encrypted SQLite (browser password manager)" "$S"
+# SQLCipher is NOT packaged here — the browser links Jolla's stock `sqlcipher`
+# (a devel header from the sysroot at build time, the runtime package on-device).
+# Shipping our own libsqlcipher collided with it (identical libsqlcipher.so.0).
 
 # ===========================================================================
 # 3b. Sandbox runtime executables (bwrap, xdg-dbus-proxy)
@@ -757,7 +744,7 @@ fpm_rpm atlantic-browser "$ATLANTIC_BROWSER_VERSION" "Atlantic Browser (WPE WebK
     --depends wpewebkit2 \
     --depends wpewebkit2-qt5 \
     --depends wpe-sfos-compat \
-    --depends libsqlcipher \
+    --depends sqlcipher \
     --depends sailjail \
     --depends xdg-dbus-proxy \
     --depends firejail
@@ -778,7 +765,7 @@ unset FPM_POST_EXTRA
 # atlantic-browser rpm and rpm can tell the two apart.
 echo "--- Staging atlantic-browser bundle (single-RPM, OpenRepos) ---"
 B="${STAGING}/atlantic-bundle"; rm -rf "$B"; mkdir -p "$B"
-for pkg in libwpe libepoxy wpebackend-fdo libsqlcipher wpewebkit2 wpewebkit2-qt5 \
+for pkg in libwpe libepoxy wpebackend-fdo wpewebkit2 wpewebkit2-qt5 \
            wpe-sfos-compat atlantic-browser; do
     cp -a "${STAGING}/${pkg}/." "$B/"
 done
@@ -814,6 +801,7 @@ fpm_rpm atlantic-browser "$ATLANTIC_BROWSER_VERSION" "Atlantic Browser (WPE WebK
     --depends sailjail \
     --depends firejail \
     --depends libseccomp \
+    --depends sqlcipher \
     --provides wpewebkit2 --replaces wpewebkit2 \
     --provides wpewebkit2-qt5 --replaces wpewebkit2-qt5 \
     --provides wpe-sfos-compat --replaces wpe-sfos-compat \

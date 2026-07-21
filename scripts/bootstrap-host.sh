@@ -40,7 +40,10 @@ replace_sysroot_with_copy() {
 # libsoup3-devel lands headers under /usr/include/libsoup-3.0/; expose them at the
 # bare <libsoup/...> path too, because build-webkit.sh strips the libsoup-3.0
 # Requires from wpe-webkit-2.0.pc so no -I .../libsoup-3.0 reaches the plugin.
-SYSROOT_DEVEL_PACKAGES="${SYSROOT_DEVEL_PACKAGES:-mesa-llvmpipe-libgbm-devel libsoup3-devel libnemotransferengine-qt5-devel libdsme-devel}"
+# sqlcipher-devel gives the browser password manager its build-time header
+# (/usr/include/sqlcipher/sqlite3.h) + sqlcipher.pc; the stock `sqlcipher`
+# runtime package is already on-device (so we depend on it, not ship our own).
+SYSROOT_DEVEL_PACKAGES="${SYSROOT_DEVEL_PACKAGES:-mesa-llvmpipe-libgbm-devel libsoup3-devel libnemotransferengine-qt5-devel libdsme-devel sqlcipher-devel}"
 
 ensure_sysroot_devel() {
     local root="$1"
@@ -52,7 +55,8 @@ ensure_sysroot_devel() {
 
     if [ -f "${root}/usr/include/gbm.h" ] && [ -e "${root}/usr/include/libsoup/soup.h" ] \
        && [ -f "${root}/usr/lib64/pkgconfig/nemotransferengine-qt5.pc" ] \
-       && [ -f "${root}/usr/lib64/pkgconfig/dsme_dbus_if.pc" ]; then
+       && [ -f "${root}/usr/lib64/pkgconfig/dsme_dbus_if.pc" ] \
+       && [ -f "${root}/usr/lib64/pkgconfig/sqlcipher.pc" ]; then
         echo "  Sysroot dev headers already present."
         return 0
     fi
@@ -139,7 +143,6 @@ apt-get install -y \
     libegl-dev libgles2-mesa-dev \
     libharfbuzz-dev libfontconfig1-dev libfreetype6-dev \
     libicu-dev libsqlite3-dev libxml2-dev libxslt1-dev \
-    libssl-dev tcl \
     libpng-dev libjpeg-dev libwebp-dev zlib1g-dev \
     libdav1d-dev \
     libdrm-dev libgbm-dev libcap-dev \

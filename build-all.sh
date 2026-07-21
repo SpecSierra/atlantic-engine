@@ -15,7 +15,6 @@ echo "================================================================"
 
 bash "${SCRIPT_DIR}/scripts/bootstrap-host.sh"
 bash "${SCRIPT_DIR}/scripts/build-engine.sh"
-bash "${SCRIPT_DIR}/scripts/build-sqlcipher.sh"
 bash "${SCRIPT_DIR}/scripts/build-sandbox-deps.sh"
 bash "${SCRIPT_DIR}/scripts/build-webkit.sh"
 bash "${SCRIPT_DIR}/scripts/build-adblock-engine.sh"
