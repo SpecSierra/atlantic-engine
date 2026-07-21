@@ -139,6 +139,7 @@ apt-get install -y \
     libegl-dev libgles2-mesa-dev \
     libharfbuzz-dev libfontconfig1-dev libfreetype6-dev \
     libicu-dev libsqlite3-dev libxml2-dev libxslt1-dev \
+    libssl-dev tcl \
     libpng-dev libjpeg-dev libwebp-dev zlib1g-dev \
     libdav1d-dev \
     libdrm-dev libgbm-dev libcap-dev \
