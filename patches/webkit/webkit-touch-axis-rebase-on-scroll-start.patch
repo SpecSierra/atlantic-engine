@@ -1,0 +1,79 @@
+Rebase the touch scroll origin at the Click->Axis transition so a hold cannot charge the fling.
+
+TouchGestureController pins its scroll origin m_offset at the touch-DOWN point for the
+entire Click phase (the whole time the finger is held), updating it only inside the Axis
+branch. Combined with the scrollCaptureThreshold clause - a hold of >=200ms flips the
+gesture to Axis on the next motion event regardless of distance - the first synthesized
+Axis (wheel) event carries a delta equal to the ENTIRE displacement since touch-down,
+including any finger drift accumulated during the hold, rather than the per-frame flick
+delta.
+
+The kinetic estimator then converts that into a velocity spike: computeVelocity() sums
+deltas over the last ~200ms and divides by the motion span, and a quick flick fits inside
+that window, so the oversized first delta stays in the numerator while the denominator is
+only the flick's duration. The longer the finger is held before flicking, the more drift
+accumulates into that first delta, so the fling launches faster the longer you hold - a
+"load power then release" behaviour reported on device (build 590, once the Began-phase
+latching made the fling actually arm; before that dead flings masked it).
+
+Fix: on the first Axis event of a gesture, rebase m_offset to the current touch point, so
+the first scroll delta is zero and reflects only post-threshold motion; the flick itself
+then defines the velocity. The Began event still latches the node (phase, not delta). Costs
+one pixelsPerLineStep of initial scroll slop, as on other platforms. The axis-lock logic is
+unaffected (it measures from m_start, the down point, deliberately). WEBKIT_TOUCH_AXIS_REBASE=0
+restores the stock behaviour for A/B. Must apply AFTER webkit-touch-gesture-began-phase.patch
+(same lines).
+
+--- a/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.cpp	2026-07-21 09:10:00.000000000 +0000
++++ b/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.cpp	2026-07-21 09:11:00.000000000 +0000
+@@ -29,6 +29,7 @@
+ #if USE(LIBWPE) && ENABLE(TOUCH_EVENTS)
+ 
+ #include <WebCore/Scrollbar.h>
++#include <cstdlib>
+ #include <wtf/TZoneMallocInlines.h>
+ 
+ namespace WebKit {
+@@ -42,6 +43,19 @@ static constexpr uint32_t contextMenuThreshold { 500 };
+ 
+ WTF_MAKE_TZONE_ALLOCATED_IMPL(TouchGestureController);
+ 
++// Whether the first scroll event of a gesture rebases the scroll origin to the current
++// touch point, discarding drift accumulated during the preceding hold so it cannot charge
++// the kinetic fling. See webkit-touch-axis-rebase-on-scroll-start.patch.
++// WEBKIT_TOUCH_AXIS_REBASE=0 restores stock behaviour.
++static bool touchAxisRebaseEnabled()
++{
++    static bool enabled = [] {
++        const char* v = getenv("WEBKIT_TOUCH_AXIS_REBASE");
++        return !v || (*v && *v != '0');
++    }();
++    return enabled;
++}
++
+ TouchGestureController::EventVariant TouchGestureController::handleEvent(const struct wpe_input_touch_event_raw* touchPoint)
+ {
+     switch (touchPoint->type) {
+@@ -90,9 +103,21 @@
+             // the motion events built one controller's velocity history while the
+             // Ended event armed a different, empty controller, so the fling saw one
+             // sample and the page stopped dead. See webkit-touch-gesture-began-phase.patch.
+-            generatedEvent.phase = m_axisGestureStarted ? WebWheelEvent::Phase::Changed : WebWheelEvent::Phase::Began;
++            bool firstAxisEvent = !m_axisGestureStarted;
++            generatedEvent.phase = firstAxisEvent ? WebWheelEvent::Phase::Began : WebWheelEvent::Phase::Changed;
+             m_axisGestureStarted = true;
+ 
++            // Rebase the scroll origin to the current touch point on the first Axis event.
++            // During the preceding Click phase (the hold) m_offset stays pinned at the
++            // touch-DOWN point, so the first scroll delta otherwise carries the whole
++            // displacement since touch-down - including drift accumulated during a long
++            // hold. A quick flick fits inside the ~200ms kinetic window, so that oversized
++            // first delta charges the fling: hold longer, drift more, launch faster. Start
++            // from the current point so only post-threshold motion counts; the Began event
++            // still latches the node by phase. WEBKIT_TOUCH_AXIS_REBASE=0 = stock.
++            if (firstAxisEvent && touchAxisRebaseEnabled())
++                m_offset = { touchPoint->x, touchPoint->y };
++
+ #if WPE_CHECK_VERSION(1, 5, 0)
+             generatedEvent.event.base = {
+                 static_cast<enum wpe_input_axis_event_type>(wpe_input_axis_event_type_mask_2d | wpe_input_axis_event_type_motion_smooth),
