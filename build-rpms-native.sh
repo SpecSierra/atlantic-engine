@@ -598,7 +598,7 @@ Comment=Atlantic Browser (WPE WebKit)
 MimeType=text/html;application/xhtml+xml;application/xml;text/xml;x-scheme-handler/http;x-scheme-handler/https;
 
 [X-Sailjail]
-Permissions=Internet;Audio;Camera;Microphone;WebView;UserDirs
+Permissions=Internet;Audio;Camera;Microphone;WebView;UserDirs;MediaIndexing;RemovableMedia
 OrganizationName=org.atlantic
 ApplicationName=atlanticbrowser
 DESKTOP
