@@ -258,17 +258,6 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # (WEBKIT_KINETIC_VELOCITY_ACCUM_MAX / WEBKIT_KINETIC_MAX_VELOCITY). Must come after
     # the friction and jank-resilient-end patches (same file).
     "patches/webkit/webkit-kinetic-fling-velocity-fixes.patch"
-    # webkit-touch-axis-rebase-on-scroll-start.patch: kill "hold to load power". The touch
-    # recogniser pins its scroll origin (m_offset) at the touch-DOWN point for the whole
-    # Click phase, and the >=200ms scrollCaptureThreshold flips a held finger to Axis on the
-    # next motion event regardless of distance. So the first synthesized scroll delta carried
-    # the entire displacement since touch-down — including drift accumulated during a long
-    # hold — and since a quick flick fits inside computeVelocity()'s ~200ms window, that
-    # oversized first delta charged the fling: hold longer, launch faster. Rebase m_offset to
-    # the current touch point on the first Axis event so only post-threshold motion counts.
-    # Exposed by build 590 once Began-phase latching made the fling actually arm. Must apply
-    # AFTER webkit-touch-gesture-began-phase.patch (same lines). WEBKIT_TOUCH_AXIS_REBASE=0 = stock.
-    "patches/webkit/webkit-touch-axis-rebase-on-scroll-start.patch"
     # webkit-gst-buffer-tuning.patch: makes GstQueue2 high-watermark,
     # urisourcebin ring-buffer-max-size and uridecodebin buffer-size
     # configurable via WEBKIT_GST_QUEUE_HIGH_WATERMARK /
