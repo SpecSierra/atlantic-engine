@@ -27,6 +27,7 @@ add_library(qtwpe MODULE
     WPEWaylandSubsurface.cpp
     WPEChromeOverlay.cpp
     WPEGeolocationBridge.cpp
+    WPEClipboardBridge.cpp
 )
 set_target_properties(qtwpe PROPERTIES
     OUTPUT_NAME qtwpe

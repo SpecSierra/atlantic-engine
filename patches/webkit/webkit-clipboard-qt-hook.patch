@@ -1,0 +1,69 @@
+Bridge web clipboard writes to the host system clipboard via a Qt hook.
+
+In this WPEBackend-fdo build, libwpe's pasteboard singleton
+(wpe_pasteboard_get_singleton) falls back to generic_pasteboard_interface — a
+plain in-process std::map — because WPEBackend-fdo exports no
+_wpe_pasteboard_interface. So navigator.clipboard.writeText() and
+document.execCommand('copy') "succeed" (the promise resolves, the site shows
+its checkmark) but the text lands only in that in-memory map and never reaches
+the SFOS Wayland/system clipboard: pasting into any other app (or the URL bar,
+which uses Qt's QClipboard) yields nothing.
+
+WebPasteboardProxyLibWPE runs this PlatformPasteboard in the UI process, which
+for Atlantic is a QGuiApplication. So expose a write hook that the qt5 plugin
+registers (WPEClipboardBridge), forwarding plain-text writes to
+QGuiApplication::clipboard(). The hook is a file-scope function pointer with
+default visibility; when null (plugin didn't register it, e.g.
+ATLANTIC_DISABLE_CLIPBOARD_BRIDGE=1) behavior is bit-for-bit stock. The hook
+runs on the UI/GUI thread (the pasteboard proxy IPC is dispatched there), which
+is where QClipboard must be touched.
+
+This covers both write entry points (PasteboardWebContent and the typed
+string write); write(PasteboardCustomData) funnels through write(content) so it
+is covered transitively. Rich markup is intentionally not mirrored — only
+plain text, matching the browser's own chrome copy path.
+
+--- a/Source/WebCore/platform/libwpe/PlatformPasteboardLibWPE.cpp
++++ b/Source/WebCore/platform/libwpe/PlatformPasteboardLibWPE.cpp
+@@ -33,6 +33,21 @@
+ #include <wtf/Assertions.h>
+ #include <wtf/text/WTFString.h>
+
++// Atlantic: bridge web clipboard writes to the host system clipboard.
++// libwpe's pasteboard singleton is an in-process std::map stub in this
++// WPEBackend-fdo build (fdo exports no _wpe_pasteboard_interface), so
++// navigator.clipboard.writeText()/execCommand('copy') never reach the SFOS
++// system clipboard. This pasteboard proxy runs in the UI process (a
++// QGuiApplication); the qt5 plugin registers a hook forwarding plain text to
++// QClipboard. Invoked on the UI/GUI thread. Null hook = stock behavior.
++static void (*s_atlanticClipboardWriteText)(const char*) = nullptr;
++
++extern "C" __attribute__((visibility("default")))
++void wpe_qt_set_clipboard_write_hook(void (*fn)(const char*))
++{
++    s_atlanticClipboardWriteText = fn;
++}
++
+ namespace WebCore {
+
+ PlatformPasteboard::PlatformPasteboard(const String&)
+@@ -106,6 +121,9 @@
+     wpe_pasteboard_write(m_pasteboard, &map);
+     m_changeCount++;
+
++    if (s_atlanticClipboardWriteText && !content.text.isNull())
++        s_atlanticClipboardWriteText(textString.data());
++
+     wpe_pasteboard_string_free(&pairs[0].type);
+     wpe_pasteboard_string_free(&pairs[0].string);
+     wpe_pasteboard_string_free(&pairs[1].type);
+@@ -127,6 +145,9 @@
+     wpe_pasteboard_write(m_pasteboard, &map);
+     m_changeCount++;
+
++    if (s_atlanticClipboardWriteText && type.startsWith("text/plain"_s))
++        s_atlanticClipboardWriteText(stringUTF8.data());
++
+     wpe_pasteboard_string_free(&pairs[0].type);
+     wpe_pasteboard_string_free(&pairs[0].string);
+ }

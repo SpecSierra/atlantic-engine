@@ -702,6 +702,16 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # 2.25x and upscales at draw time — visually benign for the blurry effects
     # these filters produce. Must apply AFTER results-reuse (same function).
     "patches/webkit/webkit-svg-filter-scale-cap.patch"
+
+    # webkit-clipboard-qt-hook.patch: make web clipboard writes reach the SFOS
+    # system clipboard. The libwpe pasteboard singleton is an in-process
+    # std::map stub in this fdo build (no _wpe_pasteboard_interface exported),
+    # so navigator.clipboard.writeText()/execCommand('copy') resolve but land
+    # nowhere the rest of the system can see. Adds a default-visibility write
+    # hook (wpe_qt_set_clipboard_write_hook) that the qt5 plugin's
+    # WPEClipboardBridge registers, forwarding plain text to QClipboard. Inert
+    # (bit-for-bit stock) until the plugin registers it.
+    "patches/webkit/webkit-clipboard-qt-hook.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

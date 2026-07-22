@@ -21,6 +21,7 @@
 #include "config.h"
 #include "WPEQtView.h"
 
+#include "WPEClipboardBridge.h"
 #include "WPEGeolocationBridge.h"
 #include "WPEQtViewBackend.h"
 #include "WPEQtViewLoadRequest.h"
@@ -259,6 +260,11 @@ void WPEQtView::createWebView()
             }
             return FALSE;
         }), nullptr);
+
+    // Route web-page clipboard writes (navigator.clipboard.writeText /
+    // execCommand copy) to the SFOS system clipboard. Process-global and
+    // idempotent, so it is safe to call from every view's init.
+    WPEClipboardBridge::ensure();
 
     // Spellcheck (compiled in via enchant + bundled hunspell backend).
     if (WebKitWebContext* webContext = webkit_web_view_get_context(m_webView)) {
