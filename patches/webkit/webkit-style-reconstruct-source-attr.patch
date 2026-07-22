@@ -1,0 +1,91 @@
+diff -ruN orig/Source/WebCore/style/StyleScope.cpp new/Source/WebCore/style/StyleScope.cpp
+--- a/Source/WebCore/style/StyleScope.cpp	2026-07-22 15:11:04.179260915 +0000
++++ b/Source/WebCore/style/StyleScope.cpp	2026-07-22 15:11:57.358587010 +0000
+@@ -633,6 +633,12 @@
+         && !m_shadowRoot && !m_pendingContentsUpdateIsAuthoritative;
+     m_pendingContentsUpdateIsAuthoritative = false;
+ 
++    // Atlantic (diagnostic): consume and reset the source attribution for this update.
++    const char* contentsSource = m_pendingContentsSource;
++    bool sawContentsMutation = m_pendingSawSheetContentsMutation;
++    m_pendingContentsSource = "?";
++    m_pendingSawSheetContentsMutation = false;
++
+     // Atlantic: a weak update with an UNCHANGED active sheet list is a pure no-op - the existing
+     // computed styles are still valid by construction (a lazily-cleared resolver rebuilt from the
+     // same sheets yields the same styles), so skip resolver reconstruction and invalidation
+@@ -662,12 +668,13 @@
+     if (styleLogEnabled()) {
+         const char* resolverName = styleSheetChange.resolverUpdateType == ResolverUpdateType::Reconstruct ? "Reconstruct"
+             : (styleSheetChange.resolverUpdateType == ResolverUpdateType::Reset ? "Reset" : "Additive");
+-        fprintf(stderr, "[stylelog] updateActiveStyleSheets doc=%p updateType=%s%s resolver=%s oldSheets=%u newSheets=%u added=%u\n",
++        fprintf(stderr, "[stylelog] updateActiveStyleSheets doc=%p updateType=%s%s resolver=%s oldSheets=%u newSheets=%u added=%u src=%s contentsMutation=%d\n",
+             &m_document.get(),
+             updateType == UpdateType::ActiveSet ? "ActiveSet" : (updateType == UpdateType::ContentsOrInterpretation ? "Contents" : "FullExt"),
+             isWeakContentsUpdate ? "(weak)" : "",
+             resolverName, static_cast<unsigned>(m_activeStyleSheets.size()), static_cast<unsigned>(activeCSSStyleSheets.size()),
+-            static_cast<unsigned>(styleSheetChange.addedSheets.size()));
++            static_cast<unsigned>(styleSheetChange.addedSheets.size()),
++            contentsSource, sawContentsMutation);
+     }
+ 
+     updateResolver(activeCSSStyleSheets, styleSheetChange.resolverUpdateType);
+@@ -920,6 +927,9 @@
+                 break;
+             }
+             case DynamicMediaQueryEvaluationChanges::Type::ResetStyle:
++                // Atlantic (diagnostic): a dynamic media query flipped; sheet list unchanged.
++                if (!scope->m_pendingSawSheetContentsMutation)
++                    scope->m_pendingContentsSource = "media-query";
+                 scope->scheduleUpdate(UpdateType::ContentsOrInterpretation);
+                 break;
+             }
+@@ -937,6 +947,10 @@
+ 
+ void Scope::didChangeStyleSheetContents()
+ {
++    // Atlantic (diagnostic): a real per-sheet contents mutation. analyzeStyleSheetChange compares
++    // sheet identities, not contents, so this case MUST reconstruct - it is never safe to downgrade.
++    m_pendingSawSheetContentsMutation = true;
++    m_pendingContentsSource = "sheet-contents";
+     scheduleUpdate(UpdateType::ContentsOrInterpretation);
+ }
+ 
+@@ -954,6 +968,10 @@
+         m_document->invalidateCachedCSSParserContext();
+     }
+ 
++    // Atlantic (diagnostic): reinterpret the same sheets under a new environment (color-scheme,
++    // print, parser context). A sheet-contents mutation, if also pending, outranks this.
++    if (!m_pendingSawSheetContentsMutation)
++        m_pendingContentsSource = "environment";
+     scheduleUpdate(UpdateType::ContentsOrInterpretation);
+ }
+ 
+@@ -980,6 +998,9 @@
+         m_document->invalidateCachedCSSParserContext();
+     }
+ 
++    // Atlantic (diagnostic): the rdar-36670246 lazily-cleared-resolver trigger (already downgraded).
++    if (!m_pendingSawSheetContentsMutation)
++        m_pendingContentsSource = "weak-rdar";
+     scheduleUpdate(UpdateType::ContentsOrInterpretation, IsAuthoritativeChange::No);
+ }
+ 
+diff -ruN orig/Source/WebCore/style/StyleScope.h new/Source/WebCore/style/StyleScope.h
+--- a/Source/WebCore/style/StyleScope.h	2026-07-22 15:11:04.182260933 +0000
++++ b/Source/WebCore/style/StyleScope.h	2026-07-22 15:11:10.560300009 +0000
+@@ -281,6 +281,13 @@
+     // update was scheduled by an authoritative change (real sheet-contents mutation or genuine
+     // environment change) and must therefore take the stock reconstruct + restyle-all path.
+     bool m_pendingContentsUpdateIsAuthoritative { false };
++    // Atlantic (WEBKIT_STYLE_LOG): source attribution for the pending ContentsOrInterpretation
++    // update, so [stylelog] can distinguish updates that MUST reconstruct (a real per-sheet
++    // contents mutation, invisible to analyzeStyleSheetChange's pointer compare) from those that
++    // only reinterpret an unchanged sheet list (environment / media-query) - the latter are the
++    // candidates a future reconstruct-avoidance fix could target. Diagnostic only, no behaviour.
++    bool m_pendingSawSheetContentsMutation { false };
++    const char* m_pendingContentsSource { "?" };
+ 
+     std::optional<MediaQueryViewportState> m_viewportStateOnPreviousMediaQueryEvaluation;
+     WeakHashMap<Element, LayoutSize, WeakPtrImplWithEventTargetData> m_queryContainerDimensionsOnLastUpdate;

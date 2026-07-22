@@ -442,6 +442,17 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # style resolution — see memory franceinfo-style-resolution-dominant.md).
     # Also carries the WEBKIT_STYLE_LOG=1 [stylelog] diagnostic for device A/B.
     "patches/webkit/webkit-style-smart-reconstruct.patch"
+    # webkit-style-reconstruct-source-attr.patch: DIAGNOSTIC-ONLY (no behaviour change),
+    # extends the WEBKIT_STYLE_LOG=1 [stylelog] line with src=<sheet-contents|environment|
+    # media-query|weak-rdar|?> contentsMutation=<0|1>, attributing every ContentsOrInterpretation
+    # update to its source. Device A/B proved smart-reconstruct is INERT on cnn.com (byte-identical
+    # decisions on/off) because cnn's late updates are authoritative; this tells us WHICH of them are
+    # real per-sheet contents mutations (must reconstruct — pointer compare is blind to them) vs
+    # environment/media-query reinterpretations of an unchanged sheet list (the only candidates a
+    # safe reconstruct-avoidance fix could target). Must apply AFTER webkit-style-smart-reconstruct.
+    # Remove once the attribution has driven a decision. See memory
+    # smart-reconstruct-inert-on-authoritative.md.
+    "patches/webkit/webkit-style-reconstruct-source-attr.patch"
     # webkit-scrolltier-log-diagnostic.patch: TEMPORARY env-gated scroll-speed-ladder
     # tracing (WEBKIT_SCROLLTIER_LOG=1, WebProcess stderr) — the low-res-tiles-during-
     # scroll feature stopped engaging on device (build 480); logs dy-path eligibility,
