@@ -35,7 +35,7 @@ seccomp_load() sets NO_NEW_PRIVS itself. Unset env = upstream behaviour.
 
 --- a/Source/WebKit/Shared/unix/AuxiliaryProcessMain.cpp
 +++ b/Source/WebKit/Shared/unix/AuxiliaryProcessMain.cpp
-@@ -34,6 +34,16 @@
+@@ -34,6 +34,21 @@
  #include <wtf/text/StringToIntegerConversion.h>
  #include <wtf/unix/UnixFileDescriptor.h>
  
@@ -47,12 +47,17 @@ seccomp_load() sets NO_NEW_PRIVS itself. Unset env = upstream behaviour.
 +#include <sys/ioctl.h>
 +#include <sys/prctl.h>
 +#include <unistd.h>
++// Backfills __NR_ numbers for syscalls (mount_setattr, open_tree, clone3, the
++// fs*() family, …) missing from the older SFOS sysroot kernel headers. The same
++// header BubblewrapLauncher.cpp includes before its setupSeccomp() for exactly
++// this reason; on aarch64 these resolve to the real asm-generic numbers.
++#include "Syscalls.h"
 +#endif
 +
  #if ENABLE(BREAKPAD)
  #include "unix/BreakpadExceptionHandler.h"
  #endif
-@@ -48,11 +58,113 @@ __attribute__((weak)) extern "C" int __llvm_profile_dump(void);
+@@ -48,11 +63,113 @@ __attribute__((weak)) extern "C" int __llvm_profile_dump(void);
  
  namespace WebKit {
  
