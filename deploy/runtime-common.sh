@@ -309,6 +309,20 @@ atlantic_export_browser_env() {
         export WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
     fi
 
+    # ── seccomp syscall filter (namespace-free) ─────────────────────────────
+    # The one part of the bwrap sandbox that IS compatible with the hybris GPU
+    # stack: the seccomp-bpf syscall filter, installed in every WebProcess /
+    # NetworkProcess with no namespaces (webkit-seccomp-filter-no-namespace.patch).
+    # It denies the mount/namespace/keyring/ptrace/perf syscalls a renderer never
+    # needs — real syscall-surface reduction on top of the sailjail app confinement,
+    # independent of the (still-blank-page) bwrap mount namespace. Device-verified
+    # build 599: no render/decode regression. ATLANTIC_ENABLE_SECCOMP=0 disables.
+    if [ "${ATLANTIC_ENABLE_SECCOMP:-1}" != "0" ]; then
+        export WEBKIT_ENABLE_SECCOMP_FILTER=1
+    else
+        unset WEBKIT_ENABLE_SECCOMP_FILTER 2>/dev/null || true
+    fi
+
     export QT_QPA_PLATFORM="${ATLANTIC_QT_QPA_PLATFORM}"
     export QSG_RENDER_LOOP="${QSG_RENDER_LOOP:-threaded}"
     export ATLANTIC_BROWSER_RUNTIME_DELAY_MS="${ATLANTIC_BROWSER_RUNTIME_DELAY_MS}"

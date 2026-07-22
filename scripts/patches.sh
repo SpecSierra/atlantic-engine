@@ -310,6 +310,19 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # color scheme without a reload.
     "patches/webkit/webkit-wpe-dark-mode-runtime.patch"
     "patches/webkit/webkit-bubblewrap-sfos-sandbox.patch"
+    # webkit-seccomp-filter-no-namespace.patch: install the bwrap seccomp
+    # syscall filter (BubblewrapLauncher::setupSeccomp's flatpak block list)
+    # directly in every auxiliary process via seccomp_load(), WITHOUT any
+    # namespace. The bwrap mount namespace breaks GPU buffer export on this
+    # hybris device (blank pages); the syscall filter alone is compatible and
+    # denies the mount/namespace/keyring/ptrace/perf syscalls a renderer never
+    # needs. Gated by WEBKIT_ENABLE_SECCOMP_FILTER (deploy/runtime-common.sh
+    # ATLANTIC_ENABLE_SECCOMP). Compile-guarded by ENABLE(BUBBLEWRAP_SANDBOX),
+    # which is exactly when PlatformWPE links Libseccomp — no extra wiring.
+    # Device-verified build 599: no render/decode regression, Seccomp:2 on all
+    # WebProcesses. Touches only Shared/unix/AuxiliaryProcessMain.cpp; order
+    # vs the bwrap patch is irrelevant (disjoint files).
+    "patches/webkit/webkit-seccomp-filter-no-namespace.patch"
     # webkit-sticky-scroll-composite-sync-env.patch: WEBKIT_COMPOSITE_SCROLL_SYNC
     # (default on) — before flushing layer state for a composite, re-apply the
     # scrolling tree's layer positions and hold the tree lock across the whole

@@ -1,0 +1,168 @@
+Install the bwrap seccomp syscall filter WITHOUT the bwrap namespaces.
+
+The WPE bubblewrap sandbox is unusable on this libhybris/Adreno device: the
+Web process renders on the GPU but its composited buffer never reaches the
+UI-side WPEBackend-fdo compositor once bwrap's MOUNT namespace is in effect
+(blank pages) — proven independent of every --unshare-* and of --seccomp, so
+it is the mount namespace itself, not the syscall filter, that breaks buffer
+export (see the blank-content investigation). We therefore ship with the
+sandbox compiled in but disabled at runtime (WEBKIT_DISABLE_SANDBOX_THIS_IS_
+DANGEROUS=1) and confine the whole browser with sailjail/firejail instead.
+
+That throws away one part of the sandbox that is perfectly compatible with the
+hybris stack and needs no namespaces at all: the seccomp-bpf syscall filter.
+This patch installs exactly that filter — the same flatpak-derived block list
+BubblewrapLauncher::setupSeccomp() builds — directly in every auxiliary
+process (Web, Network) via seccomp_load(), with no unshare/mount/pivot_root.
+It blocks the syscalls a content renderer never legitimately needs and that
+are recurring LPE / info-leak surface: the mount-manipulation family
+(mount/umount/pivot_root/chroot/fsopen/move_mount/open_tree/…), namespace
+creation (unshare/setns, clone(CLONE_NEWUSER), clone3), the kernel keyring
+(add_key/keyctl/request_key), NUMA/VM ops (mbind/move_pages/…), quota, dmesg
+(syslog), modify_ldt, the TIOCSTI/TIOCLINUX tty-injection ioctls, and — outside
+debug builds — perf_event_open, personality and ptrace.
+
+The filter is default-ALLOW, so it does not disturb the GPU/EGL, GStreamer, or
+Android-HAL-over-binder paths — device-verified (build 599): jolla.com and
+youtube.com render, VP9 decodes via droidvdec with 0 dropped frames, all three
+WebProcesses show Seccomp:2 / NoNewPrivs:1, no crashes, fps unchanged vs off.
+
+Gated by WEBKIT_ENABLE_SECCOMP_FILTER (deploy/runtime-common.sh maps
+ATLANTIC_ENABLE_SECCOMP to it). Guarded at compile time by ENABLE(
+BUBBLEWRAP_SANDBOX) because that is exactly the condition under which libWPE
+links Libseccomp (PlatformWPE.cmake) — no extra build wiring. libseccomp's
+seccomp_load() sets NO_NEW_PRIVS itself. Unset env = upstream behaviour.
+
+--- a/Source/WebKit/Shared/unix/AuxiliaryProcessMain.cpp
++++ b/Source/WebKit/Shared/unix/AuxiliaryProcessMain.cpp
+@@ -34,6 +34,16 @@
+ #include <wtf/text/StringToIntegerConversion.h>
+ #include <wtf/unix/UnixFileDescriptor.h>
+ 
++#if ENABLE(BUBBLEWRAP_SANDBOX)
++#include <errno.h>
++#include <linux/sched.h>
++#include <sched.h>
++#include <seccomp.h>
++#include <sys/ioctl.h>
++#include <sys/prctl.h>
++#include <unistd.h>
++#endif
++
+ #if ENABLE(BREAKPAD)
+ #include "unix/BreakpadExceptionHandler.h"
+ #endif
+@@ -48,11 +58,113 @@ __attribute__((weak)) extern "C" int __llvm_profile_dump(void);
+ 
+ namespace WebKit {
+ 
++#if ENABLE(BUBBLEWRAP_SANDBOX)
++// Install the bwrap seccomp syscall filter WITHOUT any namespace. This mirrors
++// BubblewrapLauncher::setupSeccomp()'s flatpak-derived block list exactly, but
++// loads it into this process with seccomp_load() instead of exporting a BPF fd
++// for bwrap to install after unsharing. The bwrap mount namespace is what
++// breaks GPU buffer export on this hybris device; the syscall filter alone is
++// compatible and provides real syscall-surface reduction. Default-ALLOW: only
++// the listed syscalls are denied, so GPU/EGL/GStreamer/binder are untouched.
++// Opt-in via WEBKIT_ENABLE_SECCOMP_FILTER; libseccomp sets NO_NEW_PRIVS itself.
++static void installSeccompSyscallFilterIfRequested()
++{
++    const char* enable = getenv("WEBKIT_ENABLE_SECCOMP_FILTER");
++    if (!enable || !(!strcmp(enable, "1") || !strcmp(enable, "true") || !strcmp(enable, "yes") || !strcmp(enable, "on")))
++        return;
++
++#if defined(__s390__) || defined(__s390x__) || defined(__CRIS__)
++    struct scmp_arg_cmp cloneArg = SCMP_A1(SCMP_CMP_MASKED_EQ, CLONE_NEWUSER, CLONE_NEWUSER);
++#else
++    struct scmp_arg_cmp cloneArg = SCMP_A0(SCMP_CMP_MASKED_EQ, CLONE_NEWUSER, CLONE_NEWUSER);
++#endif
++    struct scmp_arg_cmp tiocstiArg = SCMP_A1(SCMP_CMP_MASKED_EQ, 0xFFFFFFFFu, TIOCSTI);
++    struct scmp_arg_cmp tioclinuxArg = SCMP_A1(SCMP_CMP_MASKED_EQ, 0xFFFFFFFFu, TIOCLINUX);
++    struct {
++        int scall;
++        int errnum;
++        struct scmp_arg_cmp* arg;
++    } syscallBlockList[] = {
++        { SCMP_SYS(syslog), EPERM, nullptr },
++        { SCMP_SYS(uselib), EPERM, nullptr },
++        { SCMP_SYS(acct), EPERM, nullptr },
++        { SCMP_SYS(modify_ldt), EPERM, nullptr },
++        { SCMP_SYS(quotactl), EPERM, nullptr },
++        { SCMP_SYS(add_key), EPERM, nullptr },
++        { SCMP_SYS(keyctl), EPERM, nullptr },
++        { SCMP_SYS(request_key), EPERM, nullptr },
++        { SCMP_SYS(move_pages), EPERM, nullptr },
++        { SCMP_SYS(mbind), EPERM, nullptr },
++        { SCMP_SYS(get_mempolicy), EPERM, nullptr },
++        { SCMP_SYS(set_mempolicy), EPERM, nullptr },
++        { SCMP_SYS(migrate_pages), EPERM, nullptr },
++        { SCMP_SYS(unshare), EPERM, nullptr },
++        { SCMP_SYS(setns), EPERM, nullptr },
++        { SCMP_SYS(mount), EPERM, nullptr },
++        { SCMP_SYS(umount), EPERM, nullptr },
++        { SCMP_SYS(umount2), EPERM, nullptr },
++        { SCMP_SYS(pivot_root), EPERM, nullptr },
++        { SCMP_SYS(chroot), EPERM, nullptr },
++        { SCMP_SYS(clone), EPERM, &cloneArg },
++        { SCMP_SYS(ioctl), EPERM, &tiocstiArg },
++        { SCMP_SYS(ioctl), EPERM, &tioclinuxArg },
++        { SCMP_SYS(clone3), ENOSYS, nullptr },
++        { SCMP_SYS(open_tree), ENOSYS, nullptr },
++        { SCMP_SYS(move_mount), ENOSYS, nullptr },
++        { SCMP_SYS(fsopen), ENOSYS, nullptr },
++        { SCMP_SYS(fsconfig), ENOSYS, nullptr },
++        { SCMP_SYS(fsmount), ENOSYS, nullptr },
++        { SCMP_SYS(fspick), ENOSYS, nullptr },
++        { SCMP_SYS(mount_setattr), ENOSYS, nullptr },
++        // Outside debug builds we also block profiling and ptrace, which a
++        // renderer never needs and which are heavy CVE surface. This build has
++        // no in-sandbox gdbserver, so there is no debug carve-out to preserve.
++        { SCMP_SYS(perf_event_open), EPERM, nullptr },
++        { SCMP_SYS(personality), EPERM, nullptr },
++        { SCMP_SYS(ptrace), EPERM, nullptr },
++    };
++
++    scmp_filter_ctx seccomp = seccomp_init(SCMP_ACT_ALLOW);
++    if (!seccomp) {
++        WTFLogAlways("[Atlantic] seccomp_init failed; syscall filter NOT installed");
++        return;
++    }
++    for (auto& rule : syscallBlockList) {
++        int r;
++        if (rule.arg)
++            r = seccomp_rule_add(seccomp, SCMP_ACT_ERRNO(rule.errnum), rule.scall, 1, *rule.arg);
++        else
++            r = seccomp_rule_add(seccomp, SCMP_ACT_ERRNO(rule.errnum), rule.scall, 0);
++        // -EFAULT: libseccomp can't map this syscall on this arch (e.g.
++        // uselib/modify_ldt on aarch64). Tolerate exactly as WebKit does.
++        if (r == -EFAULT)
++            continue;
++        if (r < 0)
++            WTFLogAlways("[Atlantic] seccomp: failed to block syscall %d (%d)", rule.scall, r);
++    }
++    // seccomp_load() enables NO_NEW_PRIVS and installs the filter for this
++    // thread group. Failure is non-fatal: the process runs unfiltered (same
++    // exposure as the shipped default) rather than not at all.
++    int r = seccomp_load(seccomp);
++    if (r < 0)
++        WTFLogAlways("[Atlantic] seccomp_load failed (%d); syscall filter NOT installed", r);
++    else
++        WTFLogAlways("[Atlantic] seccomp syscall filter installed (no namespace)");
++    seccomp_release(seccomp);
++}
++#endif // ENABLE(BUBBLEWRAP_SANDBOX)
++
+ AuxiliaryProcessMainCommon::AuxiliaryProcessMainCommon()
+ {
+ #if ENABLE(BREAKPAD)
+     installBreakpadExceptionHandler();
+ #endif
++#if ENABLE(BUBBLEWRAP_SANDBOX)
++    // Every unix auxiliary process (Web, Network) constructs this common base
++    // before any content is loaded — the single earliest shared chokepoint at
++    // which to lock down the syscall surface.
++    installSeccompSyscallFilterIfRequested();
++#endif
+ }
+ 
+ // The command line is constructed in ProcessLauncher::launchProcess.
