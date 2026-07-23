@@ -644,6 +644,22 @@ atlantic_export_browser_env() {
     # (unattributed but correlated); reverted to opt-in pending a clean A/B.
     export ATLANTIC_ACK_ON_SAMPLE="${ATLANTIC_ACK_ON_SAMPLE:-0}"
 
+    # Honoured by webkit-video-composite-tile-gate-env.patch. DEFAULT 0 (stock).
+    # ThreadedCompositor::scheduleUpdateLocked()'s State::Idle branch holds back
+    # EVERY composition request while a tile batch is pending, not just the
+    # RenderingUpdate-reason ones its own helper says should wait. Device-measured
+    # on fullscreen 1080p YouTube (build 605): each full-viewport repaint parks
+    # 6-20 VideoFrame requests and the picture freezes 240-800 ms, ~every 5 s,
+    # while decode stays clean at 25 fps / 0 dropped. With this at 1 the Idle
+    # branch uses isOnlyRenderingUpdatePendingAndWaitingForTiles(), the same
+    # predicate resume()/frameComplete() use, so video keeps presenting against
+    # already-committed tiles (cost: a few stale tiles under the video).
+    # The identical scheduling change was landed and reverted in July for the
+    # SCROLL case (engine b13215f / 29b4fc7) where it measured flat — keep it
+    # opt-in until the ATLANTIC_FRAME_TRACE "schedupd wt=1" evidence and a 5x5
+    # A/B on fullscreen 1080p say otherwise.
+    export WEBKIT_VIDEO_COMPOSITE_UNGATED="${WEBKIT_VIDEO_COMPOSITE_UNGATED:-0}"
+
     # Honoured by webkit-tile-upload-budget-env.patch. Cap the tile work a single
     # composite may do: don't block on buffers the Skia workers are still
     # painting, and upload at most this many MB of CPU tile pixels per frame —

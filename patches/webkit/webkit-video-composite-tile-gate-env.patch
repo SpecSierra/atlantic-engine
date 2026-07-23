@@ -1,0 +1,73 @@
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp	2026-07-23 12:51:47.175477183 +0000
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp	2026-07-23 12:53:47.896219554 +0000
+@@ -78,6 +78,18 @@
+     }();
+     return on;
+ }
++
++// WEBKIT_VIDEO_COMPOSITE_UNGATED=1 (default OFF): let a composition request whose
++// reason is NOT (only) a rendering update start the render timer even while the
++// compositor is waiting for a tile batch. See scheduleUpdateLocked().
++static bool atlVideoCompositeUngated()
++{
++    static const bool on = [] {
++        const char* e = getenv("WEBKIT_VIDEO_COMPOSITE_UNGATED");
++        return e && e[0] && e[0] != '0';
++    }();
++    return on;
++}
+ using namespace WebCore;
+ 
+ WTF_MAKE_TZONE_ALLOCATED_IMPL(ThreadedCompositor);
+@@ -592,10 +604,50 @@
+     ASSERT(m_state.lock.isHeld());
+     WTFEmitSignpost(this, ScheduleComposition, "reasons: %s, state: %s, waiting for tiles: %s, render timer active: %s", reasonsToString(m_state.reasons).ascii().data(), stateToString(m_state.state).characters(), m_state.isWaitingForTiles ? "yes" : "no", m_state.isRenderTimerActive ? "yes" : "no");
+ 
++    // ATLANTIC_FRAME_TRACE: the composite-scheduling gate itself. The pre-existing
++    // "web sched w=" marker reports LayerTreeHost::m_isWaitingForRenderer, NOT
++    // isWaitingForTiles, so the tile gate has never been directly observable -- the
++    // 2026-07-16 scroll-composite-tile-gate patch was landed and reverted without
++    // it (composites 6.3 -> 6.4/s; the theory was wrong there because the requests
++    // never arrived, reqcomp r=8 only 7.3/s). st = State, r = pending reason bits
++    // (1 RenderingUpdate, 2 VideoFrame, 4 Animation, 8 AsyncScrolling, 16 TileDrain),
++    // wt = isWaitingForTiles, tmr = render timer already active.
++    if (atlFrameTrace()) {
++        struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
++        fprintf(stderr, "[ftrace] web schedupd st=%u r=%u wt=%d tmr=%d t=%.1f\n",
++            static_cast<unsigned>(m_state.state), m_state.reasons.toRaw(),
++            m_state.isWaitingForTiles ? 1 : 0, m_state.isRenderTimerActive ? 1 : 0,
++            ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6);
++    }
++
+     switch (m_state.state) {
+     case State::Idle:
+         m_state.state = State::Scheduled;
+-        if (!m_state.isWaitingForTiles && !m_suspendedCount.load())
++        // Stock: an idle compositor never starts the render timer while a tile
++        // batch is pending, whatever the composition reason. Device-measured on
++        // fullscreen 1080p YouTube (build 605, ATLANTIC_FRAME_TRACE): every
++        // full-viewport repaint (tilepaint dirty=20, ~every 5 s) parks 6-20
++        // consecutive VideoFrame requests -- the video freezes for the whole CPU
++        // raster, 240-800 ms, which is the fullscreen judder. Only RenderingUpdate
++        // has to wait for its own tiles; VideoFrame/Animation/AsyncScrolling/
++        // TileDrain composites are independent of them, and renderLayerTree()
++        // already defers a pending RenderingUpdate out of such a composite
++        // (re-adding it to m_state.reasons), exactly as it does when the same
++        // request arrives in the Scheduled/InProgress states, which are already
++        // ungated. So gate on isOnlyRenderingUpdatePendingAndWaitingForTiles(),
++        // the predicate frameComplete() already uses for this. Cost: those
++        // composites present the tile content committed so far (a few stale
++        // tiles under the video), same trade the tile-upload budget makes.
++        // Unset/0 = stock scheduling, bit for bit. NOTE: the same one-line change
++        // shipped once before as WEBKIT_INDEPENDENT_SCROLL's second half (engine
++        // b13215f) and was reverted in 29b4fc7 because it did nothing for the
++        // franceinfo SCROLL freeze -- there the compositor was not gated, it was
++        // simply not being asked (reqcomp r=8 at 7.3/s). The video case is the
++        // opposite: the requests arrive on time (r=2 every 40 ms) and are parked.
++        // The schedupd marker above is what tells the two apart; check it before
++        // trusting this flag again.
++        if (!(atlVideoCompositeUngated() ? isOnlyRenderingUpdatePendingAndWaitingForTiles() : m_state.isWaitingForTiles)
++            && !m_suspendedCount.load())
+             startRenderTimer();
+         break;
+     case State::Scheduled:

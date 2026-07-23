@@ -648,6 +648,27 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # touching it.
     "patches/webkit/webkit-frame-trace-env.patch"
 
+    # webkit-video-composite-tile-gate-env.patch: WEBKIT_VIDEO_COMPOSITE_UNGATED=1
+    # (default OFF) — ThreadedCompositor::scheduleUpdateLocked()'s State::Idle branch
+    # tests the raw isWaitingForTiles, so an idle compositor parks EVERY composition
+    # request behind a pending tile batch, whatever its reason; its siblings resume()
+    # and frameComplete() use the reason-aware isOnlyRenderingUpdatePendingAndWaiting-
+    # ForTiles() instead. Device-measured on fullscreen 1080p YouTube (build 605,
+    # ATLANTIC_FRAME_TRACE): each full-viewport repaint (tilepaint dirty=20, ~every
+    # 5 s) parks 6-20 consecutive VideoFrame requests -> the picture freezes for the
+    # whole CPU raster, 240-800 ms; source frames arrive rock-steady at 40.0 ms and
+    # decode is clean (25 fps, 0 dropped), so the judder is entirely at this gate.
+    # ALSO adds the ATLANTIC_FRAME_TRACE "web schedupd st=/r=/wt=/tmr=" marker, which
+    # exposes the gate directly — the pre-existing "sched w=" marker reports
+    # LayerTreeHost::m_isWaitingForRenderer, NOT isWaitingForTiles. HISTORY: the same
+    # one-line scheduling change shipped as WEBKIT_INDEPENDENT_SCROLL's second half
+    # (b13215f) and was reverted (29b4fc7) because it did nothing for the franceinfo
+    # scroll freeze — there the compositor was not gated, it was not being asked
+    # (reqcomp r=8 at 7.3/s). Confirm with schedupd (wt=1 while r=2 requests pile up)
+    # before flipping this default. Must apply AFTER webkit-frame-trace-env (uses
+    # atlFrameTrace()) and every other patch touching ThreadedCompositor.cpp.
+    "patches/webkit/webkit-video-composite-tile-gate-env.patch"
+
     # THE franceinfo scroll-freeze fix: WEBKIT_SKIP_ROOT_CUSTOMPROP_REPAINT=1 (default ON)
     # stops RenderBox::styleWillChange from repainting the whole page when a :root/<body>
     # custom-property changes (the site updates --offset-sticky-* on <html> every scroll
