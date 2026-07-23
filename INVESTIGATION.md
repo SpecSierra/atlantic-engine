@@ -180,6 +180,45 @@ for up to 949 ms in a single callback. YouTube's own timers account for the rest
 That also explains why every engine-side lever measured flat: the compositor was
 never the bottleneck.
 
+## CONFIRMED (build 606) — the compositor blocks on a futex held by the main thread
+
+Root `/proc/<tid>/syscall` + `/proc/<tid>/stack` sampling at 20 ms
+(`video-harness/tsample3.py`), correlated with the ftrace composite stream.
+Seven stalls in one 24 s window (235-796 ms):
+
+- **5 of 7: `syscall 98 = futex`**, 15-25 consecutive samples, kernel stack
+  `futex_wait_queue_me -> futex_wait -> do_futex`, with the main thread reading
+  `R:running` for the entire stall. Userspace lock contention, not GPU, not I/O.
+- 1 of 7: compositor in `D` state with `do_page_fault` stacks — the RSS-1.7 GB
+  thrash, a separate problem.
+- 1 of 7: compositor in `ppoll` throughout — genuinely idle, not blocked. Looks
+  like the ack handshake, not contention.
+
+Whole-window baseline for contrast: compositor `R:running` 299 samples,
+`S:73 = ppoll` 273, `S:98 = futex` 81 (nearly all inside stalls).
+
+gdb attach-sampling (12 samples) did **not** catch the futex frame — random
+attaches land in a stall only ~13 % of the time and gdb's 2-4 s attach latency
+biases toward the idle state; 8 landed in the idle run loop, 3 in
+`TextureMapperLayer::paintRecursive`. So the futex *address* is unnamed; the lock
+identified below is from the code path, not from a backtrace.
+
+Which lock: `CoordinatedPlatformLayer::flushCompositingState`
+(`CoordinatedPlatformLayer.cpp:908`) takes the per-layer `m_lock`, and the main
+thread holds that same lock across `updateBackingStore()` ->
+`CoordinatedBackingStoreProxy::updateIfNeeded()` (:738) — a full-viewport tile
+update, which is exactly the `tilepaint dirty=20` that precedes every stall.
+
+## WRITTEN (unbuilt, default OFF) — the video fast path
+
+`patches/webkit/webkit-composite-skip-locked-layers-env.patch`
+(`WEBKIT_COMPOSITE_SKIP_LOCKED_LAYERS`, default 0), registered in
+`scripts/patches.sh` after every other patch touching that file:
+a composite carrying no `RenderingUpdate` `tryLock()`s each layer and skips the
+contended ones, re-presenting their last committed state; pending changes stay
+pending for the next composite. `RenderingUpdate` composites still block on
+purpose — they must commit and report the flush.
+
 ## OPEN — next steps, in order
 
 1. **Fix `kYouTubeIconFix`** (browser-side, no WebKit rebuild): debounce the scan,

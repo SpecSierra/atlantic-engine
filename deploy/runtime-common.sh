@@ -660,6 +660,20 @@ atlantic_export_browser_env() {
     # A/B on fullscreen 1080p say otherwise.
     export WEBKIT_VIDEO_COMPOSITE_UNGATED="${WEBKIT_VIDEO_COMPOSITE_UNGATED:-0}"
 
+    # Honoured by webkit-composite-skip-locked-layers-env.patch. DEFAULT 0 (stock).
+    # The video fast path: a composite that carries no RenderingUpdate tryLock()s
+    # each CoordinatedPlatformLayer instead of blocking, and skips the ones the
+    # main thread is holding (it re-presents their last committed state; the
+    # pending changes stay pending). Device-measured cause (build 606, fullscreen
+    # 1080p YouTube): the compositor spends each 230-800 ms stall in futex_wait on
+    # that per-layer lock, which the main thread holds across a full-viewport
+    # updateBackingStore(), while video frames arrive on time every 40.0 ms.
+    # Cost: a contended layer can show its previous state for a frame or two.
+    # Verify with a 5x5 A/B (composites/s, stall count, stall p95) before flipping;
+    # the previous theory for the same stalls (WEBKIT_VIDEO_COMPOSITE_UNGATED) was
+    # disproven on device, so do not assume this one is right either.
+    export WEBKIT_COMPOSITE_SKIP_LOCKED_LAYERS="${WEBKIT_COMPOSITE_SKIP_LOCKED_LAYERS:-0}"
+
     # Honoured by webkit-tile-upload-budget-env.patch. Cap the tile work a single
     # composite may do: don't block on buffers the Skia workers are still
     # painting, and upload at most this many MB of CPU tile pixels per frame —

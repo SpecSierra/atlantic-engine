@@ -1,0 +1,67 @@
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp	2026-07-23 13:49:09.848210465 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp	2026-07-23 13:49:50.334468273 +0000
+@@ -31,6 +31,7 @@
+ #include "CoordinatedBackingStore.h"
+ #include "CoordinatedBackingStoreProxy.h"
+ #include <cstdio>
++#include <cstdlib>
+ #include "CoordinatedImageBackingStore.h"
+ #include "CoordinatedPlatformLayerBuffer.h"
+ #include "CoordinatedPlatformLayerBufferHolePunch.h"
+@@ -54,6 +55,18 @@
+ 
+ namespace WebCore {
+ 
++// WEBKIT_COMPOSITE_SKIP_LOCKED_LAYERS=1 (default OFF): don't let a composite that
++// does not carry a RenderingUpdate block on a layer lock the main thread holds.
++// See flushCompositingState() below.
++static bool atlSkipLockedLayers()
++{
++    static const bool on = [] {
++        const char* e = getenv("WEBKIT_COMPOSITE_SKIP_LOCKED_LAYERS");
++        return e && e[0] && e[0] != '0';
++    }();
++    return on;
++}
++
+ Ref<CoordinatedPlatformLayer> CoordinatedPlatformLayer::create(Client& client)
+ {
+     return adoptRef(*new CoordinatedPlatformLayer(&client));
+@@ -908,7 +921,36 @@
+ void CoordinatedPlatformLayer::flushCompositingState(const OptionSet<CompositionReason>& reasons)
+ {
+     ASSERT(!isMainThread());
+-    Locker locker { m_lock };
++    // Video fast path (WEBKIT_COMPOSITE_SKIP_LOCKED_LAYERS=1, default OFF).
++    //
++    // Device-measured on fullscreen 1080p YouTube (build 606): the compositor
++    // spends the whole of each 230-800 ms stall in futex_wait (syscall 98, 15-25
++    // consecutive 20 ms samples, kernel stack futex_wait_queue_me/futex_wait/
++    // do_futex) while the main thread runs at 100 %. It is blocked here, on
++    // m_lock, which the main thread holds across updateBackingStore() ->
++    // CoordinatedBackingStoreProxy::updateIfNeeded() -- i.e. across a
++    // full-viewport tile update. Video frames are ready and requested on time
++    // (reqcomp r=2 every 40.0 ms) and simply cannot be presented meanwhile, which
++    // is the fullscreen judder.
++    //
++    // A composite that carries no RenderingUpdate (VideoFrame / Animation /
++    // AsyncScrolling / TileDrain) does not have to commit this layer's pending
++    // changes: it may re-present the last committed state. So take the lock only
++    // if it is free, and otherwise leave the layer exactly as it is -- the
++    // pending changes stay pending and the next composite (or the RenderingUpdate
++    // that follows) applies them. Lossy in the same way the tile-upload budget
++    // is: a contended layer shows its previous state for a frame or two instead
++    // of freezing the whole scene, video included.
++    //
++    // A RenderingUpdate composite still blocks, deliberately: it is the one that
++    // must commit the flush and report it, so skipping layers there would tell
++    // the main thread its update landed when it did not.
++    if (atlSkipLockedLayers() && !reasons.contains(CompositionReason::RenderingUpdate)) {
++        if (!m_lock.tryLock())
++            return;
++    } else
++        m_lock.lock();
++    Locker locker { AdoptLock, m_lock };
+     if (m_pendingChanges.isEmpty() && (!reasons.containsAny({ CompositionReason::RenderingUpdate, CompositionReason::TileDrain }) || !m_backingStoreProxy))
+         return;
+ 

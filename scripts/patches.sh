@@ -694,6 +694,33 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # hidden -- the deadlock-prone compositor-timing area, so A/B first).
     "patches/webkit/webkit-drop-tiles-when-hidden-env.patch"
 
+    # webkit-composite-skip-locked-layers-env.patch: WEBKIT_COMPOSITE_SKIP_LOCKED_-
+    # LAYERS=1 (default OFF) — the video fast path. CoordinatedPlatformLayer::
+    # flushCompositingState() (compositor thread) blocks on the per-layer m_lock
+    # that the MAIN thread holds across updateBackingStore() ->
+    # CoordinatedBackingStoreProxy::updateIfNeeded(), i.e. across a full-viewport
+    # tile update. Device-measured on fullscreen 1080p YouTube (build 606, root
+    # /proc/<tid>/syscall sampling at 20 ms correlated with ATLANTIC_FRAME_TRACE):
+    # in 5 of 7 stalls the compositor sits in futex_wait (syscall 98, 15-25
+    # consecutive samples, kstack futex_wait_queue_me/futex_wait/do_futex) for the
+    # whole 230-800 ms stall while the main thread runs at 100 %; video frames are
+    # requested on time throughout (reqcomp r=2 every 40.0 ms) and cannot be
+    # presented. With this on, a composite carrying no RenderingUpdate
+    # (VideoFrame/Animation/AsyncScrolling/TileDrain) tryLock()s each layer and
+    # skips the contended ones, re-presenting their last committed state; their
+    # pending changes stay pending for the next composite. RenderingUpdate
+    # composites still block, deliberately — they must commit and report the flush.
+    # Lossy the same way the tile-upload budget is (a stale layer for a frame or
+    # two instead of a frozen scene). Unset/0 = stock. Must apply AFTER every other
+    # patch touching CoordinatedPlatformLayer.cpp (lowres-tiles-during-scroll,
+    # tile-upload-budget, drop-tiles-when-hidden).
+    # NOTE: this is the SECOND theory for these stalls; the first
+    # (webkit-video-composite-tile-gate-env, the Idle-branch tile gate) was
+    # disproven on device by its own schedupd marker (wt=0). Verify with a 5x5 A/B
+    # before flipping the default, and see INVESTIGATION.md for the levers already
+    # ruled out.
+    "patches/webkit/webkit-composite-skip-locked-layers-env.patch"
+
     # webkit-svg-raster-cache.patch: WebKit has NO raster cache for SVG-as-image
     # (SVGImageCache caches only size wrappers): SVGImage::draw re-lays-out and
     # re-paints the whole embedded SVG document on EVERY draw, so each tile
