@@ -116,15 +116,45 @@ the inference alone.
 Generated mechanically (`diff -u` of an edited copy), `patch -p1 --dry-run` clean
 against the fully-patched CI tree.
 
+## RULED OUT (build 606) — the tile gate, disproven by its own diagnostic
+
+Build 606 (`f53255e`) installed and verified on device (`schedupd` +
+`WEBKIT_VIDEO_COMPOSITE_UNGATED` strings present in the shipped
+`libWPEWebKit-2.0.so.1.9.9`). With the flag OFF, fullscreen 1080p, 20 s window
+(24.2 fps, 3 stalls of 257/294/290 ms), **every parked `reqcomp r=2` carries
+`wt=0`** — `isWaitingForTiles` is not set, so the Idle-branch gate is not what
+blocks them. Same verdict as the 2026-07-16 scroll attempt, for the same reason:
+the gate is innocent. `WEBKIT_VIDEO_COMPOSITE_UNGATED` is therefore inert and must
+stay OFF; the `schedupd` marker keeps its value.
+
+What `schedupd` shows instead: state (`st`) is 2 (InProgress) / 3
+(ScheduledWhileInProgress) for the whole stall, with `tmr=0`. The preceding frame
+completed normally (`ui recv/paint/ack` at +36/+44/+50 ms). Then a composite starts
+and **does not finish for ~240 ms** — no `ui recv` for it at all. The stall is one
+long composite, immediately after `tilepaint dirty=20`.
+
+Two env A/Bs against that (both flat, ~3-4 stalls of 230-280 ms per 20 s):
+
+- `WEBKIT_TILE_UPLOAD_REST_BUDGET_MB=2` (was 16): 25.0 / 24.8 fps, stalls
+  258/282/232 and 276/274/259/280 ms. Not upload volume.
+- `WEBKIT_TILE_UPLOAD_BUDGET_SCROLL_ONLY=0` + `BUDGET_MB=4` (meter every
+  composite, the path documented as never blocking on still-painting buffers):
+  24.8 / 25.3 fps, stalls 270/237/246 and 260/261/242/253 ms. Not the metering
+  or the `waitUntilPaintingComplete` block either.
+
 ## OPEN — next steps, in order
 
-1. CI build (push required). One build carries both halves.
-2. With the flag OFF, capture a fullscreen 1080p window and check `schedupd`:
-   the hypothesis predicts `wt=1` on the parked `r=2` requests during each stall.
-   If `wt=0`, the gate is exonerated and the real blocker is elsewhere — stop and
-   re-diagnose rather than flipping the flag.
-3. If confirmed, 5×5 A/B (flag off/on, same page and build) on composites/s,
-   stall count and stall p95; flip the default only if it clears noise.
-4. Independently of this: the ~5 s full-viewport repaint under an opaque
-   fullscreen video is wasted work, and the ~30 MB/s 1080p allocation churn
-   (RSS → 1.7 GB) is unexplained. Both remain open.
+1. **Sample the compositor thread during a stall.** The stall is one ~240 ms
+   composite that never reaches `ui recv`; tile upload volume, upload metering and
+   the still-painting block are all ruled out by env A/B. gdb stack sampling of the
+   `eadedCompositor` tid, triggered around the ~5 s cadence, should name the callee
+   (GL draw of the scene? `swapBuffers`? layer-tree walk?).
+2. Attribute the ~5 s full-viewport repaint itself. Nothing under an opaque
+   fullscreen video needs repainting; killing the invalidation removes the stall
+   whatever its internals. `scrollapply thr=M` fires at each stall end, and the
+   observed DOM mutations are YT captions + progress bar.
+3. Unexplained and probably related: 1080p playback churns ~30 MB/s of heap
+   (RSS 355 -> 1798 MB in 50 s; 240p flat at ~280 MB), with NV12->RGBA convert
+   burning 43 % of a core on `vqueue:src`.
+4. `WEBKIT_VIDEO_COMPOSITE_UNGATED` stays default OFF and inert. Keep the
+   `schedupd` marker; decide whether to drop the flag itself.
