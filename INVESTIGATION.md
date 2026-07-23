@@ -142,19 +142,59 @@ Two env A/Bs against that (both flat, ~3-4 stalls of 230-280 ms per 20 s):
   24.8 / 25.3 fps, stalls 270/237/246 and 260/261/242/253 ms. Not the metering
   or the `waitUntilPaintingComplete` block either.
 
+## CONFIRMED (build 606) — the stall is the MAIN thread, and part of it is ours
+
+Per-thread sampling (`tsample2.py`, 25 ms, CLOCK_MONOTONIC, correlated with the
+ftrace composite stream) over 7 stalls of 229-463 ms:
+
+| thread | CPU during stall |
+|---|---|
+| `WPEWebProcess` (main, tid 30421) | **57-100 %** (states R/D) |
+| `vqueue:src` | 26-58 % |
+| `droidvdec0:src` / `DroidMediaCodec` | 8-26 % |
+| `eadedCompositor` | **4-9 %, mostly sleeping (S)** |
+| `SkiaCPUWorker` | 0-8 % |
+
+So the compositor is not doing a long composite and is not painting — it is
+*asleep*, waiting on a main thread that is pegged. (Whole-window baseline for
+contrast: main 60 %, compositor 37 %.) This is the same shape as the July
+franceinfo finding (main 92 %, compositor 16 %).
+
+`atldbg profile -s 15` in fullscreen 1080p attributes the main thread:
+
+| self-time | calls | max | call site |
+|---|---|---|---|
+| 1862 ms | 30 | 283 ms | `timeout` — ytmweb `c@…c3_base…` |
+| **1122 ms** | **29** | **949 ms** | **`raf` — `schedule@user-script:7:127:64`** |
+| 1018 ms | 84 | 490 ms | `timeout` — YT `player-plasma-ias-phone…base.js` |
+
+`user-script:7:127` is **ours**: `WPEUserScripts::kYouTubeIconFix`
+(`apps/wpe/WPEUserScripts.h:408`, the `requestAnimationFrame(run)` at :534 inside
+`schedule()`). It hangs a `MutationObserver` on `document.documentElement` with
+`{childList, subtree}` and re-runs a whole-document `scan()` on every mutation
+batch, plus `setInterval(scan, 800)`. YouTube mutates constantly during playback
+(measured: 644 mutations in 49 s — caption window ~3.5/s, progress bar ~1.7/s), so
+the icon fix re-scans the document several times a second while the video plays,
+for up to 949 ms in a single callback. YouTube's own timers account for the rest.
+
+That also explains why every engine-side lever measured flat: the compositor was
+never the bottleneck.
+
 ## OPEN — next steps, in order
 
-1. **Sample the compositor thread during a stall.** The stall is one ~240 ms
-   composite that never reaches `ui recv`; tile upload volume, upload metering and
-   the still-painting block are all ruled out by env A/B. gdb stack sampling of the
-   `eadedCompositor` tid, triggered around the ~5 s cadence, should name the callee
-   (GL draw of the scene? `swapBuffers`? layer-tree walk?).
-2. Attribute the ~5 s full-viewport repaint itself. Nothing under an opaque
-   fullscreen video needs repainting; killing the invalidation removes the stall
-   whatever its internals. `scrollapply thr=M` fires at each stall end, and the
-   observed DOM mutations are YT captions + progress bar.
-3. Unexplained and probably related: 1080p playback churns ~30 MB/s of heap
-   (RSS 355 -> 1798 MB in 50 s; 240p flat at ~280 MB), with NV12->RGBA convert
-   burning 43 % of a core on `vqueue:src`.
-4. `WEBKIT_VIDEO_COMPOSITE_UNGATED` stays default OFF and inert. Keep the
-   `schedupd` marker; decide whether to drop the flag itself.
+1. **Fix `kYouTubeIconFix`** (browser-side, no WebKit rebuild): debounce the scan,
+   scope the MutationObserver to the player controls instead of
+   `document.documentElement` subtree, and skip scanning while a video is playing
+   / in fullscreen (the icons are already healed by then). Expect the ~5 s
+   full-viewport repaint and its stall to go with it — the scan writes inline
+   styles, which is a plausible source of the `dirty=20` invalidation too.
+   Then re-measure with the same harness before/after.
+2. Re-check the remaining stalls afterwards: YT's own `base.js` timers still show
+   maxima of 283/490 ms and are not ours to fix; if they still land on the video,
+   the structural answer is to stop letting main-thread work block presentation
+   (vsync-paced compositing / zero-copy), not more tuning.
+3. Still unexplained: 1080p playback churns ~30 MB/s of heap (RSS 355 -> 1798 MB
+   in 50 s; 240p flat at ~280 MB), NV12->RGBA convert burning 43 % of a core on
+   `vqueue:src`.
+4. `WEBKIT_VIDEO_COMPOSITE_UNGATED` stays default OFF and inert; keep the
+   `schedupd` marker. Decide whether to drop the flag itself.
