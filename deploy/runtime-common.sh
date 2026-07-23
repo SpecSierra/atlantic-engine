@@ -669,10 +669,20 @@ atlantic_export_browser_env() {
     # that per-layer lock, which the main thread holds across a full-viewport
     # updateBackingStore(), while video frames arrive on time every 40.0 ms.
     # Cost: a contended layer can show its previous state for a frame or two.
-    # Verify with a 5x5 A/B (composites/s, stall count, stall p95) before flipping;
-    # the previous theory for the same stalls (WEBKIT_VIDEO_COMPOSITE_UNGATED) was
-    # disproven on device, so do not assume this one is right either.
-    export WEBKIT_COMPOSITE_SKIP_LOCKED_LAYERS="${WEBKIT_COMPOSITE_SKIP_LOCKED_LAYERS:-0}"
+    #
+    # DEFAULT ON since build 607. Interleaved 5x5 A/B on device (fullscreen 1080p
+    # YouTube, fresh launch per arm, 20 s frame-trace window):
+    #   stock      composites 23.3/s median (18.3-25.2), p95 60.6 ms,
+    #              33 stalls >100 ms across 5 arms (median 4), worst frame 804 ms
+    #   fast path  composites 25.3/s median (24.2-25.6), p95 56.6 ms,
+    #              0 stalls >100 ms in all 5 arms, worst frame 83 ms
+    # 33 -> 0 stalls, and presentation now tracks the 25 fps source. The
+    # full-viewport repaints still happen (tilepaint dirty>=10 unchanged, 6-8 per
+    # window) -- they simply no longer block the video, which is exactly the claim.
+    # Scroll/render sanity-checked on a text-heavy page: no stale or corrupt tiles.
+    # Kill switch: WEBKIT_COMPOSITE_SKIP_LOCKED_LAYERS=0 (suspect FIRST on any
+    # stale-layer or missing-repaint report).
+    export WEBKIT_COMPOSITE_SKIP_LOCKED_LAYERS="${WEBKIT_COMPOSITE_SKIP_LOCKED_LAYERS:-1}"
 
     # Honoured by webkit-tile-upload-budget-env.patch. Cap the tile work a single
     # composite may do: don't block on buffers the Skia workers are still

@@ -219,21 +219,56 @@ contended ones, re-presenting their last committed state; pending changes stay
 pending for the next composite. `RenderingUpdate` composites still block on
 purpose — they must commit and report the flush.
 
+## RESOLVED (build 607) — the video fast path works, default flipped ON
+
+Interleaved 5x5 A/B, fresh launch per arm, fullscreen 1080p YouTube, 20 s
+frame-trace window (`video-harness/ab_fastpath.sh`):
+
+| arm | comp/s | p95 | stalls >100 ms | worst frame | RSS |
+|---|---|---|---|---|---|
+| A1 stock | 18.3 | 97.5 ms | 17 | 804 ms | 1760 MB |
+| B1 fast | 25.6 | 54.4 ms | **0** | 73 ms | 733 MB |
+| A2 stock | 22.6 | 66.6 ms | 6 | 429 ms | 1549 MB |
+| B2 fast | 24.4 | 56.6 ms | **0** | 83 ms | 1542 MB |
+| A3 stock | 23.3 | 60.6 ms | 4 | 262 ms | 699 MB |
+| B3 fast | 25.3 | 54.7 ms | **0** | 74 ms | 194 MB |
+| A4 stock | 25.2 | 56.8 ms | 3 | 262 ms | 498 MB |
+| B4 fast | 25.3 | 57.0 ms | **0** | 71 ms | 946 MB |
+| A5 stock | 24.6 | 56.5 ms | 3 | 284 ms | 1045 MB |
+| B5 fast | 24.2 | 58.9 ms | **0** | 74 ms | 1677 MB |
+
+Medians: stock 23.3 comp/s, p95 60.6 ms, 4 stalls/arm, **33 stalls total**, worst
+frame 804 ms. Fast path 25.3 comp/s, p95 56.6 ms, **0 stalls in all five arms**,
+worst frame 83 ms. Presentation now tracks the 25 fps source.
+
+Internal consistency: full-viewport repaints are UNCHANGED (tilepaint dirty>=10:
+6/6/8/7/7 stock vs 3/5/8/7/8 fast path). The patch does not reduce the page's
+repainting — it stops that repainting from blocking presentation, which is exactly
+its claim and nothing more. Sanity-checked on a text-heavy page with scrolling:
+no stale or corrupt tiles.
+
+Default flipped to 1 in `deploy/runtime-common.sh`. Kill switch:
+`WEBKIT_COMPOSITE_SKIP_LOCKED_LAYERS=0` — suspect FIRST on any stale-layer or
+missing-repaint report.
+
+Note the prediction that failed: I expected the two non-contention stall classes
+(page-fault thrash, idle `ppoll`) to survive at ~2-in-7. Zero stalls remain, so
+either they are rarer than that sample suggested, or they were secondary effects
+of the same contention.
+
 ## OPEN — next steps, in order
 
-1. **Fix `kYouTubeIconFix`** (browser-side, no WebKit rebuild): debounce the scan,
-   scope the MutationObserver to the player controls instead of
-   `document.documentElement` subtree, and skip scanning while a video is playing
-   / in fullscreen (the icons are already healed by then). Expect the ~5 s
-   full-viewport repaint and its stall to go with it — the scan writes inline
-   styles, which is a plausible source of the `dirty=20` invalidation too.
-   Then re-measure with the same harness before/after.
-2. Re-check the remaining stalls afterwards: YT's own `base.js` timers still show
-   maxima of 283/490 ms and are not ours to fix; if they still land on the video,
-   the structural answer is to stop letting main-thread work block presentation
-   (vsync-paced compositing / zero-copy), not more tuning.
-3. Still unexplained: 1080p playback churns ~30 MB/s of heap (RSS 355 -> 1798 MB
-   in 50 s; 240p flat at ~280 MB), NV12->RGBA convert burning 43 % of a core on
-   `vqueue:src`.
-4. `WEBKIT_VIDEO_COMPOSITE_UNGATED` stays default OFF and inert; keep the
-   `schedupd` marker. Decide whether to drop the flag itself.
+1. **Track A, still worth doing:** `kYouTubeIconFix` (`apps/wpe/WPEUserScripts.h:408`)
+   burns up to 949 ms in a single rAF because it rescans the whole document on
+   every mutation batch and YouTube mutates ~13/s during playback. The fast path
+   means it no longer freezes video, but it is still our own main-thread load, and
+   it is a plausible source of the ~5 s full-viewport invalidation itself.
+2. The ~30 MB/s heap churn at 1080p (RSS up to 1.7 GB; 240p flat at ~280 MB) with
+   NV12->RGBA convert at 43 % of a core. Unexplained and independent of the flag
+   (RSS ranged 194-1677 MB across the B arms).
+3. Structural, unchanged: the ~40 ms serialized comp->recv->paint->ack cycle is
+   exactly the 25 fps budget, so 30 fps content stays marginal until vsync-paced
+   compositing or gralloc zero-copy. See the handover doc.
+4. `WEBKIT_VIDEO_COMPOSITE_UNGATED` (the disproven tile-gate theory) is still
+   present and inert at default OFF — decide whether to drop the flag, keeping the
+   `schedupd` marker.
