@@ -35,6 +35,7 @@
 #include <QOffscreenSurface>
 #include <QOpenGLContext>
 #include <QPointer>
+#include <QSet>
 #include <QWheelEvent>
 #include <wpe/fdo-egl.h>
 #include <wpe/fdo.h>
@@ -114,6 +115,9 @@ private:
     unsigned m_textureUniform { 0 };
 
     bool m_hovering { false };
+    // Touch ids already announced to WebKit with a "down" event; see the
+    // per-transition serialization in dispatchTouchEvent.
+    QSet<int> m_announcedTouchIds;
     uint32_t m_mouseModifiers { 0 };
     uint32_t m_keyboardModifiers { 0 };
     uint32_t m_mousePressedButton { 0 };

@@ -626,38 +626,86 @@ void WPEQtViewBackend::dispatchKeyEvent(QKeyEvent* event, bool state)
 
 void WPEQtViewBackend::dispatchTouchEvent(QTouchEvent* event)
 {
-    wpe_input_touch_event_type eventType;
-    switch (event->type()) {
-    case QEvent::TouchBegin:
-        eventType = wpe_input_touch_event_type_down;
-        break;
-    case QEvent::TouchUpdate:
-        eventType = wpe_input_touch_event_type_motion;
-        break;
-    case QEvent::TouchEnd:
-        eventType = wpe_input_touch_event_type_up;
-        break;
-    default:
-        eventType = wpe_input_touch_event_type_null;
-        break;
-    }
+    // A libwpe touch event describes ONE point transition (event->id = the
+    // changing point; other points ride along as context and are treated as
+    // Stationary). Qt batches simultaneous transitions into a single
+    // QTouchEvent — dispatching that as one wpe event makes WebCore's
+    // EventHandler drop the whole thing: a touchstart whose point list mixes a
+    // Pressed point with never-announced Stationary ones fails its
+    // freshTouchEvents check and no finger ever reaches the page. Serialize
+    // instead: one wpe "down"/"up" per pressed/released point, plus a single
+    // "motion" when positions changed — the same shape a native libwpe
+    // launcher produces.
 
-    // No touch points means g_new0(..., 0) returns NULL; dispatching would then
-    // read rawEvents[0].id off a null pointer. Nothing to deliver, so bail out.
-    if (event->touchPoints().isEmpty())
+    const QList<QTouchEvent::TouchPoint>& points = event->touchPoints();
+    if (points.isEmpty())
         return;
 
-    int i = 0;
-    struct wpe_input_touch_event_raw* rawEvents = g_new0(wpe_input_touch_event_raw, event->touchPoints().length());
-    for (auto& point : event->touchPoints()) {
-        rawEvents[i] = { eventType, static_cast<uint32_t>(event->timestamp()),
-            point.id(), static_cast<int32_t>(point.pos().x()), static_cast<int32_t>(point.pos().y()) };
-        i++;
+    const uint32_t time = static_cast<uint32_t>(event->timestamp());
+
+    auto dispatchOne = [&](wpe_input_touch_event_type eventType, int mainId) {
+        int count = 0;
+        struct wpe_input_touch_event_raw* rawEvents = g_new0(wpe_input_touch_event_raw, points.length());
+        for (auto& point : points) {
+            if (!m_announcedTouchIds.contains(point.id()))
+                continue;
+            wpe_input_touch_event_type pointType = (point.id() == mainId)
+                ? eventType : wpe_input_touch_event_type_motion;
+            rawEvents[count++] = { pointType, time, point.id(),
+                static_cast<int32_t>(point.pos().x()), static_cast<int32_t>(point.pos().y()) };
+        }
+        if (count) {
+            struct wpe_input_touch_event wpeEvent = { rawEvents, static_cast<uint64_t>(count),
+                eventType, mainId, time, modifiers() };
+            wpe_view_backend_dispatch_touch_event(backend(), &wpeEvent);
+        }
+        g_free(rawEvents);
+    };
+
+    if (event->type() == QEvent::TouchBegin)
+        m_announcedTouchIds.clear();
+
+    if (event->type() == QEvent::TouchCancel) {
+        // libwpe has no cancel: end every announced point so WebCore closes
+        // the sequence instead of tracking a stale finger forever.
+        for (auto& point : points) {
+            if (!m_announcedTouchIds.contains(point.id()))
+                continue;
+            dispatchOne(wpe_input_touch_event_type_up, point.id());
+            m_announcedTouchIds.remove(point.id());
+        }
+        m_announcedTouchIds.clear();
+        return;
     }
 
-    struct wpe_input_touch_event wpeEvent = { rawEvents, static_cast<uint64_t>(i), eventType,
-        static_cast<int32_t>(rawEvents[0].id),
-        static_cast<uint32_t>(event->timestamp()), modifiers() };
-    wpe_view_backend_dispatch_touch_event(backend(), &wpeEvent);
-    g_free(rawEvents);
+    for (auto& point : points) {
+        if (point.state() == Qt::TouchPointPressed && !m_announcedTouchIds.contains(point.id())) {
+            m_announcedTouchIds.insert(point.id());
+            dispatchOne(wpe_input_touch_event_type_down, point.id());
+        }
+    }
+
+    int movedId = -1;
+    for (auto& point : points) {
+        if (point.state() == Qt::TouchPointMoved && m_announcedTouchIds.contains(point.id())) {
+            movedId = point.id();
+            break;
+        }
+    }
+    if (movedId != -1)
+        dispatchOne(wpe_input_touch_event_type_motion, movedId);
+
+    // A TouchEnd event releases every remaining point no matter what per-point
+    // state it carries: the synthetic TouchEnd sent when the browser pinch
+    // takes over (WPEWebPage::touchEvent) is built from live points still
+    // marked Moved, and without this the page keeps phantom fingers down
+    // forever (stuck long-press → spurious text selection).
+    const bool releaseAll = (event->type() == QEvent::TouchEnd);
+    for (auto& point : points) {
+        if ((point.state() == Qt::TouchPointReleased || releaseAll)
+            && m_announcedTouchIds.contains(point.id())) {
+            dispatchOne(wpe_input_touch_event_type_up, point.id());
+            m_announcedTouchIds.remove(point.id());
+        }
+    }
 }
