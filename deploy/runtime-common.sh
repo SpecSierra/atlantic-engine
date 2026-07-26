@@ -46,7 +46,6 @@ else
     ATLANTIC_GST_PLUGIN_FEATURE_RANK="${ATLANTIC_GST_PLUGIN_FEATURE_RANK:-droidvdec:300,droidvenc:0,vp9dec:310,vp8dec:310,droidadec:0}"
 fi
 ATLANTIC_WEBKIT_HLS_SUPPORT="${ATLANTIC_WEBKIT_HLS_SUPPORT:-1}"
-ATLANTIC_BROWSER_RUNTIME_DELAY_MS="${ATLANTIC_BROWSER_RUNTIME_DELAY_MS:-2000}"
 
 atlantic_default_pulse_server() {
     for pulse_socket in \
@@ -325,7 +324,14 @@ atlantic_export_browser_env() {
 
     export QT_QPA_PLATFORM="${ATLANTIC_QT_QPA_PLATFORM}"
     export QSG_RENDER_LOOP="${QSG_RENDER_LOOP:-threaded}"
-    export ATLANTIC_BROWSER_RUNTIME_DELAY_MS="${ATLANTIC_BROWSER_RUNTIME_DELAY_MS}"
+    # ATLANTIC_BROWSER_RUNTIME_DELAY_MS: intentionally NOT defaulted here.
+    # Unset means the browser binary loads its runtime as soon as the splash
+    # has rendered its first frame (fastest path); a numeric value forces the
+    # old fixed-delay staging. The 2000ms default this file used to set was
+    # silently overriding the binary's first-frame default for every launch.
+    if [ -n "${ATLANTIC_BROWSER_RUNTIME_DELAY_MS:-}" ]; then
+        export ATLANTIC_BROWSER_RUNTIME_DELAY_MS
+    fi
     export WEBKIT_GST_ENABLE_HLS_SUPPORT="${ATLANTIC_WEBKIT_HLS_SUPPORT}"
 
     # GStreamer buffer tuning is exported once in atlantic_export_helper_env
