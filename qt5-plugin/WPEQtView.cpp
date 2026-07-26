@@ -72,6 +72,8 @@ WPEQtView::~WPEQtView()
         g_signal_handlers_disconnect_by_func(m_webView, reinterpret_cast<gpointer>(notifyLoadChangedCallback), this);
         g_signal_handlers_disconnect_by_func(m_webView, reinterpret_cast<gpointer>(notifyLoadFailedCallback), this);
         g_signal_handlers_disconnect_by_func(m_webView, reinterpret_cast<gpointer>(notifyLoadProgressCallback), this);
+        if (WebKitBackForwardList* list = webkit_web_view_get_back_forward_list(m_webView))
+            g_signal_handlers_disconnect_by_func(list, reinterpret_cast<gpointer>(notifyBackForwardChangedCallback), this);
         g_object_unref(m_webView);
     }
 }
@@ -249,6 +251,14 @@ void WPEQtView::createWebView()
     g_signal_connect(m_webView, "load-changed", G_CALLBACK(notifyLoadChangedCallback), this);
     g_signal_connect(m_webView, "load-failed", G_CALLBACK(notifyLoadFailedCallback), this);
 
+    // canGoBack/canGoForward used to be notified by loadingChanged only. A
+    // same-document navigation (SPA pushState) emits no load change, so the
+    // QML bindings went stale and the toolbar kept showing the home glyph
+    // while several routes deep. The back-forward list's own "changed" signal
+    // fires for those too, so drive the properties off it.
+    if (WebKitBackForwardList* list = webkit_web_view_get_back_forward_list(m_webView))
+        g_signal_connect_swapped(list, "changed", G_CALLBACK(notifyBackForwardChangedCallback), this);
+
     // Allow device-enumeration requests (harmless metadata). Camera/mic and
     // geolocation are deliberately NOT handled here: the embedder (browser)
     // connects its own permission-request handler and prompts the user.
@@ -377,6 +387,11 @@ void WPEQtView::notifyUrlChangedCallback(WPEQtView* view)
     Q_EMIT view->urlChanged();
 }
 
+void WPEQtView::notifyBackForwardChangedCallback(WPEQtView* view)
+{
+    Q_EMIT view->backForwardChanged();
+}
+
 void WPEQtView::notifyTitleChangedCallback(WPEQtView* view)
 {
     Q_EMIT view->titleChanged();
@@ -409,6 +424,10 @@ void WPEQtView::notifyLoadChangedCallback(WebKitWebView*, WebKitLoadEvent event,
         WPEQtViewLoadRequestPrivate loadRequestPrivate(view->url(), loadStatus, "");
         std::unique_ptr<WPEQtViewLoadRequest> loadRequest = std::make_unique<WPEQtViewLoadRequest>(loadRequestPrivate);
         Q_EMIT view->loadingChanged(loadRequest.get());
+        // Keep the old notification too: canGoBack/canGoForward moved off
+        // loadingChanged, and a load start/finish can change them before the
+        // back-forward list itself reports a change.
+        Q_EMIT view->backForwardChanged();
     }
 }
 
@@ -642,10 +661,44 @@ bool WPEQtView::canGoForward() const
 
   Navigates back in the web history.
 */
+// Strict history navigation: step to the immediately adjacent back/forward item
+// instead of letting WebKit skip entries.
+//
+// webkit_web_view_go_back() lands on
+// WebBackForwardList::goBackItemSkippingItemsWithoutUserGesture(), which walks
+// over every item flagged wasCreatedByJSWithoutUserInteraction. A single press
+// then collapses a whole run of SPA pushState routes down to the previous
+// *document*: on forum.sailfishos.org, home -> topic A -> topic B goes straight
+// back to home, skipping topic A. Frameworks that push their routes from a
+// runloop/promise continuation (Ember, and anything else that leaves the tap's
+// gesture scope) lose the user-interaction attribution the skip logic keys on.
+//
+// webkit_web_view_go_to_back_forward_list_item() routes to
+// WebPageProxy::goToBackForwardItem() directly and does no skipping, so taking
+// the adjacent item explicitly gives a strict one-step back.
+//
+// Off by default: the upstream skipping is what defeats history-trapping pages,
+// so this is opt-in until measured on device. ATLANTIC_STRICT_HISTORY_NAV=1.
+static bool strictHistoryNavigationEnabled()
+{
+    static const bool enabled = qgetenv("ATLANTIC_STRICT_HISTORY_NAV").toInt() == 1;
+    return enabled;
+}
+
 void WPEQtView::goBack()
 {
-    if (m_webView)
-        webkit_web_view_go_back(m_webView);
+    if (!m_webView)
+        return;
+
+    if (strictHistoryNavigationEnabled()) {
+        WebKitBackForwardList* list = webkit_web_view_get_back_forward_list(m_webView);
+        if (WebKitBackForwardListItem* item = list ? webkit_back_forward_list_get_back_item(list) : nullptr) {
+            webkit_web_view_go_to_back_forward_list_item(m_webView, item);
+            return;
+        }
+    }
+
+    webkit_web_view_go_back(m_webView);
 }
 
 /*!
@@ -655,8 +708,18 @@ void WPEQtView::goBack()
 */
 void WPEQtView::goForward()
 {
-    if (m_webView)
-        webkit_web_view_go_forward(m_webView);
+    if (!m_webView)
+        return;
+
+    if (strictHistoryNavigationEnabled()) {
+        WebKitBackForwardList* list = webkit_web_view_get_back_forward_list(m_webView);
+        if (WebKitBackForwardListItem* item = list ? webkit_back_forward_list_get_forward_item(list) : nullptr) {
+            webkit_web_view_go_to_back_forward_list_item(m_webView, item);
+            return;
+        }
+    }
+
+    webkit_web_view_go_forward(m_webView);
 }
 
 /*!

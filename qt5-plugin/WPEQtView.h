@@ -38,8 +38,11 @@ class Q_DECL_EXPORT WPEQtView : public QQuickItem {
     Q_PROPERTY(bool loading READ isLoading NOTIFY loadingChanged)
     Q_PROPERTY(int loadProgress READ loadProgress NOTIFY loadProgressChanged)
     Q_PROPERTY(QString title READ title NOTIFY titleChanged)
-    Q_PROPERTY(bool canGoBack READ canGoBack NOTIFY loadingChanged)
-    Q_PROPERTY(bool canGoForward READ canGoForward NOTIFY loadingChanged)
+    // Notified by backForwardChanged, not loadingChanged: same-document
+    // navigations (SPA pushState) emit no load change, and these bindings must
+    // still re-evaluate. WPEQtView emits it for load changes as well.
+    Q_PROPERTY(bool canGoBack READ canGoBack NOTIFY backForwardChanged)
+    Q_PROPERTY(bool canGoForward READ canGoForward NOTIFY backForwardChanged)
     Q_ENUMS(LoadStatus)
 
 public:
@@ -128,6 +131,7 @@ Q_SIGNALS:
     void titleChanged();
     void loadingChanged(WPEQtViewLoadRequest* loadRequest);
     void loadProgressChanged();
+    void backForwardChanged();
     void scrollPositionChanged(qreal scrollY, qreal scrollHeight, qreal innerHeight);
     void faviconUrlChanged(const QString& url);
     void selectedTextChanged(const QString& text);
@@ -162,6 +166,7 @@ private Q_SLOTS:
 private:
     static void notifyUrlChangedCallback(WPEQtView*);
     static void notifyTitleChangedCallback(WPEQtView*);
+    static void notifyBackForwardChangedCallback(WPEQtView*);
     static void notifyLoadProgressCallback(WPEQtView*);
     static void notifyLoadChangedCallback(WebKitWebView*, WebKitLoadEvent, WPEQtView*);
     static void notifyLoadFailedCallback(WebKitWebView*, WebKitLoadEvent, const gchar* failingURI, GError*, WPEQtView*);
