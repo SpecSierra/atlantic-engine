@@ -452,16 +452,31 @@ QSGNode* WPEQtView::updatePaintNode(QSGNode* node, UpdatePaintNodeData*)
 
     // WEBKIT_ANCHOR_STALE_FRAME (default OFF): between a resize and the arrival
     // of the first frame at the new size, the exported image still holds the OLD
-    // size's content. The plain path below wraps it as a texture of the *new*
-    // m_size and stretches it across boundingRect(), squashing the whole frame
-    // until WebKit repaints (~hundreds of ms on a heavy page) — very visible on
-    // every toolbar toggle now that the viewport inset resizes frequently. When
-    // enabled, draw the frame at its true pixel size, top-anchored and uniformly
-    // scaled by width (width is unchanged by a vertical inset), clipping the
-    // overflow via setSourceRect instead of stretching. Steady-state (frame size
-    // == item size) is byte-identical to the plain path.
+    // size's content. The plain path wraps it as a texture of the *new* m_size
+    // and STRETCHES it across boundingRect(), distorting the whole frame until
+    // WebKit repaints (~hundreds of ms on a heavy page) — very visible on every
+    // toolbar toggle now that the viewport inset resizes frequently.
+    //
+    // When enabled, draw the frame at its TRUE aspect (uniform scale by width,
+    // which a vertical inset does not change), top-anchored, and DO NOT clip it
+    // to the item. In steady state frameSize maps exactly onto the item, so the
+    // rect is boundingRect() — byte-identical to the plain path (and, crucially,
+    // position:fixed bottom content is never clipped). Mid-resize the frame is
+    // drawn at its native size instead of being stretched: on shrink (bar
+    // appearing) the surplus height overflows below the item, where the toolbar
+    // overlay covers it; on grow (bar hiding) the item's bottom strip is briefly
+    // unfilled (page background) until the new-size frame arrives. No squash
+    // either way. An earlier revision clamped the height to the item and clipped
+    // via setSourceRect — that hid the floating bottom content the inset exists
+    // to reveal, so the clamp was removed.
     static const bool anchorStaleFrame = [] {
         const QByteArray e = qgetenv("WEBKIT_ANCHOR_STALE_FRAME");
+        return !e.isEmpty() && e != "0";
+    }();
+    // WEBKIT_FRAME_DEBUG=1: log item-vs-frame geometry on change so the actual
+    // resize behavior can be read off the device instead of guessed at.
+    static const bool frameDebug = [] {
+        const QByteArray e = qgetenv("WEBKIT_FRAME_DEBUG");
         return !e.isEmpty() && e != "0";
     }();
 
@@ -478,16 +493,26 @@ QSGNode* WPEQtView::updatePaintNode(QSGNode* node, UpdatePaintNodeData*)
     }
 
     const QRectF item = boundingRect();
+    if (frameDebug) {
+        const QSize realFrame = m_backend->currentImageSize();
+        static QSize lastItem, lastFrame;
+        const QSize itemSz = item.size().toSize();
+        if (itemSz != lastItem || realFrame != lastFrame) {
+            lastItem = itemSz; lastFrame = realFrame;
+            qWarning("[FRAME-DBG] item=%dx%d frame=%dx%d m_size=%dx%d",
+                     itemSz.width(), itemSz.height(), realFrame.width(), realFrame.height(),
+                     m_size.toSize().width(), m_size.toSize().height());
+        }
+    }
+
     if (frameSize.isEmpty() || item.width() <= 0.0 || frameSize.width() <= 0) {
         // Plain path: stretch the frame to fill the item (original behavior).
         textureNode->setRect(item);
     } else {
-        // Uniform scale by width, top-anchored; show only the top slice that fits.
+        // True aspect, top-anchored, no clip (see block comment above).
         const qreal scale = item.width() / qreal(frameSize.width());
-        const qreal drawnH = qMin<qreal>(item.height(), frameSize.height() * scale);
-        const qreal srcH = drawnH / scale;                       // texture pixels
+        const qreal drawnH = frameSize.height() * scale;
         textureNode->setRect(QRectF(0.0, 0.0, item.width(), drawnH));
-        textureNode->setSourceRect(QRectF(0.0, 0.0, frameSize.width(), srcH));
     }
     return textureNode;
 }
