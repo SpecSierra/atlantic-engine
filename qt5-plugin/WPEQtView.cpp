@@ -450,10 +450,11 @@ QSGNode* WPEQtView::updatePaintNode(QSGNode* node, UpdatePaintNodeData*)
     if (!textureId)
         return node;
 
-    // WEBKIT_ANCHOR_STALE_FRAME (default OFF): between a resize and the arrival
-    // of the first frame at the new size, the exported image still holds the OLD
-    // size's content. The plain path wraps it as a texture of the *new* m_size
-    // and STRETCHES it across boundingRect(), distorting the whole frame until
+    // WEBKIT_ANCHOR_STALE_FRAME (default ON; set =0 to disable): between a resize
+    // and the arrival of the first frame at the new size, the exported image
+    // still holds the OLD size's content. The plain path wraps it as a texture
+    // of the *new* m_size and STRETCHES it across boundingRect(), distorting the
+    // whole frame until
     // WebKit repaints (~hundreds of ms on a heavy page) — very visible on every
     // toolbar toggle now that the viewport inset resizes frequently.
     //
@@ -470,8 +471,8 @@ QSGNode* WPEQtView::updatePaintNode(QSGNode* node, UpdatePaintNodeData*)
     // via setSourceRect — that hid the floating bottom content the inset exists
     // to reveal, so the clamp was removed.
     static const bool anchorStaleFrame = [] {
-        const QByteArray e = qgetenv("WEBKIT_ANCHOR_STALE_FRAME");
-        return !e.isEmpty() && e != "0";
+        // Default ON: absent env -> enabled; only an explicit "0" disables it.
+        return qgetenv("WEBKIT_ANCHOR_STALE_FRAME") != "0";
     }();
     // WEBKIT_FRAME_DEBUG=1: log item-vs-frame geometry on change so the actual
     // resize behavior can be read off the device instead of guessed at.
