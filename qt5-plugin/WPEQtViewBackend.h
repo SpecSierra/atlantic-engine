@@ -50,6 +50,11 @@ public:
 
     void resize(const QSizeF&);
     GLuint texture(QOpenGLContext*);
+    // Real pixel dimensions of the frame currently bound by texture() (the same
+    // pending?:committed image). Empty until the first frame. Used by
+    // updatePaintNode to draw a just-resized-but-not-yet-repainted frame at its
+    // native size (top-anchored) instead of stretching it into the new rect.
+    QSize currentImageSize() const;
     void didRenderFrame();
     void dispatchEarlyAck();
     bool ackOnSample() const;

@@ -450,7 +450,23 @@ QSGNode* WPEQtView::updatePaintNode(QSGNode* node, UpdatePaintNodeData*)
     if (!textureId)
         return node;
 
-    const QSize textureSize = m_size.toSize();
+    // WEBKIT_ANCHOR_STALE_FRAME (default OFF): between a resize and the arrival
+    // of the first frame at the new size, the exported image still holds the OLD
+    // size's content. The plain path below wraps it as a texture of the *new*
+    // m_size and stretches it across boundingRect(), squashing the whole frame
+    // until WebKit repaints (~hundreds of ms on a heavy page) — very visible on
+    // every toolbar toggle now that the viewport inset resizes frequently. When
+    // enabled, draw the frame at its true pixel size, top-anchored and uniformly
+    // scaled by width (width is unchanged by a vertical inset), clipping the
+    // overflow via setSourceRect instead of stretching. Steady-state (frame size
+    // == item size) is byte-identical to the plain path.
+    static const bool anchorStaleFrame = [] {
+        const QByteArray e = qgetenv("WEBKIT_ANCHOR_STALE_FRAME");
+        return !e.isEmpty() && e != "0";
+    }();
+
+    const QSize frameSize = anchorStaleFrame ? m_backend->currentImageSize() : QSize();
+    const QSize textureSize = frameSize.isEmpty() ? m_size.toSize() : frameSize;
     QSGTexture *texture = textureNode->texture();
     if (!texture || texture->textureSize() != textureSize) {
 #if (QT_VERSION >= QT_VERSION_CHECK(5, 15, 0))
@@ -460,7 +476,19 @@ QSGNode* WPEQtView::updatePaintNode(QSGNode* node, UpdatePaintNodeData*)
 #endif
         textureNode->setTexture(texture);
     }
-    textureNode->setRect(boundingRect());
+
+    const QRectF item = boundingRect();
+    if (frameSize.isEmpty() || item.width() <= 0.0 || frameSize.width() <= 0) {
+        // Plain path: stretch the frame to fill the item (original behavior).
+        textureNode->setRect(item);
+    } else {
+        // Uniform scale by width, top-anchored; show only the top slice that fits.
+        const qreal scale = item.width() / qreal(frameSize.width());
+        const qreal drawnH = qMin<qreal>(item.height(), frameSize.height() * scale);
+        const qreal srcH = drawnH / scale;                       // texture pixels
+        textureNode->setRect(QRectF(0.0, 0.0, item.width(), drawnH));
+        textureNode->setSourceRect(QRectF(0.0, 0.0, frameSize.width(), srcH));
+    }
     return textureNode;
 }
 

@@ -209,6 +209,17 @@ void WPEQtViewBackend::resize(const QSizeF& newSize)
     wpe_view_backend_dispatch_set_size(backend(), m_size.width(), m_size.height());
 }
 
+QSize WPEQtViewBackend::currentImageSize() const
+{
+    // Mirror texture()'s selection so the reported size matches the pixels it
+    // just bound into m_textureId.
+    auto* image = m_pendingImage ? m_pendingImage : m_committedImage;
+    if (!image)
+        return QSize();
+    return QSize(wpe_fdo_egl_exported_image_get_width(image),
+                 wpe_fdo_egl_exported_image_get_height(image));
+}
+
 GLuint WPEQtViewBackend::texture(QOpenGLContext* context)
 {
     if ((!m_pendingImage && !m_committedImage) || !hasValidSurface())
