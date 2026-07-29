@@ -476,6 +476,16 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # rendering behaviour and no decision. WEBKIT_TILECOST_LOG=1 to trace.
     # Must apply AFTER webkit-lowres-tiles-cpu-path.patch (same file).
     "patches/webkit/webkit-tile-raster-cost-instrumentation.patch"
+    # webkit-lowres-cost-trigger.patch: decide scroll degradation from PREDICTED
+    # RASTER COST vs the frame budget instead of scroll speed, with the low-res
+    # scale derived as 1/sqrt(overshoot) rather than a fixed cliff, plus asymmetric
+    # hysteresis (engage on 1 over-budget pass, disengage after 4 under). Speed
+    # cannot discriminate: the same knob is -42% p95 on a raster-bound page and +7%
+    # p95 / +11% raster CPU on a cheap one, and raster cost separates them 23.7x
+    # while their velocities are identical. WEBKIT_LOWRES_COST_TRIGGER=1;
+    # **default OFF** pending the on-device A/B. Requires the instrumentation
+    # patch above and must apply after it.
+    "patches/webkit/webkit-lowres-cost-trigger.patch"
     # webkit-fling-throttle-env.patch: fling degradation for main-thread-bound
     # pages (franceinfo/radiofrance scroll <1fps, 44% style resolution). While the
     # scrolling thread reports a fast fling (velocity sampled in

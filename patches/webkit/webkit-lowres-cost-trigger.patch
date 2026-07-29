@@ -1,0 +1,309 @@
+Cost-based trigger for scroll degradation (WEBKIT_LOWRES_COST_TRIGGER, default OFF).
+
+The existing ladder decides whether to degrade from scroll SPEED. Speed is a
+geometry term: it says how fast tiles are being exposed, not what a tile costs to
+rasterize -- and cost is what decides whether degrading helps or hurts. Measured
+on build 618/620 with the identical WEBKIT_LOWRES_TILE_SCALE=0.3 knob:
+
+  raster-bound page (282 ns/px, 13.0 ms/tile)  p95 76ms -> 44ms  (-42%)
+  cheap page        (11.9 ns/px,  0.8 ms/tile) p95 27ms -> 29ms  (+7%),
+                                               jank 1.3% -> 3.4%
+
+Raster cost separates those pages by 23.7x while their scroll velocities are
+indistinguishable, so no velocity threshold can tell them apart. Re-calibration
+was tested and rejected: raising the thresholds halved engagement on the cheap
+page with ZERO change to its penalty, while giving up a quarter of the
+raster-bound page's tail win.
+
+This trigger asks the question that determines the sign of the outcome -- will
+the tiles this pass must paint fit in a frame?
+
+  predictedMs = tileRasterNsPerPixel * pixelsToPaint      (EWMA from the
+                                                           instrumentation patch)
+  overshoot   = predictedMs / WEBKIT_LOWRES_COST_BUDGET_MS
+
+engaging only when overshoot > 1. The scale is DERIVED, not fixed: raster cost is
+~linear in painted pixels and scale s paints s^2 of them, so 1/sqrt(overshoot) is
+the scale that just fits the budget. Degradation becomes proportional to overload
+instead of a cliff. On the measured numbers a 3-tile exposure is 0.15x budget on
+the cheap page (never degrades, at any speed) and 2.35x on the raster-bound one
+(scale 0.65 -- fits the budget and is far less visible than the current 0.3x).
+
+Asymmetric hysteresis: engage on one over-budget pass, disengage only after 4
+consecutive passes below 70% of budget. Motivated by measurement -- at 43-46%
+armed the heavy page's jank returned to baseline while raster CPU stayed
+elevated, because every engage/disengage cycle costs a whole-tile full-res
+sharpen repaint. A trigger that hovers near its threshold is worse than one that
+stays either side of it.
+
+Decision runs in updateIfNeeded (first point where the pass's actual work is
+known) rather than setVisibleRect, and velocity arming is disabled while the cost
+trigger owns the tier so the two cannot fight. Unknown cost (no EWMA sample yet)
+means DO NOT degrade: guessing cheap costs one soft frame, guessing expensive
+blurs a page that never needed it.
+
+Knobs: WEBKIT_LOWRES_COST_TRIGGER=1 (default off), _BUDGET_MS (11),
+_SCALE_FLOOR (0.3), _CHECKERBOARD_X (11), _DISENGAGE_PASSES (4).
+WEBKIT_SCROLLTIER_LOG=1 traces every decision as [costtier].
+
+Requires webkit-tile-raster-cost-instrumentation.patch. Must apply after it and
+after webkit-lowres-tiles-during-scroll-env.patch / -cpu-path.patch.
+
+diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-07-29 09:38:07.900166245 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-07-29 09:40:05.316999231 +0000
+@@ -28,6 +28,7 @@
+ #include <wtf/CheckedArithmetic.h>
+ #include <wtf/MathExtras.h>
+ 
++#include <cmath>
+ #include <cstdlib>
+ #include <cstring>
+ #include <cstdio>
+@@ -239,6 +240,120 @@
+     return threshold;
+ }
+ 
++// ── Cost-based degradation trigger ───────────────────────────────────────────
++// The speed ladder above asks "how fast is the page scrolling?". That is a pure
++// geometry question -- it describes how quickly tiles are being exposed, but not
++// what a tile COSTS to rasterize, and cost is what decides whether degrading is
++// a win or a loss. Measured on build 618/620 with the identical
++// WEBKIT_LOWRES_TILE_SCALE=0.3 knob:
++//
++//   raster-bound page (282 ns/px, 13.0 ms/tile)  p95 76ms -> 44ms  (-42%)
++//   cheap page        (11.9 ns/px, 0.8 ms/tile)  p95 27ms -> 29ms  (+7%),
++//                                                jank 1.3% -> 3.4%
++//
++// Raster cost separates those pages by 23.7x while their scroll velocities are
++// indistinguishable, so no velocity threshold can tell them apart. Re-calibrating
++// the thresholds was tried and rejected: it halved engagement on the cheap page
++// with zero change to the penalty, while giving up a quarter of the raster-bound
++// page's tail win.
++//
++// This trigger asks the question that actually determines the sign of the
++// outcome: "will the tiles this pass needs to paint fit in a frame?"
++//
++//   predictedMs = tileRasterNsPerPixel * pixelsToPaint
++//   overshoot   = predictedMs / frameBudgetMs
++//
++// engaging only when overshoot > 1. Because raster cost is ~linear in painted
++// pixels and a scale of s paints s^2 of them, the scale needed to fit the budget
++// is 1/sqrt(overshoot) -- so the degradation is proportional to the overload
++// instead of a fixed cliff. On the measured numbers a 3-tile exposure is 0.15x
++// budget on the cheap page (no degradation at any speed) and 2.35x on the
++// raster-bound one (scale 0.65, which fits the budget and is far less visible
++// than the current fixed 0.3x).
++//
++// WEBKIT_LOWRES_COST_TRIGGER=1 enables it; default OFF (the speed ladder stays
++// in charge) pending the on-device A/B.
++static bool costTriggerEnabled()
++{
++    static bool enabled = [] {
++        const char* env = getenv("WEBKIT_LOWRES_COST_TRIGGER");
++        return env && *env && strcmp(env, "0");
++    }();
++    return enabled;
++}
++
++// Per-frame raster budget. Not the full 16.6 ms frame: raster shares the frame
++// with compositing, upload and the rest of the pipeline, so budgeting the whole
++// vsync interval to raster alone guarantees a missed frame whenever the estimate
++// is exactly met. WEBKIT_LOWRES_COST_BUDGET_MS, default 11 ms (~2/3 of a 60 Hz
++// frame).
++static double costBudgetMs()
++{
++    static double ms = [] {
++        if (const char* env = getenv("WEBKIT_LOWRES_COST_BUDGET_MS")) {
++            double v = atof(env);
++            if (v > 1.0 && v <= 100.0)
++                return v;
++        }
++        return 11.0;
++    }();
++    return ms;
++}
++
++// Floor on the derived scale. Below ~0.3 the upscale blur is obvious on text and
++// the quality cost stops being worth the raster saved.
++// WEBKIT_LOWRES_COST_SCALE_FLOOR, default 0.3, clamped to [0.25, 1.0).
++static float costScaleFloor()
++{
++    static float floorScale = [] {
++        if (const char* env = getenv("WEBKIT_LOWRES_COST_SCALE_FLOOR")) {
++            float v = atof(env);
++            if (v >= 0.25f && v < 1.0f)
++                return v;
++        }
++        return 0.3f;
++    }();
++    return floorScale;
++}
++
++// Overshoot at which the top rung (checkerboard: skip the band entirely) takes
++// over from low-res. At the scale floor, low-res can only recover 1/floor^2 --
++// about 11x at 0.3 -- so past that point painting low-res still misses the frame
++// and showing background until rest is the better trade.
++// WEBKIT_LOWRES_COST_CHECKERBOARD_X, default 11; 0 disables the rung.
++static double costCheckerboardOvershoot()
++{
++    static double x = [] {
++        if (const char* env = getenv("WEBKIT_LOWRES_COST_CHECKERBOARD_X")) {
++            double v = atof(env);
++            if (v >= 0.0)
++                return v;
++        }
++        return 11.0;
++    }();
++    return x;
++}
++
++// Asymmetric hysteresis: engage on a single over-budget pass (a missed frame is
++// already visible), but require this many consecutive comfortably-under-budget
++// passes before disengaging. Measured motivation: a trigger that hovers near its
++// threshold is worse than one that stays either side of it -- at 43-46% armed the
++// heavy page's jank returned to baseline while raster CPU stayed elevated,
++// because every engage/disengage cycle costs a whole-tile full-res sharpen
++// repaint. WEBKIT_LOWRES_COST_DISENGAGE_PASSES, default 4.
++static unsigned costDisengagePasses()
++{
++    static unsigned n = [] {
++        if (const char* env = getenv("WEBKIT_LOWRES_COST_DISENGAGE_PASSES")) {
++            int v = atoi(env);
++            if (v >= 1 && v <= 60)
++                return static_cast<unsigned>(v);
++        }
++        return 4u;
++    }();
++    return n;
++}
++
+ // Diagnostic (WEBKIT_SCROLLTIER_LOG=1): trace the scroll-speed-ladder arming decisions
+ // on WebProcess stderr to see why the low-res tier does or does not engage.
+ static bool scrollTierLogEnabled()
+@@ -318,6 +433,83 @@
+     if (!m_tiles.isEmpty())
+         invalidateRegion(dirtyRegion);
+ 
++    // Cost-based tier decision. Runs here rather than in setVisibleRect because
++    // this is the first point where the work this pass must actually do is known:
++    // the tiles just created (the newly-exposed band) plus whatever is dirty.
++    // Velocity is not consulted at all -- if the work fits the budget there is
++    // nothing to gain by degrading, however fast the page is moving.
++    if (costTriggerEnabled()) {
++        double pixelsToPaint = 0;
++        for (const auto& tile : m_tiles.values()) {
++            if (tile.isDirty())
++                pixelsToPaint += static_cast<double>(tile.dirtyRect.width()) * tile.dirtyRect.height();
++        }
++        // Freshly created tiles are not yet in m_tiles as dirty-with-content; each
++        // costs a full tile of raster.
++        pixelsToPaint += static_cast<double>(tilesToCreate.size())
++            * m_tileSize.width() * m_tileSize.height();
++
++        // The cost signal comes from the Skia painting engine; without it there is
++        // no measurement to trigger on and the speed ladder stays in charge.
++        double predictedMs = 0;
++#if USE(SKIA)
++        predictedMs = SkiaPaintingEngine::predictedTileRasterMs(pixelsToPaint);
++#endif
++        // predictedTileRasterMs returns 0 until the cost EWMA has a sample. Treat
++        // "unknown" as "do not degrade": guessing cheap costs one soft frame,
++        // guessing expensive blurs a page that never needed it.
++        double overshoot = predictedMs > 0 ? predictedMs / costBudgetMs() : 0.0;
++
++        ScrollTier costTier = ScrollTier::None;
++        float costScale = 1.0f;
++        if (overshoot > 1.0) {
++            double cbX = costCheckerboardOvershoot();
++            if (cbX > 0 && overshoot >= cbX)
++                costTier = ScrollTier::Checkerboard;
++            else {
++                costTier = ScrollTier::LowRes;
++                // Cost is ~linear in painted pixels, and scale s paints s^2 of
++                // them, so 1/sqrt(overshoot) is the scale that fits the budget.
++                costScale = clampTo<float>(1.0 / std::sqrt(overshoot), costScaleFloor(), 1.0f);
++            }
++        }
++
++        if (costTier != ScrollTier::None) {
++            m_scrollTier = costTier;
++            m_costLowResScale = costScale;
++            m_underBudgetPasses = 0;
++            // Reuse the existing hold window so the downstream sharpen/defer logic
++            // is unchanged; hysteresis below decides when it is allowed to lapse.
++            m_checkerboardHoldUntil = MonotonicTime::now() + Seconds::fromMilliseconds(checkerboardSettleMs());
++        } else if (m_scrollTier != ScrollTier::None) {
++            // Only count a pass as "under budget" when it is comfortably so (70%),
++            // so a trigger sitting exactly on the threshold cannot oscillate.
++            if (overshoot < 0.7)
++                ++m_underBudgetPasses;
++            else
++                m_underBudgetPasses = 0;
++            if (m_underBudgetPasses >= costDisengagePasses()) {
++                m_scrollTier = ScrollTier::None;
++                m_costLowResScale = 1.0f;
++                m_checkerboardHoldUntil = MonotonicTime::now();  // let it lapse now
++            } else {
++                // Hold the tier (and the window) while we wait out the hysteresis.
++                m_checkerboardHoldUntil = MonotonicTime::now() + Seconds::fromMilliseconds(checkerboardSettleMs());
++            }
++        }
++
++        if (scrollTierLogEnabled() && (predictedMs > 0 || m_scrollTier != ScrollTier::None)) {
++            double nsPerPx = 0;
++#if USE(SKIA)
++            nsPerPx = SkiaPaintingEngine::tileRasterNsPerPixel();
++#endif
++            fprintf(stderr, "[costtier] proxy %p px=%.0f predMs=%.2f budget=%.1f overshoot=%.2f "
++                "tier=%d scale=%.2f underBudget=%u nsPerPx=%.1f\n", this, pixelsToPaint,
++                predictedMs, costBudgetMs(), overshoot, static_cast<int>(m_scrollTier),
++                m_costLowResScale, m_underBudgetPasses, nsPerPx);
++        }
++    }
++
+     // Scroll-ladder bookkeeping. A degradation tier is active while the hold window is
+     // open; the low-res tier paints the exposed band at reduced resolution (in the
+     // dirty-tile loop below). Once the scroll truly settles (no tier), repaint any
+@@ -390,7 +582,11 @@
+             // prepaint cushion ahead of it goes low-res.
+             if (paintLowRes && lowResKeepViewportFullRes() && tile.rect.intersects(m_visibleRect))
+                 paintLowRes = false;
+-            float lowResScale = paintLowRes ? lowResTileScaleDuringScroll() : 1.0f;
++            // Under the cost trigger the scale is derived per pass from how far
++            // over budget the work is, rather than being a fixed cliff.
++            float lowResScale = paintLowRes
++                ? (costTriggerEnabled() ? m_costLowResScale : lowResTileScaleDuringScroll())
++                : 1.0f;
+ 
+ #if USE(SKIA)
+             auto buffer = recording ? layer.replay(recording, tile.dirtyRect, lowResScale) : layer.paint(tile.dirtyRect, lowResScale);
+@@ -494,6 +690,11 @@
+ 
+                 float lowResSpeed = lowResScrollSpeedThreshold();
+                 float checkerboardSpeed = checkerboardScrollSpeedThreshold();
++                // The cost trigger owns the tier when enabled; velocity must not
++                // also arm it, or the two would fight (speed would re-arm the tier
++                // that the cost hysteresis is trying to let lapse).
++                if (costTriggerEnabled())
++                    lowResSpeed = checkerboardSpeed = 0;
+                 if (lowResSpeed || checkerboardSpeed) {
+                     auto now = MonotonicTime::now();
+                     double dtSec = (now - m_lastScrollSampleTime).seconds();
+diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h	2026-07-29 09:38:07.906166287 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h	2026-07-29 09:39:30.403751689 +0000
+@@ -174,6 +174,13 @@
+     MonotonicTime m_lastScrollSampleTime;
+     MonotonicTime m_checkerboardHoldUntil;
+     ScrollTier m_scrollTier { ScrollTier::None };
++    // Cost trigger (WEBKIT_LOWRES_COST_TRIGGER): scale derived per pass from how
++    // far the pass's predicted raster work overshoots the frame budget, and the
++    // run of consecutive comfortably-under-budget passes seen since the tier last
++    // engaged (asymmetric hysteresis -- engage on one bad pass, disengage only
++    // after a run of good ones, because each disengage costs a full-res repaint).
++    float m_costLowResScale { 1.0f };
++    unsigned m_underBudgetPasses { 0 };
+     bool m_pendingTileCreation { false };
+     IntRect m_contentsRect;
+     IntRect m_visibleRect;
