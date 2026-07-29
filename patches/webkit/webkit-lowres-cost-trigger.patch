@@ -70,9 +70,24 @@ pages. Three fixes:
   * disengage immediately when motion stops, bypassing the hysteresis, so tiles
     sharpen at rest instead of staying soft for several more flushes.
 
+UPDATE 2 (franceinfo, build 623): the scroll gate never fired on a real page --
+964 of 964 samples reported scrolling=0 while the page was being flung, so the
+trigger was inert. Cause: the motion timestamp was PER-PROXY. A real page is many
+layers (~99 here) and each proxy only runs when its own layer changes, so any one
+layer's last-motion timestamp is routinely older than the window. This is the same
+per-layer sampling sparsity that makes the speed ladder's `dt < 0.2` gate discard
+536 of 536 samples and never arm on a real page at all.
+
+Whether the user is scrolling is a property of the PAGE, not of a layer: a fixed
+header never moves and a parallax layer moves at its own rate, yet the page is
+scrolling in both cases. Motion is now recorded process-wide (relaxed atomic),
+written by whichever layer observes movement and read by all of them, which is
+both correct and immune to per-layer sparsity. Window widened to 250 ms to span
+the gaps between flushes on a heavy page.
+
 diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
---- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-07-29 10:37:53.341439180 +0000
-+++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-07-29 10:39:04.090930139 +0000
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-07-29 12:09:28.107982119 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-07-29 12:10:31.029444111 +0000
 @@ -28,6 +28,7 @@
  #include <wtf/CheckedArithmetic.h>
  #include <wtf/MathExtras.h>
@@ -81,7 +96,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
  #include <cstdlib>
  #include <cstring>
  #include <cstdio>
-@@ -239,6 +240,171 @@
+@@ -239,6 +240,211 @@
      return threshold;
  }
  
@@ -216,7 +231,8 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
 +// The speed ladder got this for free -- it could only arm inside setVisibleRect
 +// when dy != 0. The cost trigger evaluates on every layer flush, so it must
 +// reinstate the condition explicitly.
-+// WEBKIT_LOWRES_COST_MOTION_MS, default 120.
++// WEBKIT_LOWRES_COST_MOTION_MS, default 250 -- wide enough to span the gaps
++// between layer flushes on a heavy page, short enough to end promptly at rest.
 +static double costMotionWindowMs()
 +{
 +    static double ms = [] {
@@ -225,9 +241,48 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
 +            if (v >= 0 && v <= 2000)
 +                return v;
 +        }
-+        return 120.0;
++        return 250.0;
 +    }();
 +    return ms;
++}
++
++// Scroll motion is a PAGE-level fact, so it is tracked process-wide rather than
++// per backing store.
++//
++// The per-proxy version of this was wrong for the same reason the speed ladder's
++// `dt < 0.2` sample gate is wrong, and it is worth stating once because it has now
++// caused two separate bugs. A real page is many compositing layers -- franceinfo
++// has ~99 -- and each proxy's setVisibleRect / updateIfNeeded runs only when THAT
++// layer changes. Any single layer therefore sees sparse, irregular updates: its
++// own dt routinely exceeds 200 ms (so the speed ladder discards 536 of 536 samples
++// and never arms on a real page at all), and its own last-motion timestamp is
++// routinely older than the motion window (so the cost trigger saw scrolling=0 for
++// every one of 964 samples while the page was being flung).
++//
++// Neither is a property of the layer. Whether the USER is scrolling is a property
++// of the page: a fixed header never moves and a parallax layer moves at its own
++// rate, but the page is scrolling in both cases. One process-wide timestamp,
++// written by whichever layer observes movement and read by all of them, is both
++// correct and immune to per-layer sampling sparsity.
++//
++// Relaxed atomic: a smoothed liveness flag read across threads, where a slightly
++// stale read costs nothing and a lock on this path would cost more than the
++// signal.
++static std::atomic<double> s_lastScrollMotionSeconds { 0.0 };
++
++static void noteScrollMotion()
++{
++    s_lastScrollMotionSeconds.store(MonotonicTime::now().secondsSinceEpoch().value(),
++        std::memory_order_relaxed);
++}
++
++static bool pageIsScrolling(double windowMs)
++{
++    double last = s_lastScrollMotionSeconds.load(std::memory_order_relaxed);
++    if (last <= 0)
++        return false;
++    double nowSec = MonotonicTime::now().secondsSinceEpoch().value();
++    return (nowSec - last) * 1000.0 <= windowMs;
 +}
 +
 +// Asymmetric hysteresis: engage on a single over-budget pass (a missed frame is
@@ -253,7 +308,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
  // Diagnostic (WEBKIT_SCROLLTIER_LOG=1): trace the scroll-speed-ladder arming decisions
  // on WebProcess stderr to see why the low-res tier does or does not engage.
  static bool scrollTierLogEnabled()
-@@ -318,6 +484,99 @@
+@@ -318,6 +524,98 @@
      if (!m_tiles.isEmpty())
          invalidateRegion(dirtyRegion);
  
@@ -267,8 +322,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
 +        // this the trigger engages during load and on idle repaints, leaving the
 +        // page permanently soft and exposing the low-res edge seam as a static
 +        // grid. See costMotionWindowMs().
-+        bool scrolling = m_lastScrollMotionTime
-+            && (MonotonicTime::now() - m_lastScrollMotionTime).milliseconds() <= costMotionWindowMs();
++        bool scrolling = pageIsScrolling(costMotionWindowMs());
 +
 +        double pixelsToPaint = 0;
 +        for (const auto& tile : m_tiles.values()) {
@@ -353,7 +407,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
      // Scroll-ladder bookkeeping. A degradation tier is active while the hold window is
      // open; the low-res tier paints the exposed band at reduced resolution (in the
      // dirty-tile loop below). Once the scroll truly settles (no tier), repaint any
-@@ -390,7 +649,11 @@
+@@ -390,7 +688,11 @@
              // prepaint cushion ahead of it goes low-res.
              if (paintLowRes && lowResKeepViewportFullRes() && tile.rect.intersects(m_visibleRect))
                  paintLowRes = false;
@@ -366,19 +420,18 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
  
  #if USE(SKIA)
              auto buffer = recording ? layer.replay(recording, tile.dirtyRect, lowResScale) : layer.paint(tile.dirtyRect, lowResScale);
-@@ -486,6 +749,11 @@
+@@ -486,6 +788,10 @@
          if (!contentsRectChanged && visibleRect.height() == m_visibleRect.height()) {
              int dy = visibleRect.y() - m_visibleRect.y();
              if (dy) {
-+                // Timestamp of the last real scroll movement. The cost trigger
-+                // gates on this so it can only degrade a page that is moving --
-+                // the condition the speed ladder got implicitly by living inside
-+                // this dy != 0 branch.
-+                m_lastScrollMotionTime = MonotonicTime::now();
++                // Record motion process-wide, not on this proxy: see
++                // noteScrollMotion(). Any layer observing movement means the page
++                // is moving, which is the fact the cost trigger actually needs.
++                noteScrollMotion();
                  if ((dy > 0) != (m_scrollAccumulatorY > 0))
                      m_scrollAccumulatorY = 0;
                  m_scrollAccumulatorY += dy;
-@@ -494,6 +762,11 @@
+@@ -494,6 +800,11 @@
  
                  float lowResSpeed = lowResScrollSpeedThreshold();
                  float checkerboardSpeed = checkerboardScrollSpeedThreshold();
@@ -391,9 +444,9 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
                      auto now = MonotonicTime::now();
                      double dtSec = (now - m_lastScrollSampleTime).seconds();
 diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h
---- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h	2026-07-29 10:37:53.342439187 +0000
-+++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h	2026-07-29 10:39:04.090930139 +0000
-@@ -174,6 +174,17 @@
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h	2026-07-29 12:09:28.107982119 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h	2026-07-29 12:09:54.304174692 +0000
+@@ -174,6 +174,13 @@
      MonotonicTime m_lastScrollSampleTime;
      MonotonicTime m_checkerboardHoldUntil;
      ScrollTier m_scrollTier { ScrollTier::None };
@@ -402,10 +455,6 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
 +    // run of consecutive comfortably-under-budget passes seen since the tier last
 +    // engaged (asymmetric hysteresis -- engage on one bad pass, disengage only
 +    // after a run of good ones, because each disengage costs a full-res repaint).
-+    // Timestamp of the last real scroll movement (dy != 0 in setVisibleRect).
-+    // The cost trigger degrades only within costMotionWindowMs() of this, so a
-+    // stationary page is never left soft -- see the comment on that function.
-+    MonotonicTime m_lastScrollMotionTime;
 +    float m_costLowResScale { 1.0f };
 +    unsigned m_underBudgetPasses { 0 };
      bool m_pendingTileCreation { false };
