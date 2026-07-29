@@ -50,6 +50,18 @@ public:
     virtual ~WPEQtViewBackend();
 
     void resize(const QSizeF&);
+
+    // ATLANTIC_TRUE_DEVICE_SCALE: express the 3x UI scale as WebKit's device
+    // scale factor instead of as page zoom. m_size stays in physical pixels
+    // (Qt runs at dpr 1 on SFOS, so an item is 1080x2520); WebKit is given the
+    // LOGICAL size (m_size / scale) plus the scale, and renders back into a
+    // physical-size buffer. Page zoom is then free to mean user zoom again.
+    // Default off -> setDeviceScaleFactor() is never called and every path
+    // below is bit-for-bit the old behaviour.
+    static bool trueDeviceScaleEnabled();
+    void setDeviceScaleFactor(float);
+    float deviceScaleFactor() const { return m_deviceScaleFactor; }
+
     GLuint texture(QOpenGLContext*);
     // Real pixel dimensions of the frame currently bound by texture() (the same
     // pending?:committed image). Empty until the first frame. Used by
@@ -108,7 +120,18 @@ private:
 
     QPointer<WPEQtView> m_view;
     QOffscreenSurface m_surface;
+    // Qt delivers input in physical pixels (dpr is 1 on SFOS). When the view is
+    // sized in logical units, pointer/touch coordinates must be divided by the
+    // same scale or every tap lands 3x off. Identity when the scale is 1.
+    int32_t toLogical(qreal v) const
+    {
+        return static_cast<int32_t>(m_deviceScaleFactor == 1.0
+            ? v : qRound(v / m_deviceScaleFactor));
+    }
+
     QSizeF m_size;
+    // 1.0 unless ATLANTIC_TRUE_DEVICE_SCALE is on; see trueDeviceScaleEnabled().
+    float m_deviceScaleFactor { 1.0 };
     GLuint m_textureId { 0 };
     // Kept to prime GL state for the Qt ShaderEffect chrome blur (see ctor).
     unsigned m_program { 0 };

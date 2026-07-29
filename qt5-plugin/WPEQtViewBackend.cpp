@@ -26,6 +26,7 @@
 #include <QGuiApplication>
 #include <QMetaObject>
 #include <QTimer>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <QOpenGLFunctions>
@@ -200,13 +201,43 @@ bool WPEQtViewBackend::handleFullscreenChanged(bool enable)
     return true;
 }
 
+bool WPEQtViewBackend::trueDeviceScaleEnabled()
+{
+    static const bool enabled = [] {
+        const char* env = getenv("ATLANTIC_TRUE_DEVICE_SCALE");
+        return env && *env && *env != '0';
+    }();
+    return enabled;
+}
+
+void WPEQtViewBackend::setDeviceScaleFactor(float scale)
+{
+    if (!trueDeviceScaleEnabled() || scale <= 0 || scale == m_deviceScaleFactor)
+        return;
+
+    m_deviceScaleFactor = scale;
+
+    // Order matters: WebKit recomputes the drawing area from (size x scale), so
+    // hand it the scale first, then re-dispatch the size in logical units.
+    wpe_view_backend_dispatch_set_device_scale_factor(backend(), scale);
+    if (m_size.isValid()) {
+        wpe_view_backend_dispatch_set_size(backend(),
+            std::lround(m_size.width() / m_deviceScaleFactor),
+            std::lround(m_size.height() / m_deviceScaleFactor));
+    }
+}
+
 void WPEQtViewBackend::resize(const QSizeF& newSize)
 {
     if (!newSize.isValid())
         return;
 
     m_size = newSize;
-    wpe_view_backend_dispatch_set_size(backend(), m_size.width(), m_size.height());
+    // m_deviceScaleFactor is 1.0 unless ATLANTIC_TRUE_DEVICE_SCALE is on, so
+    // this is the identity in the default configuration.
+    wpe_view_backend_dispatch_set_size(backend(),
+        std::lround(m_size.width() / m_deviceScaleFactor),
+        std::lround(m_size.height() / m_deviceScaleFactor));
 }
 
 QSize WPEQtViewBackend::currentImageSize() const
@@ -478,7 +509,7 @@ void WPEQtViewBackend::dispatchHoverMoveEvent(QHoverEvent* event)
     uint32_t state = !!m_mousePressedButton;
     struct wpe_input_pointer_event wpeEvent = { wpe_input_pointer_event_type_motion,
         static_cast<uint32_t>(event->timestamp()),
-        event->pos().x(), event->pos().y(),
+        toLogical(event->pos().x()), toLogical(event->pos().y()),
         m_mousePressedButton, state, modifiers() };
     wpe_view_backend_dispatch_pointer_event(backend(), &wpeEvent);
 }
@@ -504,7 +535,7 @@ void WPEQtViewBackend::dispatchMousePressEvent(QMouseEvent* event)
     m_mouseModifiers |= modifier;
     struct wpe_input_pointer_event wpeEvent = { wpe_input_pointer_event_type_button,
         static_cast<uint32_t>(event->timestamp()),
-        event->x(), event->y(), button, state, modifiers() };
+        toLogical(event->x()), toLogical(event->y()), button, state, modifiers() };
     wpe_view_backend_dispatch_pointer_event(backend(), &wpeEvent);
 }
 
@@ -529,7 +560,7 @@ void WPEQtViewBackend::dispatchMouseReleaseEvent(QMouseEvent* event)
     m_mouseModifiers &= ~modifier;
     struct wpe_input_pointer_event wpeEvent = { wpe_input_pointer_event_type_button,
         static_cast<uint32_t>(event->timestamp()),
-        event->x(), event->y(), button, state, modifiers() };
+        toLogical(event->x()), toLogical(event->y()), button, state, modifiers() };
     wpe_view_backend_dispatch_pointer_event(backend(), &wpeEvent);
 }
 
@@ -549,8 +580,8 @@ void WPEQtViewBackend::dispatchWheelEvent(QWheelEvent* event)
     else
         wpeEvent.y_axis = numDegrees.y();
     wpeEvent.base.type = static_cast<wpe_input_axis_event_type>(wpe_input_axis_event_type_mask_2d | wpe_input_axis_event_type_motion_smooth);
-    wpeEvent.base.x = event->QWHEEL_POSITION.x();
-    wpeEvent.base.y = event->QWHEEL_POSITION.y();
+    wpeEvent.base.x = toLogical(event->QWHEEL_POSITION.x());
+    wpeEvent.base.y = toLogical(event->QWHEEL_POSITION.y());
     wpe_view_backend_dispatch_axis_event(backend(), &wpeEvent.base);
 }
 
@@ -652,7 +683,7 @@ void WPEQtViewBackend::dispatchTouchEvent(QTouchEvent* event)
             wpe_input_touch_event_type pointType = (point.id() == mainId)
                 ? eventType : wpe_input_touch_event_type_motion;
             rawEvents[count++] = { pointType, time, point.id(),
-                static_cast<int32_t>(point.pos().x()), static_cast<int32_t>(point.pos().y()) };
+                toLogical(point.pos().x()), toLogical(point.pos().y()) };
         }
         if (count) {
             struct wpe_input_touch_event wpeEvent = { rawEvents, static_cast<uint64_t>(count),

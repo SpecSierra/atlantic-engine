@@ -198,6 +198,13 @@ void WPEQtView::createWebView()
 
     m_backend = backend.get();
 
+    // NB: do NOT dispatch the device scale factor here. The backend exists but
+    // the WebKitWebView does not yet (created below), so no wpe_view_backend
+    // client is attached and libwpe silently drops the dispatch -- WebKit keeps
+    // dpr 1 and renders a 360x840 buffer that gets upscaled 3x, which measures
+    // as a perfectly blocky frame (every 3x3 pixel group identical). It is
+    // dispatched after the view is constructed instead.
+
     // Direct-composite: present web frames into a dedicated wl_subsurface instead
     // of a QSG texture node, so the system compositor presents them directly
     // (no Qt scene-graph re-composite of web content). Falls back to the QSG path
@@ -287,8 +294,16 @@ void WPEQtView::createWebView()
         WPEGeolocationBridge::ensure(webContext);
     }
 
-    if (m_pendingDeviceScaleFactor != 1.0)
-        webkit_web_view_set_zoom_level(m_webView, m_pendingDeviceScaleFactor);
+    // The 3x UI scale is either page zoom (legacy default) or a real WebKit
+    // device scale factor (ATLANTIC_TRUE_DEVICE_SCALE=1). Never both: applying
+    // zoom on top of the device scale would scale the page twice over.
+    if (m_pendingDeviceScaleFactor != 1.0) {
+        if (WPEQtViewBackend::trueDeviceScaleEnabled()) {
+            if (m_backend)
+                m_backend->setDeviceScaleFactor(m_pendingDeviceScaleFactor);
+        } else
+            webkit_web_view_set_zoom_level(m_webView, m_pendingDeviceScaleFactor);
+    }
 
     if (!m_pendingUserAgent.isEmpty()) {
         webkit_settings_set_user_agent(webkit_web_view_get_settings(m_webView),
@@ -943,6 +958,16 @@ void WPEQtView::setUserAgent(const QString& userAgent)
 void WPEQtView::setDeviceScaleFactor(qreal scale)
 {
     m_pendingDeviceScaleFactor = scale;
+
+    if (WPEQtViewBackend::trueDeviceScaleEnabled()) {
+        // Real device scale factor: WebKit keeps CSS px at their true size and
+        // renders into a scale-times-larger buffer. Page zoom stays 1.0 and is
+        // free to mean user zoom again.
+        if (m_backend)
+            m_backend->setDeviceScaleFactor(scale);
+        return;
+    }
+
     if (!m_webView)
         return;
     webkit_web_view_set_zoom_level(m_webView, scale);
