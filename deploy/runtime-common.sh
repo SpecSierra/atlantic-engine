@@ -503,6 +503,17 @@ atlantic_export_browser_env() {
     export WEBKIT_LOWRES_COST_ENGAGE_X="${WEBKIT_LOWRES_COST_ENGAGE_X:-2.0}"
     export WEBKIT_LOWRES_COST_MOTION_MS="${WEBKIT_LOWRES_COST_MOTION_MS:-250}"
 
+    # Sharpen-at-rest scope. When degradation ends, only tiles within the viewport
+    # (+WEBKIT_LOWRES_SHARPEN_MARGIN_PX, 512) are repainted full-res; cushion tiles
+    # sharpen later, as the viewport reaches them. Repainting the whole cushion --
+    # ~half the tiles held, none of them looked at -- landed exactly as the user
+    # stopped scrolling, and was the fixed per-ENGAGEMENT cost behind three earlier
+    # measurements. Measured: 80% of the repaint avoided, fps +6%, p95 -3%/-11%,
+    # raster CPU -7%/-5% (heavy/multilayer). Helps the legacy speed ladder too.
+    # Set to 0 to restore the whole-cushion repaint.
+    export WEBKIT_LOWRES_SHARPEN_VIEWPORT_ONLY="${WEBKIT_LOWRES_SHARPEN_VIEWPORT_ONLY:-1}"
+    export WEBKIT_LOWRES_SHARPEN_MARGIN_PX="${WEBKIT_LOWRES_SHARPEN_MARGIN_PX:-512}"
+
     # Drop a backgrounded tab's tiled-backing tiles so a hidden tab holds ~0 GPU
     # tile memory instead of pinning its full cover (~1 GB measured). Rebuilt on
     # show. Honoured by webkit-drop-tiles-when-hidden-env.patch. DEFAULT OFF
