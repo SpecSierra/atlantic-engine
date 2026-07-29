@@ -474,6 +474,35 @@ atlantic_export_browser_env() {
     export WEBKIT_CHECKERBOARD_SETTLE_MS="${WEBKIT_CHECKERBOARD_SETTLE_MS:-200}"
     export WEBKIT_COVER_AREA_MULTIPLIER="${WEBKIT_COVER_AREA_MULTIPLIER:-2}"
 
+    # ── Cost-based scroll degradation (DEFAULT ON since build 625) ────────────
+    # Decides degradation from PREDICTED RASTER COST vs the frame budget rather
+    # than scroll speed, and derives the low-res scale from the overshoot
+    # (1/sqrt, typically 0.40-0.65) instead of a fixed 0.3 cliff. Engages only
+    # while the page is actually moving.
+    #
+    # Why speed was replaced: it is a geometry term and cannot see what a tile
+    # COSTS. Raster cost separates a cheap page from a raster-bound one by 23.7x
+    # while their scroll velocities are identical, and the same fixed knob
+    # measured -42% p95 on one and +7% p95 / +11% raster CPU on the other.
+    # Re-tuning the thresholds was tested and rejected (gave up a quarter of the
+    # heavy-page win while changing the cheap-page penalty by nothing).
+    #
+    # On real reddit scrolling the speed ladder put 73% of samples into
+    # CHECKERBOARD (blank bands) at an effective 267 CSS px/s; this configuration
+    # uses none and stays at low-res ~0.40. Device-validated by the user.
+    # The checkerboard rung is deliberately DISABLED (_CHECKERBOARD_X=0): the
+    # scale floor is the ceiling on degradation, because blanking a band is worse
+    # perceptually than showing it soft.
+    #
+    # Set WEBKIT_LOWRES_COST_TRIGGER=0 to fall back to the legacy speed ladder
+    # (WEBKIT_LOWRES_SCROLL_SPEED / WEBKIT_CHECKERBOARD_DURING_SCROLL above,
+    # which are ignored while the cost trigger is on).
+    export WEBKIT_LOWRES_COST_TRIGGER="${WEBKIT_LOWRES_COST_TRIGGER:-1}"
+    export WEBKIT_LOWRES_COST_BUDGET_MS="${WEBKIT_LOWRES_COST_BUDGET_MS:-11}"
+    export WEBKIT_LOWRES_COST_CHECKERBOARD_X="${WEBKIT_LOWRES_COST_CHECKERBOARD_X:-0}"
+    export WEBKIT_LOWRES_COST_ENGAGE_X="${WEBKIT_LOWRES_COST_ENGAGE_X:-2.0}"
+    export WEBKIT_LOWRES_COST_MOTION_MS="${WEBKIT_LOWRES_COST_MOTION_MS:-250}"
+
     # Drop a backgrounded tab's tiled-backing tiles so a hidden tab holds ~0 GPU
     # tile memory instead of pinning its full cover (~1 GB measured). Rebuilt on
     # show. Honoured by webkit-drop-tiles-when-hidden-env.patch. DEFAULT OFF

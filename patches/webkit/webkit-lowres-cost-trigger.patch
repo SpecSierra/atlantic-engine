@@ -85,9 +85,20 @@ written by whichever layer observes movement and read by all of them, which is
 both correct and immune to per-layer sparsity. Window widened to 250 ms to span
 the gaps between flushes on a heavy page.
 
+UPDATE 3 (build 625): **default flipped ON**, and the checkerboard rung defaulted
+OFF. Device-validated by the user on real browsing after the page-global motion
+fix. On real reddit scrolling the legacy speed ladder degraded 94% of samples --
+73% of them CHECKERBOARD (blank bands) at an effective 267 CSS px/s -- while this
+uses no checkerboard at all and sits at a derived low-res ~0.40-0.42.
+
+The binary defaults and deploy/runtime-common.sh now agree deliberately: having
+them disagree is the trap recorded as C4, where the shipped thresholds were 3-4x
+lower than the source implied and every conclusion drawn from reading the C++ was
+wrong.
+
 diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
---- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-07-29 12:09:28.107982119 +0000
-+++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-07-29 12:10:31.029444111 +0000
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-07-29 12:32:22.282859335 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-07-29 12:32:22.305859499 +0000
 @@ -28,6 +28,7 @@
  #include <wtf/CheckedArithmetic.h>
  #include <wtf/MathExtras.h>
@@ -96,7 +107,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
  #include <cstdlib>
  #include <cstring>
  #include <cstdio>
-@@ -239,6 +240,211 @@
+@@ -239,6 +240,221 @@
      return threshold;
  }
  
@@ -136,8 +147,14 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
 +static bool costTriggerEnabled()
 +{
 +    static bool enabled = [] {
++        // Unset => ON. Device-validated against the legacy speed ladder, which on
++        // real reddit scrolling put 73% of samples into checkerboard (blank bands)
++        // at an effective 267 CSS px/s; this stays at low-res ~0.40 and blanks
++        // nothing. "0" falls back to the speed ladder.
 +        const char* env = getenv("WEBKIT_LOWRES_COST_TRIGGER");
-+        return env && *env && strcmp(env, "0");
++        if (!env || !*env)
++            return true;
++        return strcmp(env, "0") != 0;
 +    }();
 +    return enabled;
 +}
@@ -180,7 +197,11 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
 +// over from low-res. At the scale floor, low-res can only recover 1/floor^2 --
 +// about 11x at 0.3 -- so past that point painting low-res still misses the frame
 +// and showing background until rest is the better trade.
-+// WEBKIT_LOWRES_COST_CHECKERBOARD_X, default 11; 0 disables the rung.
++// WEBKIT_LOWRES_COST_CHECKERBOARD_X, **default 0 (disabled)**. Measured: routing
++// to checkerboard at high overshoot pinned a heavy page in the blank-band tier
++// (p95 72ms, jank 16%, worst frame 645ms -- worse than no degradation at all).
++// Floor-scale low-res still removes ~11x of the work AND keeps content visible,
++// which is the better trade; set >0 only to re-enable the rung for an A/B.
 +static double costCheckerboardOvershoot()
 +{
 +    static double x = [] {
@@ -189,7 +210,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
 +            if (v >= 0.0)
 +                return v;
 +        }
-+        return 11.0;
++        return 0.0;  // disabled: the scale floor is the ceiling on degradation
 +    }();
 +    return x;
 +}
@@ -308,7 +329,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
  // Diagnostic (WEBKIT_SCROLLTIER_LOG=1): trace the scroll-speed-ladder arming decisions
  // on WebProcess stderr to see why the low-res tier does or does not engage.
  static bool scrollTierLogEnabled()
-@@ -318,6 +524,98 @@
+@@ -318,6 +534,98 @@
      if (!m_tiles.isEmpty())
          invalidateRegion(dirtyRegion);
  
@@ -407,7 +428,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
      // Scroll-ladder bookkeeping. A degradation tier is active while the hold window is
      // open; the low-res tier paints the exposed band at reduced resolution (in the
      // dirty-tile loop below). Once the scroll truly settles (no tier), repaint any
-@@ -390,7 +688,11 @@
+@@ -390,7 +698,11 @@
              // prepaint cushion ahead of it goes low-res.
              if (paintLowRes && lowResKeepViewportFullRes() && tile.rect.intersects(m_visibleRect))
                  paintLowRes = false;
@@ -420,7 +441,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
  
  #if USE(SKIA)
              auto buffer = recording ? layer.replay(recording, tile.dirtyRect, lowResScale) : layer.paint(tile.dirtyRect, lowResScale);
-@@ -486,6 +788,10 @@
+@@ -486,6 +798,10 @@
          if (!contentsRectChanged && visibleRect.height() == m_visibleRect.height()) {
              int dy = visibleRect.y() - m_visibleRect.y();
              if (dy) {
@@ -431,7 +452,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
                  if ((dy > 0) != (m_scrollAccumulatorY > 0))
                      m_scrollAccumulatorY = 0;
                  m_scrollAccumulatorY += dy;
-@@ -494,6 +800,11 @@
+@@ -494,6 +810,11 @@
  
                  float lowResSpeed = lowResScrollSpeedThreshold();
                  float checkerboardSpeed = checkerboardScrollSpeedThreshold();
@@ -444,8 +465,8 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
                      auto now = MonotonicTime::now();
                      double dtSec = (now - m_lastScrollSampleTime).seconds();
 diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h
---- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h	2026-07-29 12:09:28.107982119 +0000
-+++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h	2026-07-29 12:09:54.304174692 +0000
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h	2026-07-29 12:32:22.283859343 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h	2026-07-29 12:32:22.279859314 +0000
 @@ -174,6 +174,13 @@
      MonotonicTime m_lastScrollSampleTime;
      MonotonicTime m_checkerboardHoldUntil;
