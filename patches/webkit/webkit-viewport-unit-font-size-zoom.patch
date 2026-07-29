@@ -1,5 +1,5 @@
 Unzoom viewport- and container-percentage units when resolving font-size
-(WEBKIT_FONT_SIZE_UNIT_UNZOOM=1, default off).
+(DEFAULT ON; WEBKIT_FONT_SIZE_UNIT_UNZOOM=0 restores the old behaviour).
 
 Users reported db.no (dagbladet.no) and vg.no "not displaying properly".
 Device-reproduced on beta7-626: headlines render exactly 3x too large and
@@ -60,9 +60,15 @@ are untouched. The existing rangeZoomOption/evaluationTimeZoomEnabled branch is
 left alone and is inert on this port anyway (EvaluationTimeZoomEnabled defaults
 to false off Cocoa); the new branch is deliberately independent of it.
 
+Enabled by default after an interleaved on-device A/B on build 629 (Xperia
+10 II, dpr 3): all five affected units go 3.00x -> 1.00x, dagbladet's lead
+headline 164.12px -> 54.71px, and every length/px/rem/em control is unchanged.
+Zero spread within each arm -- these are deterministic computed-style values,
+so this is a correctness check, not a perf measurement.
+
 --- a/Source/WebCore/style/values/primitives/StyleLengthResolution.cpp
 +++ b/Source/WebCore/style/values/primitives/StyleLengthResolution.cpp
-@@ -43,12 +43,63 @@
+@@ -43,12 +43,64 @@
  #include "RenderView.h"
  #include "StylePrimitiveNumericTypes+Conversions.h"
  #include "StylePrimitiveNumericTypes+Evaluation.h"
@@ -94,9 +100,10 @@ to false off Cocoa); the new branch is deliberately independent of it.
 +// the viewport, while every non-text box on the same page is laid out
 +// correctly.
 +//
-+// WEBKIT_FONT_SIZE_UNIT_UNZOOM=1 divides these units by style.usedZoom() when
-+// resolving a font size, so the stored specified size is unzoomed like every
-+// other specified size and the two cancel. Default off.
++// Divide these units by style.usedZoom() when resolving a font size, so the
++// stored specified size is unzoomed like every other specified size and the two
++// cancel. DEFAULT ON since build 630 (device-verified on 629 as an A/B);
++// WEBKIT_FONT_SIZE_UNIT_UNZOOM=0 restores the old double-zoomed behaviour.
 +//
 +// This is deliberately independent of the rangeZoomOption /
 +// evaluationTimeZoomEnabled path below, which is inert on this port
@@ -105,7 +112,7 @@ to false off Cocoa); the new branch is deliberately independent of it.
 +{
 +    static const bool enabled = [] {
 +        const char* env = getenv("WEBKIT_FONT_SIZE_UNIT_UNZOOM");
-+        return env && *env && *env != '0';
++        return !(env && env[0] == '0');
 +    }();
 +    return enabled;
 +}
@@ -126,7 +133,7 @@ to false off Cocoa); the new branch is deliberately independent of it.
      if (conversionData.rangeZoomOption() != CSS::RangeZoomOptions::Unzoomed)
          return dimension;
  
-@@ -257,7 +308,10 @@
+@@ -257,7 +309,10 @@
                  auto widthOrHeight = physicalAxis == CQ::Axis::Width ? containerRenderer->contentBoxWidth() : containerRenderer->contentBoxHeight();
                  auto adjustedWidthOrHeight = widthOrHeight.toDouble();
  

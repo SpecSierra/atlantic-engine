@@ -819,9 +819,11 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # query container's contentBox are in device px; ordinary lengths skip the
     # "* zoom" step and stay correct, but a font-size stores a *specified*
     # (unzoomed) value that computedFontSizeFromSpecifiedSize() multiplies by
-    # usedZoom later — so these units got zoomed twice. Gated on
-    # WEBKIT_FONT_SIZE_UNIT_UNZOOM=1, default off (bit-for-bit stock until the
-    # wrapper sets it).
+    # usedZoom later — so these units got zoomed twice. DEFAULT ON since 630,
+    # after an interleaved on-device A/B on 629 (all five affected units
+    # 3.00x -> 1.00x, dagbladet headline 164.12 -> 54.71px, every length/px/rem
+    # control unchanged). WEBKIT_FONT_SIZE_UNIT_UNZOOM=0 restores the old
+    # double-zoomed behaviour.
     "patches/webkit/webkit-viewport-unit-font-size-zoom.patch"
 )
 
