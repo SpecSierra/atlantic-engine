@@ -1,0 +1,10 @@
+{
+  "url": "file:///home/defaultuser/light.html",
+  "seconds": 10, "reps": 4, "profile": "fling", "speed": 3500, "settle": 4,
+  "arms": [
+    {"label": "lowres-OFF", "env": {"WEBKIT_SCROLLTIER_LOG": "1",
+      "WEBKIT_LOWRES_TILE_SCALE": "1.0", "WEBKIT_CHECKERBOARD_DURING_SCROLL": "0"}},
+    {"label": "lowres-ON", "env": {"WEBKIT_SCROLLTIER_LOG": "1",
+      "WEBKIT_LOWRES_TILE_SCALE": "0.3", "WEBKIT_CHECKERBOARD_DURING_SCROLL": "0"}}
+  ]
+}

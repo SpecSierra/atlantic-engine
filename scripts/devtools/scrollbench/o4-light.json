@@ -1,0 +1,13 @@
+{
+  "url": "file:///home/defaultuser/light.html",
+  "seconds": 10, "reps": 3, "profile": "fling", "speed": 3500, "settle": 4,
+  "arms": [
+    {"label": "off-baseline", "env": {"WEBKIT_SCROLLTIER_LOG": "1",
+      "WEBKIT_LOWRES_TILE_SCALE": "1.0", "WEBKIT_CHECKERBOARD_DURING_SCROLL": "0",
+      "WEBKIT_LOWRES_SCROLL_SPEED": "99999"}},
+    {"label": "stock-120/800", "env": {"WEBKIT_SCROLLTIER_LOG": "1"}},
+    {"label": "recal-1200/7500", "env": {"WEBKIT_SCROLLTIER_LOG": "1",
+      "WEBKIT_LOWRES_TILE_SCALE": "0.3", "WEBKIT_LOWRES_SCROLL_SPEED": "1200",
+      "WEBKIT_CHECKERBOARD_DURING_SCROLL": "7500"}}
+  ]
+}

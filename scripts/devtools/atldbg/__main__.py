@@ -8,7 +8,8 @@ Commands
   cpu      [-s SEC]      per-thread native CPU sampling (what is executing)
   profile  [-s SEC]      JS self-time profiler (slow timers/rAF/handlers)
   media    [-w SEC]      video/audio state + decode quality + GStreamer info
-  render   [-s SEC] [--scroll]  frame pacing / jank + render-thread CPU + shot
+  render   [-s SEC] [--scroll] [--scroll-profile fling|touch|ramp]
+                         frame pacing / jank + render-thread CPU + shot
   eval     "<js>"        evaluate JS on the page, print the result
   launch   [url]         (re)start the browser with the inspector enabled
   open     <url>         navigate the running browser
@@ -66,6 +67,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("render", help="frame pacing / jank / render threads")
     sp.add_argument("-s", "--seconds", type=float, default=6)
     sp.add_argument("--scroll", action="store_true", help="auto-scroll while measuring")
+    sp.add_argument("--scroll-profile", choices=("fling", "touch", "ramp"),
+                    default="fling",
+                    help="scroll stimulus: fling = impulse+decay+rest (default), "
+                         "touch = real touchscreen flicks (APZ path), "
+                         "ramp = legacy constant 24px/rAF")
+    sp.add_argument("--scroll-speed", type=float, default=3500.0,
+                    metavar="PXS", help="fling peak velocity in px/s (default 3500)")
+    sp.add_argument("--scroll-step", type=int, default=24,
+                    help="ramp profile: px per rAF (default 24)")
     sp.add_argument("--shot", default="/tmp/atldbg-render.png")
     sp.add_argument("--no-shot", action="store_true")
     sp.add_argument("--tab", help="pick tab by URL substring (default: visible tab)")
