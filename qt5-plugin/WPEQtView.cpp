@@ -677,11 +677,17 @@ bool WPEQtView::canGoForward() const
 // WebPageProxy::goToBackForwardItem() directly and does no skipping, so taking
 // the adjacent item explicitly gives a strict one-step back.
 //
-// Off by default: the upstream skipping is what defeats history-trapping pages,
-// so this is opt-in until measured on device. ATLANTIC_STRICT_HISTORY_NAV=1.
+// On by default since build 619, after the A/B on 618: with it off, back from
+// forum.sailfishos.org home -> topic -> category landed on home and skipped the
+// topic; with it on it landed on the topic, and kept walking one step per press.
+// The trade-off is deliberate — upstream's skipping is what defeats
+// history-trapping pages (Safari keeps it, Chrome does not), but a back button
+// that silently leaves the site costs every SPA user on every visit, while trap
+// pages are rare. Set ATLANTIC_STRICT_HISTORY_NAV=0 to restore the WebKit
+// behaviour.
 static bool strictHistoryNavigationEnabled()
 {
-    static const bool enabled = qgetenv("ATLANTIC_STRICT_HISTORY_NAV").toInt() == 1;
+    static const bool enabled = qgetenv("ATLANTIC_STRICT_HISTORY_NAV") != "0";
     return enabled;
 }
 
