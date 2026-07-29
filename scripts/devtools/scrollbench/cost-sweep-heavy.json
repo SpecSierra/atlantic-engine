@@ -1,0 +1,13 @@
+{
+  "url": "file:///home/defaultuser/heavy.html",
+  "seconds": 10, "reps": 3, "profile": "fling", "speed": 3500, "settle": 4,
+  "arms": [
+    {"label": "speed-stock", "env": {"WEBKIT_SCROLLTIER_LOG": "1"}},
+    {"label": "cost-cb0-b11", "env": {"WEBKIT_SCROLLTIER_LOG": "1",
+      "WEBKIT_LOWRES_COST_TRIGGER": "1", "WEBKIT_LOWRES_COST_CHECKERBOARD_X": "0",
+      "WEBKIT_LOWRES_COST_BUDGET_MS": "11"}},
+    {"label": "cost-cb0-b33", "env": {"WEBKIT_SCROLLTIER_LOG": "1",
+      "WEBKIT_LOWRES_COST_TRIGGER": "1", "WEBKIT_LOWRES_COST_CHECKERBOARD_X": "0",
+      "WEBKIT_LOWRES_COST_BUDGET_MS": "33"}}
+  ]
+}

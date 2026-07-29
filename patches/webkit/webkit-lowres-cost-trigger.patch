@@ -49,9 +49,30 @@ WEBKIT_SCROLLTIER_LOG=1 traces every decision as [costtier].
 Requires webkit-tile-raster-cost-instrumentation.patch. Must apply after it and
 after webkit-lowres-tiles-during-scroll-env.patch / -cpu-path.patch.
 
+UPDATE (device testing on franceinfo.fr): the first version degraded STATIONARY
+pages. Three fixes:
+
+  * scroll gate -- degrade only within WEBKIT_LOWRES_COST_MOTION_MS (120) of real
+    scroll movement. The speed ladder got this implicitly by living inside the
+    dy != 0 branch of setVisibleRect; evaluating cost on every layer flush lost
+    it, so the trigger engaged during load and on idle repaints. Observed: 99
+    layer proxies pinned at the 0.3 floor on an idle page.
+  * it also exposed a LATENT bug in the existing low-res path -- lowResBufferSize
+    rounds up (ceil), so a 256px tile at 0.3 paints 76.8 of 77 texels and the
+    unpainted fraction upscales into a seam at every tile edge. Transient while
+    degradation is brief; held at rest it becomes a permanent dark GRID over the
+    page. The gate makes it transient again; the rounding itself still wants a
+    separate fix.
+  * engage margin WEBKIT_LOWRES_COST_ENGAGE_X (2.0) -- never engage above scale
+    ~0.71. Engaging costs a full-res repaint of every degraded tile, so a
+    marginal engagement loses; measured, a 0.90 scale still paid the whole
+    +1.9pp jank penalty. Also addresses "low res shows too early".
+  * disengage immediately when motion stops, bypassing the hysteresis, so tiles
+    sharpen at rest instead of staying soft for several more flushes.
+
 diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
---- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-07-29 09:38:07.900166245 +0000
-+++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-07-29 09:40:05.316999231 +0000
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-07-29 10:37:53.341439180 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp	2026-07-29 10:39:04.090930139 +0000
 @@ -28,6 +28,7 @@
  #include <wtf/CheckedArithmetic.h>
  #include <wtf/MathExtras.h>
@@ -60,7 +81,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
  #include <cstdlib>
  #include <cstring>
  #include <cstdio>
-@@ -239,6 +240,120 @@
+@@ -239,6 +240,171 @@
      return threshold;
  }
  
@@ -158,6 +179,57 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
 +    return x;
 +}
 +
++// Minimum overshoot before engaging at all. Engaging is not free: every degraded
++// tile is repainted whole at full resolution once motion settles, so a marginal
++// engagement spends a full repaint to save a little raster and comes out behind.
++// Measured: at a 0.90 derived scale (overshoot 1.24) the cheap page still paid
++// the entire +1.9pp jank penalty -- the cost is per ENGAGEMENT, not per unit of
++// degradation. Requiring real overshoot also stops the trigger firing on the
++// merely-slightly-loaded pages the user sees as "low res shows too early".
++// WEBKIT_LOWRES_COST_ENGAGE_X, default 2.0 (=> never engages above scale ~0.71).
++static double costEngageOvershoot()
++{
++    static double x = [] {
++        if (const char* env = getenv("WEBKIT_LOWRES_COST_ENGAGE_X")) {
++            double v = atof(env);
++            if (v >= 1.0 && v <= 100.0)
++                return v;
++        }
++        return 2.0;
++    }();
++    return x;
++}
++
++// How long after the last scroll movement the cost trigger may still degrade.
++//
++// THIS GATE IS LOAD-BEARING. Low-res is a scroll-time trade: it is only
++// acceptable because the eye cannot resolve detail mid-fling and the tiles are
++// repainted sharp at rest. Applied to a STATIONARY page it is pure loss -- the
++// user just sees a permanently blurry page. Worse, the low-res upscale has a
++// latent edge artifact (lowResBufferSize rounds up with ceil(), so a 256px tile
++// at 0.3 paints 76.8 of 77 texels and the unpainted fraction upscales into a
++// visible seam at every tile boundary); while degradation is transient that
++// artifact flashes by unnoticed, but held at rest it becomes a permanent dark
++// GRID across the page. Both were observed on franceinfo.fr: 99 layer proxies
++// degraded to the 0.3 floor while the page sat idle.
++//
++// The speed ladder got this for free -- it could only arm inside setVisibleRect
++// when dy != 0. The cost trigger evaluates on every layer flush, so it must
++// reinstate the condition explicitly.
++// WEBKIT_LOWRES_COST_MOTION_MS, default 120.
++static double costMotionWindowMs()
++{
++    static double ms = [] {
++        if (const char* env = getenv("WEBKIT_LOWRES_COST_MOTION_MS")) {
++            double v = atof(env);
++            if (v >= 0 && v <= 2000)
++                return v;
++        }
++        return 120.0;
++    }();
++    return ms;
++}
++
 +// Asymmetric hysteresis: engage on a single over-budget pass (a missed frame is
 +// already visible), but require this many consecutive comfortably-under-budget
 +// passes before disengaging. Measured motivation: a trigger that hovers near its
@@ -181,7 +253,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
  // Diagnostic (WEBKIT_SCROLLTIER_LOG=1): trace the scroll-speed-ladder arming decisions
  // on WebProcess stderr to see why the low-res tier does or does not engage.
  static bool scrollTierLogEnabled()
-@@ -318,6 +433,83 @@
+@@ -318,6 +484,99 @@
      if (!m_tiles.isEmpty())
          invalidateRegion(dirtyRegion);
  
@@ -191,6 +263,13 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
 +    // Velocity is not consulted at all -- if the work fits the budget there is
 +    // nothing to gain by degrading, however fast the page is moving.
 +    if (costTriggerEnabled()) {
++        // Scroll gate: degrade only while the page is actually moving. Without
++        // this the trigger engages during load and on idle repaints, leaving the
++        // page permanently soft and exposing the low-res edge seam as a static
++        // grid. See costMotionWindowMs().
++        bool scrolling = m_lastScrollMotionTime
++            && (MonotonicTime::now() - m_lastScrollMotionTime).milliseconds() <= costMotionWindowMs();
++
 +        double pixelsToPaint = 0;
 +        for (const auto& tile : m_tiles.values()) {
 +            if (tile.isDirty())
@@ -214,7 +293,8 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
 +
 +        ScrollTier costTier = ScrollTier::None;
 +        float costScale = 1.0f;
-+        if (overshoot > 1.0) {
++        // Never degrade a page that is not moving, and never engage marginally.
++        if (scrolling && overshoot >= costEngageOvershoot()) {
 +            double cbX = costCheckerboardOvershoot();
 +            if (cbX > 0 && overshoot >= cbX)
 +                costTier = ScrollTier::Checkerboard;
@@ -234,9 +314,16 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
 +            // is unchanged; hysteresis below decides when it is allowed to lapse.
 +            m_checkerboardHoldUntil = MonotonicTime::now() + Seconds::fromMilliseconds(checkerboardSettleMs());
 +        } else if (m_scrollTier != ScrollTier::None) {
++            // Motion stopped => disengage NOW, bypassing the hysteresis. The
++            // hysteresis exists to stop oscillation *during* a fling; applying it
++            // at rest would leave the page soft (and the tile-edge seam visible)
++            // for several extra flushes after the user has stopped scrolling,
++            // which is precisely the artifact this gate exists to prevent.
++            if (!scrolling)
++                m_underBudgetPasses = costDisengagePasses();
 +            // Only count a pass as "under budget" when it is comfortably so (70%),
 +            // so a trigger sitting exactly on the threshold cannot oscillate.
-+            if (overshoot < 0.7)
++            else if (overshoot < 0.7)
 +                ++m_underBudgetPasses;
 +            else
 +                m_underBudgetPasses = 0;
@@ -255,9 +342,10 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
 +#if USE(SKIA)
 +            nsPerPx = SkiaPaintingEngine::tileRasterNsPerPixel();
 +#endif
-+            fprintf(stderr, "[costtier] proxy %p px=%.0f predMs=%.2f budget=%.1f overshoot=%.2f "
-+                "tier=%d scale=%.2f underBudget=%u nsPerPx=%.1f\n", this, pixelsToPaint,
-+                predictedMs, costBudgetMs(), overshoot, static_cast<int>(m_scrollTier),
++            fprintf(stderr, "[costtier] proxy %p scrolling=%d px=%.0f predMs=%.2f budget=%.1f "
++                "overshoot=%.2f engageX=%.1f tier=%d scale=%.2f underBudget=%u nsPerPx=%.1f\n",
++                this, scrolling, pixelsToPaint, predictedMs, costBudgetMs(), overshoot,
++                costEngageOvershoot(), static_cast<int>(m_scrollTier),
 +                m_costLowResScale, m_underBudgetPasses, nsPerPx);
 +        }
 +    }
@@ -265,7 +353,7 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
      // Scroll-ladder bookkeeping. A degradation tier is active while the hold window is
      // open; the low-res tier paints the exposed band at reduced resolution (in the
      // dirty-tile loop below). Once the scroll truly settles (no tier), repaint any
-@@ -390,7 +582,11 @@
+@@ -390,7 +649,11 @@
              // prepaint cushion ahead of it goes low-res.
              if (paintLowRes && lowResKeepViewportFullRes() && tile.rect.intersects(m_visibleRect))
                  paintLowRes = false;
@@ -278,7 +366,19 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
  
  #if USE(SKIA)
              auto buffer = recording ? layer.replay(recording, tile.dirtyRect, lowResScale) : layer.paint(tile.dirtyRect, lowResScale);
-@@ -494,6 +690,11 @@
+@@ -486,6 +749,11 @@
+         if (!contentsRectChanged && visibleRect.height() == m_visibleRect.height()) {
+             int dy = visibleRect.y() - m_visibleRect.y();
+             if (dy) {
++                // Timestamp of the last real scroll movement. The cost trigger
++                // gates on this so it can only degrade a page that is moving --
++                // the condition the speed ladder got implicitly by living inside
++                // this dy != 0 branch.
++                m_lastScrollMotionTime = MonotonicTime::now();
+                 if ((dy > 0) != (m_scrollAccumulatorY > 0))
+                     m_scrollAccumulatorY = 0;
+                 m_scrollAccumulatorY += dy;
+@@ -494,6 +762,11 @@
  
                  float lowResSpeed = lowResScrollSpeedThreshold();
                  float checkerboardSpeed = checkerboardScrollSpeedThreshold();
@@ -291,9 +391,9 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
                      auto now = MonotonicTime::now();
                      double dtSec = (now - m_lastScrollSampleTime).seconds();
 diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h
---- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h	2026-07-29 09:38:07.906166287 +0000
-+++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h	2026-07-29 09:39:30.403751689 +0000
-@@ -174,6 +174,13 @@
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h	2026-07-29 10:37:53.342439187 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h	2026-07-29 10:39:04.090930139 +0000
+@@ -174,6 +174,17 @@
      MonotonicTime m_lastScrollSampleTime;
      MonotonicTime m_checkerboardHoldUntil;
      ScrollTier m_scrollTier { ScrollTier::None };
@@ -302,6 +402,10 @@ diff -ur a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackin
 +    // run of consecutive comfortably-under-budget passes seen since the tier last
 +    // engaged (asymmetric hysteresis -- engage on one bad pass, disengage only
 +    // after a run of good ones, because each disengage costs a full-res repaint).
++    // Timestamp of the last real scroll movement (dy != 0 in setVisibleRect).
++    // The cost trigger degrades only within costMotionWindowMs() of this, so a
++    // stationary page is never left soft -- see the comment on that function.
++    MonotonicTime m_lastScrollMotionTime;
 +    float m_costLowResScale { 1.0f };
 +    unsigned m_underBudgetPasses { 0 };
      bool m_pendingTileCreation { false };
