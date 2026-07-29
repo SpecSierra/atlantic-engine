@@ -495,6 +495,16 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # Affects the SHIPPED speed ladder too, not just the cost trigger — it was just
     # masked there by the sharpen-at-rest repaint. Not gated: it is a correctness fix.
     "patches/webkit/webkit-lowres-tile-edge-seam.patch"
+    # webkit-lowres-sharpen-viewport-scope.patch: the sharpen-at-rest pass repaints
+    # EVERY low-res tile full-res when degradation ends, including the prepaint
+    # cushion (cover 2 => ~half the tiles were never looked at), landing just as the
+    # user stops scrolling. That fixed per-ENGAGEMENT cost is why halving engagement
+    # changed the cheap-page penalty by nothing and why a 0.90 scale still paid the
+    # full +1.9pp jank. WEBKIT_LOWRES_SHARPEN_VIEWPORT_ONLY=1 limits it to the
+    # viewport + WEBKIT_LOWRES_SHARPEN_MARGIN_PX (512); cushion tiles sharpen when
+    # the viewport reaches them. **Default OFF** pending A/B. Helps the legacy speed
+    # ladder equally — the sharpen pass is shared. Must apply after the cost trigger.
+    "patches/webkit/webkit-lowres-sharpen-viewport-scope.patch"
     # webkit-fling-throttle-env.patch: fling degradation for main-thread-bound
     # pages (franceinfo/radiofrance scroll <1fps, 44% style resolution). While the
     # scrolling thread reports a fast fling (velocity sampled in
