@@ -466,6 +466,16 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # Must apply AFTER webkit-lowres-tiles-during-scroll-env.patch (and after the
     # scrolltier-log diagnostic, contexts overlap in SkiaPaintingEngine.cpp).
     "patches/webkit/webkit-lowres-tiles-cpu-path.patch"
+    # webkit-tile-raster-cost-instrumentation.patch: measure what the scroll ladder
+    # is blind to — raster cost per painted pixel (EWMA, sampled on the real raster
+    # threads), exposed via SkiaPaintingEngine::tileRasterNsPerPixel() for a
+    # cost-aware trigger. The ladder triggers on scroll SPEED, which cannot tell a
+    # raster-bound page from a cheap one: the same WEBKIT_LOWRES_TILE_SCALE knob
+    # measured -38% p95 on a raster-bound page and +5.7% p95 / +11% raster CPU on a
+    # cheap one (build 618, see INVESTIGATION.md). MEASURES ONLY — changes no
+    # rendering behaviour and no decision. WEBKIT_TILECOST_LOG=1 to trace.
+    # Must apply AFTER webkit-lowres-tiles-cpu-path.patch (same file).
+    "patches/webkit/webkit-tile-raster-cost-instrumentation.patch"
     # webkit-fling-throttle-env.patch: fling degradation for main-thread-bound
     # pages (franceinfo/radiofrance scroll <1fps, 44% style resolution). While the
     # scrolling thread reports a fast fling (velocity sampled in

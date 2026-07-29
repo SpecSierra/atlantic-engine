@@ -1,0 +1,226 @@
+Tile raster cost instrumentation (WEBKIT_TILECOST_LOG=1, off by default).
+
+Measures what the scroll-degradation ladder is currently blind to: how much a
+tile actually COSTS to rasterize. The ladder in CoordinatedBackingStoreProxy
+triggers on scroll SPEED, a pure geometry term -- it knows how fast tiles are
+being exposed but not what they cost, so it cannot distinguish a raster-bound
+page from a cheap one. Measured on build 618, the same WEBKIT_LOWRES_TILE_SCALE
+knob is worth -38% p95 frame time on a raster-bound page and +5.7% p95 / +11%
+raster CPU on a cheap one, and the current trigger fires on both.
+
+Adds an EWMA of raster nanoseconds per PAINTED pixel, sampled at both raster
+sites (the synchronous main-thread paint() and the threaded replay() task, the
+latter being the live path on this device: WEBKIT_SKIA_ENABLE_CPU_RENDERING=1
+with 2 SkiaCPUWorker threads). Per-painted-pixel rather than per-tile keeps the
+statistic independent of tile size and of the low-res scale in force, so a
+full-res prediction is nsPerPixel x fullResTileArea and the estimator does not
+drift as a controller varies that scale.
+
+Exposed via SkiaPaintingEngine::tileRasterNsPerPixel() /
+tileRasterSampleCount() / predictedTileRasterMs() for a subsequent cost-aware
+trigger. This patch only MEASURES -- it changes no rendering behaviour and no
+decision. WEBKIT_TILECOST_LOG=1 logs one throttled line per 32 tiles.
+Applies after webkit-lowres-tiles-during-scroll-env.patch and
+webkit-lowres-tiles-cpu-path.patch (contexts overlap in SkiaPaintingEngine.cpp).
+
+diff -ur a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
+--- a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp	2026-07-29 09:02:14.176404278 +0000
++++ b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp	2026-07-29 09:04:29.008337787 +0000
+@@ -27,6 +27,7 @@
+ #include "SkiaPaintingEngine.h"
+ 
+ #include <cmath>
++#include <cstdio>
+ #include <cstdlib>
+ #include <cstring>
+ 
+@@ -48,12 +49,122 @@
+ #include <skia/gpu/ganesh/GrBackendSurface.h>
+ #include <skia/gpu/ganesh/SkImageGanesh.h>
+ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
++#include <wtf/MonotonicTime.h>
++#include <wtf/NeverDestroyed.h>
+ #include <wtf/NumberOfCores.h>
+ #include <wtf/SystemTracing.h>
+ #include <wtf/text/StringToIntegerConversion.h>
+ 
++#include <atomic>
++
+ namespace WebCore {
+ 
++// ── Tile raster cost tracking ────────────────────────────────────────────────
++// The scroll-degradation ladder (low-res tiles / checkerboard) currently decides
++// whether to degrade from scroll SPEED alone. Speed is a geometry term: it says
++// how many tiles are being exposed per second, but nothing about what a tile
++// COSTS to rasterize -- and cost varies by more than an order of magnitude
++// between a flat-background article and a page of gradients and shadows. On
++// build 618 that blindness makes the same knob worth -38% p95 frame time on a
++// raster-bound page and +5.7% p95 / +11% raster CPU on a cheap one.
++//
++// This tracks the missing term: an exponentially-weighted moving average of
++// raster cost in NANOSECONDS PER PAINTED PIXEL, measured where the work actually
++// happens. Per-painted-pixel (rather than per-tile) makes the figure independent
++// of tile size and of the low-res scale currently in effect, so a full-res
++// prediction is just nsPerPixel x fullResTileArea and the estimator does not
++// drift as the controller changes the scale underneath it.
++//
++// Thread safety: raster runs on SkiaCPUWorker/SkiaGPUWorker threads or the
++// compositor thread, while the eventual consumer (the tier decision) runs on the
++// main thread. A relaxed atomic is deliberate -- this is a smoothed statistic, a
++// torn or slightly stale read costs nothing, and a lock on the raster hot path
++// would cost more than the signal is worth.
++class TileRasterCost {
++public:
++    static TileRasterCost& singleton()
++    {
++        static NeverDestroyed<TileRasterCost> instance;
++        return instance.get();
++    }
++
++    void record(Seconds elapsed, const IntSize& bufferSize)
++    {
++        auto pixels = static_cast<double>(bufferSize.width()) * bufferSize.height();
++        if (pixels <= 0)
++            return;
++        double nsPerPixel = elapsed.nanoseconds() / pixels;
++        // Guard against absurd samples (a thread descheduled mid-raster measures
++        // wall time, not work). Anything past 10 us/px is scheduling noise.
++        if (!std::isfinite(nsPerPixel) || nsPerPixel <= 0 || nsPerPixel > 10000)
++            return;
++
++        double previous = m_nsPerPixel.load(std::memory_order_relaxed);
++        // Seed on the first sample so the average does not crawl up from zero.
++        double updated = previous > 0 ? (previous * (1.0 - s_alpha) + nsPerPixel * s_alpha)
++                                      : nsPerPixel;
++        m_nsPerPixel.store(updated, std::memory_order_relaxed);
++        m_samples.fetch_add(1, std::memory_order_relaxed);
++
++        if (loggingEnabled()) {
++            auto n = m_samples.load(std::memory_order_relaxed);
++            // Throttled: one line per 32 tiles, else a fling floods the log and
++            // the logging itself perturbs what is being measured.
++            if (!(n % 32)) {
++                fprintf(stderr, "[tilecost] buf=%dx%d px=%.0f ms=%.2f ns/px=%.1f "
++                    "ewma=%.1f n=%u\n", bufferSize.width(), bufferSize.height(),
++                    pixels, elapsed.milliseconds(), nsPerPixel, updated, n);
++            }
++        }
++    }
++
++    // Nanoseconds per painted pixel; 0 until the first sample lands.
++    double nsPerPixel() const { return m_nsPerPixel.load(std::memory_order_relaxed); }
++    unsigned sampleCount() const { return m_samples.load(std::memory_order_relaxed); }
++
++    // Predicted cost, in milliseconds, of rasterizing `pixels` at full resolution.
++    double predictedMsForPixels(double pixels) const
++    {
++        double ns = nsPerPixel();
++        return ns > 0 ? (ns * pixels) / 1e6 : 0.0;
++    }
++
++    static bool loggingEnabled()
++    {
++        static bool enabled = [] {
++            const char* env = getenv("WEBKIT_TILECOST_LOG");
++            return env && *env && strcmp(env, "0");
++        }();
++        return enabled;
++    }
++
++private:
++    friend class NeverDestroyed<TileRasterCost>;
++    TileRasterCost() = default;
++
++    // Fast enough to track a page transition within a fling, slow enough that a
++    // single descheduled tile cannot swing the trigger.
++    static constexpr double s_alpha = 0.12;
++
++    std::atomic<double> m_nsPerPixel { 0.0 };
++    std::atomic<unsigned> m_samples { 0 };
++};
++
++double SkiaPaintingEngine::tileRasterNsPerPixel()
++{
++    return TileRasterCost::singleton().nsPerPixel();
++}
++
++unsigned SkiaPaintingEngine::tileRasterSampleCount()
++{
++    return TileRasterCost::singleton().sampleCount();
++}
++
++double SkiaPaintingEngine::predictedTileRasterMs(double fullResPixels)
++{
++    return TileRasterCost::singleton().predictedMsForPixels(fullResPixels);
++}
++
+ WTF_MAKE_TZONE_ALLOCATED_IMPL(SkiaPaintingEngine);
+ 
+ // Note:
+@@ -173,6 +284,10 @@
+ 
+     if (auto* canvas = buffer->canvas()) {
+         WTFBeginSignpost(canvas, PaintTile, "Skia/%s, dirty region %ix%i+%i+%i", buffer->isBackedByOpenGL() ? "GPU" : "CPU", dirtyRect.x(), dirtyRect.y(), dirtyRect.width(), dirtyRect.height());
++        // Cost sample: this is the synchronous main-thread path (used only when
++        // painting threads are 0), so it measures pure raster with no scheduling
++        // noise -- the cleanest sample available, when this path is live at all.
++        auto rasterStart = MonotonicTime::now();
+         canvas->save();
+         canvas->clear(SkColors::kTransparent);
+ 
+@@ -180,6 +295,7 @@
+         paintIntoGraphicsContext(layer, context, dirtyRect, contentsOpaque, contentsScale, lowResScale);
+ 
+         canvas->restore();
++        TileRasterCost::singleton().record(MonotonicTime::now() - rasterStart, buffer->size());
+         WTFEndSignpost(canvas, PaintTile);
+     }
+ 
+@@ -244,6 +360,11 @@
+             };
+ 
+             WTFBeginSignpost(canvas, PaintTile, "Skia/%s threaded, dirty region %ix%i+%i+%i", buffer->isBackedByOpenGL() ? "GPU" : "CPU", dirtyRect.x(), dirtyRect.y(), dirtyRect.width(), dirtyRect.height());
++            // Cost sample: this is the live path on the Adreno 610 stack
++            // (WEBKIT_SKIA_ENABLE_CPU_RENDERING=1 + 2 SkiaCPUWorker threads).
++            // Timing spans playback only, not buffer creation or completion, so
++            // it measures raster rather than allocation or upload.
++            auto rasterStart = MonotonicTime::now();
+             if (recording->hasFences()) {
+                 auto replayCanvas = SkiaReplayCanvas::create(bufferSize, recording);
+                 replayCanvas->addCanvas(canvas);
+@@ -251,6 +372,7 @@
+                 replayCanvas->removeCanvas(canvas);
+             } else
+                 replayPicture(recording->picture(), canvas, recording->recordRect(), dirtyRect);
++            TileRasterCost::singleton().record(MonotonicTime::now() - rasterStart, bufferSize);
+             WTFEndSignpost(canvas, PaintTile);
+         }
+ 
+diff -ur a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h
+--- a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h	2026-07-29 09:03:20.696865055 +0000
++++ b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h	2026-07-29 09:03:34.867963158 +0000
+@@ -67,6 +67,24 @@
+     static bool rasterOnCompositorThread();
+     void setCompositorRunLoop(RunLoop* runLoop) { m_compositorRunLoop = runLoop; }
+ 
++    // Measured raster cost, for cost-aware scroll degradation decisions.
++    //
++    // The scroll ladder in CoordinatedBackingStoreProxy currently triggers on
++    // scroll SPEED, which describes how fast tiles are being exposed but not
++    // what they cost to paint -- so it cannot tell a raster-bound page from a
++    // cheap one, and the same low-res knob measurably helps the former while
++    // hurting the latter. These expose the missing term: an EWMA of raster
++    // nanoseconds per painted pixel, sampled on the real raster threads.
++    //
++    // Per-painted-pixel keeps the figure independent of tile size and of the
++    // low-res scale in force, so predictedTileRasterMs() stays valid as a
++    // controller varies that scale. Values are process-wide (one painting engine
++    // per WebProcess). nsPerPixel is 0 until the first sample lands; callers must
++    // treat "no samples yet" as "do not degrade" rather than as "free".
++    static double tileRasterNsPerPixel();
++    static unsigned tileRasterSampleCount();
++    static double predictedTileRasterMs(double fullResPixels);
++
+     bool useThreadedRendering() const { return m_workerPool; }
+ 
+     // lowResScale (<1.0) rasterizes the tile buffer at a reduced resolution during
