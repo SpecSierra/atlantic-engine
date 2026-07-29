@@ -810,6 +810,19 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # WPEClipboardBridge registers, forwarding plain text to QClipboard. Inert
     # (bit-for-bit stock) until the plugin registers it.
     "patches/webkit/webkit-clipboard-qt-hook.patch"
+
+    # webkit-viewport-unit-font-size-zoom.patch: fix font-size resolved from
+    # viewport (vw/vh/...) or container (cqw/cqi/...) percentage units coming
+    # out deviceScaleFactor times too large — db.no and vg.no headlines
+    # overflowing the viewport while every non-text box on the page was
+    # correct. The 3x UI scale is page zoom, so both the viewport size and a
+    # query container's contentBox are in device px; ordinary lengths skip the
+    # "* zoom" step and stay correct, but a font-size stores a *specified*
+    # (unzoomed) value that computedFontSizeFromSpecifiedSize() multiplies by
+    # usedZoom later — so these units got zoomed twice. Gated on
+    # WEBKIT_FONT_SIZE_UNIT_UNZOOM=1, default off (bit-for-bit stock until the
+    # wrapper sets it).
+    "patches/webkit/webkit-viewport-unit-font-size-zoom.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

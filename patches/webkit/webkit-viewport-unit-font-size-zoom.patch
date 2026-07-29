@@ -1,0 +1,140 @@
+Unzoom viewport- and container-percentage units when resolving font-size
+(WEBKIT_FONT_SIZE_UNIT_UNZOOM=1, default off).
+
+Users reported db.no (dagbladet.no) and vg.no "not displaying properly".
+Device-reproduced on beta7-626: headlines render exactly 3x too large and
+overflow the right edge, while every non-text box on the same page -- images,
+cards, buttons -- is laid out correctly for the 360px viewport.
+
+Measured with injected probes by rendered geometry, not just computed style
+(Xperia 10 II, dpr 3, innerWidth 360, innerHeight 840; container 300x200):
+
+    height:100vh    -> 840px  correct      font-size:84px   ->  84px correct
+    height:10cqw    ->  30px  correct      font-size:10vh   -> 252px (exp 84)
+    height:10cqh    ->  20px  correct      font-size:10vw   -> 108px (exp 36)
+                                           font-size:10cqw  ->  90px (exp 30)
+                                           font-size:10cqh  ->  60px (exp 20)
+
+The error factor is exactly the device scale factor, and font-size is the only
+affected property: a sweep of 20 others (line-height, letter-spacing,
+text-indent, border-width, border-radius, padding, margin, width, height,
+column-gap, flex-basis, text-decoration-thickness, stroke-width, perspective,
+background-size, box-shadow, text-shadow, transform, ...) all measure 1.00x.
+
+User agent is not involved: all five built-in UA profiles, including two
+desktop ones, produce a byte-identical 144.309601px for dagbladet's lead
+headline, and the probes above are injected elements that do not depend on the
+served HTML.
+
+Both reported sites size headlines with *container* units, so the container
+path matters as much as the viewport one:
+
+    dagbladet  h2.headline:has(.auto-font-size-line)
+                 { font-size: var(--lab-auto-font-size, 5cqi) }
+               --lab-auto-font-size is unset, so the 5cqi fallback renders,
+               at 144.31px instead of 48.10px
+    vg.no      ._avatarInitials { font-size: 40cqw } -> 432px, not 144px
+
+Cause. Atlantic implements the 3x UI scale as page zoom -- WPEQtView calls
+webkit_web_view_set_zoom_level(view, deviceScaleFactor) -- so both the frame
+view's size for CSS viewport units and a query container's contentBox are in
+zoomed (device) pixels. That is harmless for ordinary lengths, because the
+viewport- and container-percentage cases return their result directly and so
+skip the "* conversionData.zoom()" that px/em units receive.
+
+font-size does not work that way. It resolves through
+CSSToLengthConversionData::copyForFontSize(), which sets zoom = 1 because a
+*specified* font size is stored unzoomed and multiplied by style.usedZoom()
+afterwards, in computedFontSizeFromSpecifiedSize(). A viewport or container
+unit reaches that multiplication already zoomed, so the zoom lands twice.
+
+Fix. When resolving a font size, divide these units by style.usedZoom() -- the
+exact factor computedFontSizeFromSpecifiedSize() will multiply back in -- so
+the stored specified size is unzoomed like every other specified size and the
+two cancel. Two call sites: adjustValueForPageZoom() itself, reached only from
+the viewport-percentage cases, and resolveContainerUnit(), which explicitly
+skips that helper when computingFontSize().
+
+Scope. px/em/rem/ch/ex and the absolute units never reach either site, so they
+are untouched. The existing rangeZoomOption/evaluationTimeZoomEnabled branch is
+left alone and is inert on this port anyway (EvaluationTimeZoomEnabled defaults
+to false off Cocoa); the new branch is deliberately independent of it.
+
+--- a/Source/WebCore/style/values/primitives/StyleLengthResolution.cpp
++++ b/Source/WebCore/style/values/primitives/StyleLengthResolution.cpp
+@@ -43,12 +43,63 @@
+ #include "RenderView.h"
+ #include "StylePrimitiveNumericTypes+Conversions.h"
+ #include "StylePrimitiveNumericTypes+Evaluation.h"
++#include <stdlib.h>
+ 
+ namespace WebCore {
+ namespace Style {
+ 
++// Atlantic: the 3x UI scale is implemented as page zoom (WPEQtView sets the web
++// view's zoom level to the device scale factor), so the sizes these percentage
++// units resolve against -- the frame view's size for CSS viewport units, and a
++// query container's contentBox -- are in zoomed, i.e. device, pixels.
++//
++// That is harmless for ordinary lengths: the viewport- and container-percentage
++// cases return their result directly and so skip the "* conversionData.zoom()"
++// that px/em receive, which leaves e.g. "height: 100vh" and "height: 10cqw"
++// correct.
++//
++// font-size is different. It resolves through
++// CSSToLengthConversionData::copyForFontSize(), which sets zoom = 1 because a
++// *specified* font size is stored unzoomed and multiplied by style.usedZoom()
++// afterwards, in computedFontSizeFromSpecifiedSize(). A viewport or container
++// unit reaches that multiplication already zoomed, so the zoom lands twice and
++// the text comes out exactly deviceScaleFactor times too large.
++//
++// Device-reproduced on vg.no ("font-size: 40cqw" on an avatar rendering at
++// 432px instead of 144px) and dagbladet.no / db.no, whose headlines resolve
++// "var(--lab-auto-font-size, 5cqi)" to 144.31px instead of 48.10px and overflow
++// the viewport, while every non-text box on the same page is laid out
++// correctly.
++//
++// WEBKIT_FONT_SIZE_UNIT_UNZOOM=1 divides these units by style.usedZoom() when
++// resolving a font size, so the stored specified size is unzoomed like every
++// other specified size and the two cancel. Default off.
++//
++// This is deliberately independent of the rangeZoomOption /
++// evaluationTimeZoomEnabled path below, which is inert on this port
++// (EvaluationTimeZoomEnabled defaults to false off Cocoa).
++static bool unzoomFontSizeUnits()
++{
++    static const bool enabled = [] {
++        const char* env = getenv("WEBKIT_FONT_SIZE_UNIT_UNZOOM");
++        return env && *env && *env != '0';
++    }();
++    return enabled;
++}
++
+ static double adjustValueForPageZoom(double dimension, const CSSToLengthConversionData& conversionData)
+ {
++    if (unzoomFontSizeUnits() && conversionData.computingFontSize()) {
++        // Divide by the same factor computedFontSizeFromSpecifiedSize() will
++        // multiply back in, so the two cancel exactly.
++        if (auto* style = conversionData.style()) {
++            float usedZoom = style->usedZoom();
++            if (usedZoom > 0)
++                return dimension / usedZoom;
++        }
++        return dimension;
++    }
++
+     if (conversionData.rangeZoomOption() != CSS::RangeZoomOptions::Unzoomed)
+         return dimension;
+ 
+@@ -257,7 +308,10 @@
+                 auto widthOrHeight = physicalAxis == CQ::Axis::Width ? containerRenderer->contentBoxWidth() : containerRenderer->contentBoxHeight();
+                 auto adjustedWidthOrHeight = widthOrHeight.toDouble();
+ 
+-                if (!conversionData.computingFontSize())
++                // The container's contentBox is a zoomed layout value, so a
++                // font size resolved from it needs the same unzooming the
++                // viewport units get -- see unzoomFontSizeUnits() above.
++                if (!conversionData.computingFontSize() || unzoomFontSizeUnits())
+                     adjustedWidthOrHeight = adjustValueForPageZoom(adjustedWidthOrHeight, conversionData);
+ 
+                 return adjustedWidthOrHeight * value / 100;
