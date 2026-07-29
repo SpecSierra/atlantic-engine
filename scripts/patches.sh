@@ -486,6 +486,15 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # **default OFF** pending the on-device A/B. Requires the instrumentation
     # patch above and must apply after it.
     "patches/webkit/webkit-lowres-cost-trigger.patch"
+    # webkit-lowres-tile-edge-seam.patch: fix the dark grid at tile boundaries while
+    # low-res tiles are active. lowResBufferSize() ceil()'d the buffer while content
+    # painted at the requested scale, leaving a transparent fractional texel column
+    # that upscales into a seam at every tile edge. Sizes with lround() and paints at
+    # bufferSize/fullSize so content fills the buffer exactly and paint/composite
+    # ratios are exact inverses (flooring would misalign adjacent tiles instead).
+    # Affects the SHIPPED speed ladder too, not just the cost trigger — it was just
+    # masked there by the sharpen-at-rest repaint. Not gated: it is a correctness fix.
+    "patches/webkit/webkit-lowres-tile-edge-seam.patch"
     # webkit-fling-throttle-env.patch: fling degradation for main-thread-bound
     # pages (franceinfo/radiofrance scroll <1fps, 44% style resolution). While the
     # scrolling thread reports a fast fling (velocity sampled in

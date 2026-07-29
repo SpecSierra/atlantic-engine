@@ -1,0 +1,136 @@
+Fix the low-res tile-edge seam (dark grid over the page while scrolling).
+
+lowResBufferSize() rounded the buffer UP with ceil(), but the content was painted
+at the requested scale. At 0.3 a 256 px tile therefore paints 76.8 of a 77-texel
+buffer and leaves a transparent 0.2-texel column along the right/bottom edge.
+The compositor upscales that buffer ~3.3x back to the full tile rect, so the
+unpainted fraction is bilinear-blended into every tile boundary and appears as a
+dark seam -- a visible grid across the page whenever low-res tiles are active.
+
+This is NOT specific to the cost trigger: it affects the shipped speed ladder
+identically. It was simply easy to miss there, because degradation always ended
+and the sharpen-at-rest repaint removed the grid as soon as scrolling stopped.
+It is plainly visible mid-scroll on a heavy page (franceinfo.fr).
+
+Fix: size the buffer with lround() (clamped to [1, fullSize]) and paint at
+lowResEffectiveScale() = bufferSize/fullSize rather than at the requested scale.
+The content then fills the buffer exactly, so there is no unpainted texel to
+sample.
+
+Deriving the paint scale from the buffer also keeps tiles registered with each
+other. Simply flooring the buffer would remove the transparent column but leave
+the paint and composite ratios mismatched (~1% for a 256 px tile at 0.3),
+stretching content and misaligning adjacent tiles -- trading a seam for a worse
+artifact. Because the compositor upscales the same buffer back to the same rect,
+bufferSize/fullSize makes the two ratios exact inverses.
+
+Applied to both raster paths: the synchronous main-thread paint() and the
+threaded replay() task (the live path on this device).
+
+Must apply after webkit-lowres-tiles-during-scroll-env.patch,
+webkit-lowres-tiles-cpu-path.patch and
+webkit-tile-raster-cost-instrumentation.patch (same file).
+
+diff -ur a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
+--- a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp	2026-07-29 11:04:08.542531962 +0000
++++ b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp	2026-07-29 11:05:16.413012791 +0000
+@@ -26,6 +26,7 @@
+ #include "config.h"
+ #include "SkiaPaintingEngine.h"
+ 
++#include <algorithm>
+ #include <cmath>
+ #include <cstdio>
+ #include <cstdlib>
+@@ -36,6 +37,7 @@
+ #include "CoordinatedBackingStoreProxy.h"
+ #include "CoordinatedPlatformLayer.h"
+ #include "CoordinatedTileBuffer.h"
++#include "FloatSize.h"
+ #include "GLContext.h"
+ #include "GraphicsLayerCoordinated.h"
+ #include "PlatformDisplay.h"
+@@ -225,14 +227,40 @@
+ {
+     if (lowResScale >= 1.0f || fullSize.isEmpty())
+         return fullSize;
+-    return IntSize(std::max(1, static_cast<int>(std::ceil(fullSize.width() * lowResScale))),
+-        std::max(1, static_cast<int>(std::ceil(fullSize.height() * lowResScale))));
++    // ROUND, never ceil. A buffer larger than the content painted into it leaves an
++    // unpainted fractional strip along the right/bottom edge: at 0.3 a 256 px tile
++    // paints 76.8 of a ceil()-sized 77 texels, and that transparent 0.2-texel column
++    // is bilinear-upscaled ~3.3x at composite time into a visible dark seam at every
++    // tile boundary -- the "tile edge grid" seen while scrolling. Rounding, combined
++    // with painting at lowResEffectiveScale() below, makes the content fill the
++    // buffer exactly, so there is no unpainted texel to sample.
++    return IntSize(
++        std::clamp(static_cast<int>(std::lround(fullSize.width() * lowResScale)), 1, fullSize.width()),
++        std::clamp(static_cast<int>(std::lround(fullSize.height() * lowResScale)), 1, fullSize.height()));
++}
++
++// The scale actually used when painting, derived from the integer buffer that will
++// hold the result rather than from the requested scale.
++//
++// The requested scale is a real number; the buffer is integral. Painting at the
++// requested scale therefore covers a fractional number of texels and leaves the
++// remainder unpainted (the seam above). Painting at bufferSize/fullSize instead
++// covers the buffer exactly, and because the compositor upscales that same buffer
++// back to the same full rect, the paint and composite ratios are exact inverses --
++// so tiles also stay aligned with each other, which floor()ing the buffer would
++// have broken (content would be stretched ~1% and adjacent tiles would misregister).
++FloatSize SkiaPaintingEngine::lowResEffectiveScale(const IntSize& fullSize, const IntSize& bufferSize)
++{
++    if (fullSize.isEmpty() || bufferSize.isEmpty())
++        return FloatSize(1.0f, 1.0f);
++    return FloatSize(static_cast<float>(bufferSize.width()) / fullSize.width(),
++        static_cast<float>(bufferSize.height()) / fullSize.height());
+ }
+ 
+ void SkiaPaintingEngine::paintIntoGraphicsContext(const GraphicsLayer& layer, GraphicsContext& context, const IntRect& dirtyRect, bool contentsOpaque, float contentsScale, float lowResScale) const
+ {
+     if (lowResScale < 1.0f)
+-        context.scale(lowResScale);
++        context.scale(lowResEffectiveScale(dirtyRect.size(), lowResBufferSize(dirtyRect.size(), lowResScale)));
+ 
+     IntRect initialClip(IntPoint::zero(), dirtyRect.size());
+     context.clip(initialClip);
+@@ -348,11 +376,13 @@
+ 
+     auto rasterTask = [platformLayer = WTF::move(platformLayer), buffer = Ref { buffer }, dirtyRect, bufferSize, lowResScale, recording = RefPtr { recording }]() mutable {
+         if (auto* canvas = buffer->canvas()) {
+-            auto replayPicture = [lowResScale](const sk_sp<SkPicture>& picture, SkCanvas* canvas, const IntRect& recordRect, const IntRect& paintRect) {
++            auto replayPicture = [lowResScale, bufferSize](const sk_sp<SkPicture>& picture, SkCanvas* canvas, const IntRect& recordRect, const IntRect& paintRect) {
+                 canvas->save();
+                 canvas->clear(SkColors::kTransparent);
+-                if (lowResScale < 1.0f)
+-                    canvas->scale(lowResScale, lowResScale);
++                if (lowResScale < 1.0f) {
++                    auto effective = lowResEffectiveScale(paintRect.size(), bufferSize);
++                    canvas->scale(effective.width(), effective.height());
++                }
+                 canvas->clipRect(SkRect::MakeXYWH(0, 0, paintRect.width(), paintRect.height()));
+                 canvas->translate(recordRect.x() - paintRect.x(), recordRect.y() - paintRect.y());
+                 picture->playback(canvas);
+diff -ur a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h
+--- a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h	2026-07-29 11:04:08.548532004 +0000
++++ b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h	2026-07-29 11:04:53.365849554 +0000
+@@ -38,6 +38,7 @@
+ class GraphicsLayer;
+ class GraphicsLayerCoordinated;
+ class IntRect;
++class FloatSize;
+ class IntSize;
+ class SkiaRecordingResult;
+ enum class RenderingMode : uint8_t;
+@@ -100,6 +101,11 @@
+     Ref<CoordinatedTileBuffer> createBuffer(RenderingMode, const IntSize&, bool contentsOpaque) const;
+     void paintIntoGraphicsContext(const GraphicsLayer&, GraphicsContext&, const IntRect&, bool contentsOpaque, float contentsScale, float lowResScale) const;
+     static IntSize lowResBufferSize(const IntSize& fullSize, float lowResScale);
++    // Scale actually used when painting a low-res tile: bufferSize/fullSize, i.e.
++    // derived from the integer buffer rather than the requested real scale, so the
++    // content fills the buffer exactly and leaves no unpainted fractional texel to
++    // be upscaled into a tile-edge seam.
++    static FloatSize lowResEffectiveScale(const IntSize& fullSize, const IntSize& bufferSize);
+ 
+     RefPtr<WorkerPool> m_workerPool;
+     RunLoop* m_compositorRunLoop { nullptr };
