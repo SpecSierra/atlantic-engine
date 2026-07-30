@@ -41,7 +41,11 @@ jobs:
 
       - name: Rebuild filter payload from fresh lists
         env:
-          STAGING: /opt/github-runner/builds/adblock-refresh-${{ github.run_id }}
+          # runner.temp, NOT /opt/github-runner/builds: that tree is root-owned
+          # and only the main build workflow can write to it, because that one
+          # runs its script under sudo. This job needs no privileges, so it
+          # stages in the runner's own temp (auto-cleaned per job) instead.
+          STAGING: ${{ runner.temp }}/adblock-refresh-${{ github.run_id }}
         run: |
           set -euo pipefail
           bash scripts/refresh-adblock-lists.sh adblock-out
