@@ -188,11 +188,19 @@ jobs:
           rm -rf "${repo_root}"
           mkdir -p "${repo_arch_dir}"
           cp -a "${ARTIFACT_ROOT}/rpms/." "${repo_arch_dir}/"
-          # Adblock filter payload for the on-device list updater. The weekly
-          # refresh-adblock-lists workflow updates the same Pages path between
-          # builds (this publish is force_orphan, so it must re-add it).
+          # Adblock filter payload for the on-device list updater. Published
+          # under the serialized-cache FORMAT version (engine.dat header), not
+          # the crate version: an engine rejects any other format outright, and
+          # the updater picks by epoch stamp alone, so mixing formats in one
+          # path makes older clients download a payload they cannot read. Each
+          # format gets its own path; older clients see 404 and stop updating.
+          # Keep in sync with kDefaultBaseUrl in the browser's
+          # AdBlockListUpdater.cpp and with refresh-adblock-lists.yml.
+          # The weekly refresh workflow updates the same path between builds
+          # (this publish is force_orphan, so it must re-add it).
           if [ -d "${ARTIFACT_ROOT}/adblock" ]; then
-            cp -a "${ARTIFACT_ROOT}/adblock" "${repo_root}/adblock"
+            mkdir -p "${repo_root}/adblock"
+            cp -a "${ARTIFACT_ROOT}/adblock" "${repo_root}/adblock/v5"
           fi
           createrepo_c --update "${repo_arch_dir}"
           if [ -z "${ATLANTIC_RPM_SIGNING_KEY_ID:-}" ]; then

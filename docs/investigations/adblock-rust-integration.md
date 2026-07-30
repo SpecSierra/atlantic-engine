@@ -52,6 +52,18 @@ production-grade `adblock-rust` engine. This gives us:
 > injected scriptlet bytes, procedural actions); assembled `adblock-resources.json`
 > identical (56 resources). `engine.dat` grew 15.28 → 16.82 MB (+10%) for the same
 > list set.
+>
+> **Publish path is keyed to the format version.** The on-device updater picks
+> between shipped and downloaded payloads by epoch stamp alone, so it cannot tell
+> "newer" from "unreadable" until it has already fetched ~17 MB. The payload
+> therefore moved from `…/atlantic-engine/adblock/` to `…/adblock/v5/`, set in
+> three places that must stay in sync: `kDefaultBaseUrl`
+> (browser `apps/wpe/AdBlockListUpdater.cpp`), and `destination_dir` in
+> `build-atlantic-packages.yml` and `refresh-adblock-lists.yml`. Clients on the
+> old RPM keep polling `adblock/`, get a 404, log a warning and leave their cache
+> alone — they stay on their shipped lists instead of re-downloading a v5 payload
+> they would reject on every refresh. Bump the path whenever
+> `ADBLOCK_RUST_DAT_VERSION` changes.
 **License:** MPL-2.0 (compatible — Atlantic Browser is also MPL-2.0)
 **Language:** Rust → native `libatlantic_adblock.so` (ARM64)
 **Filter lists:** EasyList + EasyPrivacy + Fanboy's Annoyance + uBO Annoyances

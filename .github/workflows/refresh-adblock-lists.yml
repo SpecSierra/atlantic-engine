@@ -1,10 +1,17 @@
 name: Refresh adblock lists
 
 # Weekly rebuild of engine.dat from fresh upstream lists, published to the
-# Pages adblock/ path (keep_files leaves the rpm repo alone; the main build
-# workflow re-adds adblock/ itself since its publish is force_orphan). The
-# on-device AdBlockListUpdater polls engine.version there and downloads the
-# payload when it is newer than the installed copy.
+# Pages adblock/v5/ path (keep_files leaves the rpm repo alone; the main build
+# workflow re-adds it itself since its publish is force_orphan). The on-device
+# AdBlockListUpdater polls engine.version there and downloads the payload when
+# it is newer than the installed copy.
+#
+# "v5" is adblock-rust's serialized cache FORMAT version, from the engine.dat
+# header — not the crate version. An engine rejects any other format, and the
+# updater compares epoch stamps only, so a client cannot tell "newer" from
+# "unreadable" until it has downloaded ~17 MB. One path per format keeps older
+# clients on their last working lists instead. Bump it together with
+# kDefaultBaseUrl (browser AdBlockListUpdater.cpp) and build-atlantic-packages.yml.
 
 on:
   schedule:
@@ -40,13 +47,13 @@ jobs:
           bash scripts/refresh-adblock-lists.sh adblock-out
           rm -rf "${STAGING}"
 
-      - name: Publish to GitHub Pages (adblock/)
+      - name: Publish to GitHub Pages (adblock/v5/)
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_branch: gh-pages
           publish_dir: adblock-out
-          destination_dir: adblock
+          destination_dir: adblock/v5
           keep_files: true
           enable_jekyll: false
           commit_message: "ci: refresh adblock lists ${{ github.run_id }}"
