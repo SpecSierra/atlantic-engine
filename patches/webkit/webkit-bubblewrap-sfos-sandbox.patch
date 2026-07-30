@@ -1,3 +1,14 @@
+# Re-enable the WPE bubblewrap process sandbox on SFOS / Android-4.14:
+# --dev-bind / / (no pivot_root and no --dev masking of the GPU nodes), a shared
+# network namespace for the Web and GPU processes (hybris uses abstract sockets),
+# and flatpakInfoFd = -1 (read-only rootfs). Without these three the sandboxed
+# processes cannot reach the hybris GPU stack and pages render blank.
+# Gated by ATLANTIC_ENABLE_SANDBOX in deploy/runtime-common.sh; see
+# docs/COMPAT.md and docs/investigations/sandbox-bubblewrap.md. Note the
+# namespace part is what breaks GPU buffer export — the syscall filter alone is
+# compatible, which is what webkit-seccomp-filter-no-namespace ships.
+#
+# ---
 SFOS / Android-kernel-4.14 compatibility for the WPE bubblewrap sandbox.
 
 Ported from the historical prose patch (patches/historical/BubblewrapLauncher-sfos-sandbox.patch,

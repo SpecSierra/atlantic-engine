@@ -1,3 +1,12 @@
+#  webkit-wpe-dark-mode-runtime.patch: runtime prefers-color-scheme switch.
+#  The legacy libwpe build hardwires SystemSettings darkMode to false, so
+#  websites always saw prefers-color-scheme: light. Exports
+#  wpe_sfos_set_dark_mode(int) for the embedder (browser wires it to the
+#  color_scheme dconf setting / Sailfish ambience) and gives ViewLegacy the
+#  ViewPlatform SystemSettings observer so live pages re-evaluate their
+#  color scheme without a reload.
+#
+# ---
 Runtime dark-mode (prefers-color-scheme) switch for the legacy WPE API.
 
 The legacy (libwpe/WPEBackend-fdo) build has no platform settings backend:

@@ -1,3 +1,12 @@
+# WEBKIT_RASTER_ON_COMPOSITOR_THREAD=1 routes threaded-mode tile GPU
+# rasterization onto the compositor thread, which owns the GL context, instead of
+# the Skia worker pool. On this driver the worker-thread contexts serialize
+# against the compositor anyway, so the hop cost bought nothing and the extra
+# context switching showed up as per-tile stalls. Part of the gpu-explicit
+# compositor-thread fix; the direct-composite variant is parked. Inline comments
+# in the diff carry the details.
+#
+# ---
 --- a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h
 +++ b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h
 @@ -27,6 +27,7 @@

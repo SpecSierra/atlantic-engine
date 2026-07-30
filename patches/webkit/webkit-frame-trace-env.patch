@@ -1,3 +1,10 @@
+#  Frame-trace diagnostic (ATLANTIC_FRAME_TRACE=1, default OFF): CLOCK_MONOTONIC
+#  marker at each WebProcess composite, paired with the qt5-plugin ui recv/paint/
+#  ack markers to localize the franceinfo freeze-then-jump (production vs handoff
+#  vs present). Touches ThreadedCompositor.cpp; apply after the other patches
+#  touching it.
+#
+# ---
 Frame-trace instrumentation to localize the scroll freeze (ATLANTIC_FRAME_TRACE).
 
 Diagnostic-only (default OFF). Device frame-tracing localized the franceinfo

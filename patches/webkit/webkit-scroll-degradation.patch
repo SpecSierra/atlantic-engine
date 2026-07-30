@@ -1,0 +1,1441 @@
+# Scroll degradation: the low-res / checkerboard tile ladder and its cost-based
+# trigger, end to end.
+# Merged from 9 patches: webkit-directional-tile-coverage-env,
+# webkit-checkerboard-during-scroll-env, webkit-lowres-tiles-during-scroll-env,
+# webkit-scrolltier-log-diagnostic, webkit-lowres-tiles-cpu-path,
+# webkit-tile-raster-cost-instrumentation, webkit-lowres-cost-trigger,
+# webkit-lowres-tile-edge-seam, webkit-lowres-sharpen-viewport-scope.
+#
+# These nine were an ordering chain over the same four files
+# (CoordinatedBackingStoreProxy.{cpp,h}, CoordinatedBackingStoreTile.cpp,
+# SkiaPaintingEngine.cpp) and only ever made sense applied together.
+#
+# What it does, in layers:
+#  1. Directional tile coverage — bias the prepaint cushion along the scroll
+#     direction instead of symmetrically (WEBKIT_DIRECTIONAL_TILE_COVERAGE,
+#     WEBKIT_COVER_AREA_MULTIPLIER).
+#  2. Low-res tiles during scroll — rasterize newly-exposed tiles at
+#     WEBKIT_LOWRES_TILE_SCALE and bilinear-upscale at composite (Chrome/Android
+#     "low-res tiles"), then repaint full-res at rest. Raster cost is quadratic
+#     in scale, so this is the main lever on the serialized compositor-thread
+#     paint path. Ships at 0.3; >= 1.0 disables.
+#  3. Checkerboard tier — above WEBKIT_CHECKERBOARD_DURING_SCROLL, skip
+#     rasterizing newly-exposed tiles entirely (page background, like Gecko APZ)
+#     and defer to the settle timer (WEBKIT_CHECKERBOARD_SETTLE_MS).
+#     Speed ladder: WEBKIT_LOWRES_SCROLL_SPEED (T1) < CHECKERBOARD (T2).
+#  4. CPU-path fix — WEBKIT_SKIA_ENABLE_CPU_RENDERING=1 had silently disabled
+#     the whole feature via the force-1.0 guards in paint/replay; the whole-tile
+#     low-res buffer now uploads 1:1 into a buffer-sized texture.
+#  5. Raster-cost instrumentation — per-painted-pixel cost EWMA sampled on the
+#     real raster threads, exposed via SkiaPaintingEngine::tileRasterNsPerPixel().
+#     Measures only. WEBKIT_TILECOST_LOG=1 to trace.
+#  6. Cost trigger — decide degradation from PREDICTED RASTER COST vs the frame
+#     budget instead of scroll speed, scale derived as 1/sqrt(overshoot), with
+#     asymmetric hysteresis (engage on 1 over-budget pass, disengage after 4
+#     under). Speed cannot discriminate: the same knob measured -42% p95 on a
+#     raster-bound page and +7% p95 / +11% raster CPU on a cheap one, while
+#     velocities were identical and raster cost separated them 23.7x.
+#     WEBKIT_LOWRES_COST_TRIGGER, with _BUDGET_MS / _ENGAGE_X / _CHECKERBOARD_X /
+#     _MOTION_MS / _DISENGAGE_PASSES / _SCALE_FLOOR.
+#  7. Tile-edge seam fix — lowResBufferSize() ceil()'d the buffer while content
+#     painted at the requested scale, leaving a transparent fractional texel
+#     column that upscaled into a dark grid at every tile edge. Size with
+#     lround() and paint at bufferSize/fullSize so paint and composite ratios
+#     are exact inverses. Correctness fix, not gated; affects the speed ladder
+#     too (it was masked there by the sharpen-at-rest repaint).
+#  8. Viewport-scoped sharpen — the sharpen-at-rest pass repainted EVERY low-res
+#     tile full-res including the prepaint cushion (cover 2 => ~half were never
+#     looked at), landing just as the user stops scrolling; that fixed
+#     per-ENGAGEMENT cost is why halving engagement changed the cheap-page
+#     penalty by nothing. WEBKIT_LOWRES_SHARPEN_VIEWPORT_ONLY limits it to the
+#     viewport + WEBKIT_LOWRES_SHARPEN_MARGIN_PX (512); cushion tiles sharpen
+#     when the viewport reaches them.
+#  9. WEBKIT_SCROLLTIER_LOG=1 traces the whole ladder (dy-path eligibility,
+#     arming decisions, the 0 < dt < 0.2 gate). Later layers depend on its
+#     helper, which is why the diagnostic lives here rather than separately.
+#
+# Shipped defaults live in deploy/runtime-common.sh — check there, not here, for
+# what a build actually runs. Must apply AFTER webkit-raster-on-compositor-thread-env
+# and webkit-skia-record-rtree-env (same SkiaPaintingEngine.cpp contexts).
+#
+# ---
+diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp sq-B/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
+--- a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
++++ b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
+@@ -26,6 +26,9 @@
+ #include "config.h"
+ #include "SkiaPaintingEngine.h"
+ 
++#include <algorithm>
++#include <cmath>
++#include <cstdio>
+ #include <cstdlib>
+ #include <cstring>
+ 
+@@ -34,6 +37,7 @@
+ #include "CoordinatedBackingStoreProxy.h"
+ #include "CoordinatedPlatformLayer.h"
+ #include "CoordinatedTileBuffer.h"
++#include "FloatSize.h"
+ #include "GLContext.h"
+ #include "GraphicsLayerCoordinated.h"
+ #include "PlatformDisplay.h"
+@@ -47,12 +51,122 @@
+ #include <skia/gpu/ganesh/GrBackendSurface.h>
+ #include <skia/gpu/ganesh/SkImageGanesh.h>
+ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
++#include <wtf/MonotonicTime.h>
++#include <wtf/NeverDestroyed.h>
+ #include <wtf/NumberOfCores.h>
+ #include <wtf/SystemTracing.h>
+ #include <wtf/text/StringToIntegerConversion.h>
+ 
++#include <atomic>
++
+ namespace WebCore {
+ 
++// ── Tile raster cost tracking ────────────────────────────────────────────────
++// The scroll-degradation ladder (low-res tiles / checkerboard) currently decides
++// whether to degrade from scroll SPEED alone. Speed is a geometry term: it says
++// how many tiles are being exposed per second, but nothing about what a tile
++// COSTS to rasterize -- and cost varies by more than an order of magnitude
++// between a flat-background article and a page of gradients and shadows. On
++// build 618 that blindness makes the same knob worth -38% p95 frame time on a
++// raster-bound page and +5.7% p95 / +11% raster CPU on a cheap one.
++//
++// This tracks the missing term: an exponentially-weighted moving average of
++// raster cost in NANOSECONDS PER PAINTED PIXEL, measured where the work actually
++// happens. Per-painted-pixel (rather than per-tile) makes the figure independent
++// of tile size and of the low-res scale currently in effect, so a full-res
++// prediction is just nsPerPixel x fullResTileArea and the estimator does not
++// drift as the controller changes the scale underneath it.
++//
++// Thread safety: raster runs on SkiaCPUWorker/SkiaGPUWorker threads or the
++// compositor thread, while the eventual consumer (the tier decision) runs on the
++// main thread. A relaxed atomic is deliberate -- this is a smoothed statistic, a
++// torn or slightly stale read costs nothing, and a lock on the raster hot path
++// would cost more than the signal is worth.
++class TileRasterCost {
++public:
++    static TileRasterCost& singleton()
++    {
++        static NeverDestroyed<TileRasterCost> instance;
++        return instance.get();
++    }
++
++    void record(Seconds elapsed, const IntSize& bufferSize)
++    {
++        auto pixels = static_cast<double>(bufferSize.width()) * bufferSize.height();
++        if (pixels <= 0)
++            return;
++        double nsPerPixel = elapsed.nanoseconds() / pixels;
++        // Guard against absurd samples (a thread descheduled mid-raster measures
++        // wall time, not work). Anything past 10 us/px is scheduling noise.
++        if (!std::isfinite(nsPerPixel) || nsPerPixel <= 0 || nsPerPixel > 10000)
++            return;
++
++        double previous = m_nsPerPixel.load(std::memory_order_relaxed);
++        // Seed on the first sample so the average does not crawl up from zero.
++        double updated = previous > 0 ? (previous * (1.0 - s_alpha) + nsPerPixel * s_alpha)
++                                      : nsPerPixel;
++        m_nsPerPixel.store(updated, std::memory_order_relaxed);
++        m_samples.fetch_add(1, std::memory_order_relaxed);
++
++        if (loggingEnabled()) {
++            auto n = m_samples.load(std::memory_order_relaxed);
++            // Throttled: one line per 32 tiles, else a fling floods the log and
++            // the logging itself perturbs what is being measured.
++            if (!(n % 32)) {
++                fprintf(stderr, "[tilecost] buf=%dx%d px=%.0f ms=%.2f ns/px=%.1f "
++                    "ewma=%.1f n=%u\n", bufferSize.width(), bufferSize.height(),
++                    pixels, elapsed.milliseconds(), nsPerPixel, updated, n);
++            }
++        }
++    }
++
++    // Nanoseconds per painted pixel; 0 until the first sample lands.
++    double nsPerPixel() const { return m_nsPerPixel.load(std::memory_order_relaxed); }
++    unsigned sampleCount() const { return m_samples.load(std::memory_order_relaxed); }
++
++    // Predicted cost, in milliseconds, of rasterizing `pixels` at full resolution.
++    double predictedMsForPixels(double pixels) const
++    {
++        double ns = nsPerPixel();
++        return ns > 0 ? (ns * pixels) / 1e6 : 0.0;
++    }
++
++    static bool loggingEnabled()
++    {
++        static bool enabled = [] {
++            const char* env = getenv("WEBKIT_TILECOST_LOG");
++            return env && *env && strcmp(env, "0");
++        }();
++        return enabled;
++    }
++
++private:
++    friend class NeverDestroyed<TileRasterCost>;
++    TileRasterCost() = default;
++
++    // Fast enough to track a page transition within a fling, slow enough that a
++    // single descheduled tile cannot swing the trigger.
++    static constexpr double s_alpha = 0.12;
++
++    std::atomic<double> m_nsPerPixel { 0.0 };
++    std::atomic<unsigned> m_samples { 0 };
++};
++
++double SkiaPaintingEngine::tileRasterNsPerPixel()
++{
++    return TileRasterCost::singleton().nsPerPixel();
++}
++
++unsigned SkiaPaintingEngine::tileRasterSampleCount()
++{
++    return TileRasterCost::singleton().sampleCount();
++}
++
++double SkiaPaintingEngine::predictedTileRasterMs(double fullResPixels)
++{
++    return TileRasterCost::singleton().predictedMsForPixels(fullResPixels);
++}
++
+ WTF_MAKE_TZONE_ALLOCATED_IMPL(SkiaPaintingEngine);
+ 
+ // Note:
+@@ -105,8 +219,49 @@
+     return makeUnique<SkiaPaintingEngine>();
+ }
+ 
+-void SkiaPaintingEngine::paintIntoGraphicsContext(const GraphicsLayer& layer, GraphicsContext& context, const IntRect& dirtyRect, bool contentsOpaque, float contentsScale) const
++// During scroll a tile may be rasterized into a buffer scaled down by lowResScale
++// (the texture is upscaled back to its full rect at composite time). Everything
++// below works in full-resolution tile-local coordinates; the leading
++// context.scale(lowResScale) maps those into the smaller buffer.
++IntSize SkiaPaintingEngine::lowResBufferSize(const IntSize& fullSize, float lowResScale)
++{
++    if (lowResScale >= 1.0f || fullSize.isEmpty())
++        return fullSize;
++    // ROUND, never ceil. A buffer larger than the content painted into it leaves an
++    // unpainted fractional strip along the right/bottom edge: at 0.3 a 256 px tile
++    // paints 76.8 of a ceil()-sized 77 texels, and that transparent 0.2-texel column
++    // is bilinear-upscaled ~3.3x at composite time into a visible dark seam at every
++    // tile boundary -- the "tile edge grid" seen while scrolling. Rounding, combined
++    // with painting at lowResEffectiveScale() below, makes the content fill the
++    // buffer exactly, so there is no unpainted texel to sample.
++    return IntSize(
++        std::clamp(static_cast<int>(std::lround(fullSize.width() * lowResScale)), 1, fullSize.width()),
++        std::clamp(static_cast<int>(std::lround(fullSize.height() * lowResScale)), 1, fullSize.height()));
++}
++
++// The scale actually used when painting, derived from the integer buffer that will
++// hold the result rather than from the requested scale.
++//
++// The requested scale is a real number; the buffer is integral. Painting at the
++// requested scale therefore covers a fractional number of texels and leaves the
++// remainder unpainted (the seam above). Painting at bufferSize/fullSize instead
++// covers the buffer exactly, and because the compositor upscales that same buffer
++// back to the same full rect, the paint and composite ratios are exact inverses --
++// so tiles also stay aligned with each other, which floor()ing the buffer would
++// have broken (content would be stretched ~1% and adjacent tiles would misregister).
++FloatSize SkiaPaintingEngine::lowResEffectiveScale(const IntSize& fullSize, const IntSize& bufferSize)
+ {
++    if (fullSize.isEmpty() || bufferSize.isEmpty())
++        return FloatSize(1.0f, 1.0f);
++    return FloatSize(static_cast<float>(bufferSize.width()) / fullSize.width(),
++        static_cast<float>(bufferSize.height()) / fullSize.height());
++}
++
++void SkiaPaintingEngine::paintIntoGraphicsContext(const GraphicsLayer& layer, GraphicsContext& context, const IntRect& dirtyRect, bool contentsOpaque, float contentsScale, float lowResScale) const
++{
++    if (lowResScale < 1.0f)
++        context.scale(lowResEffectiveScale(dirtyRect.size(), lowResBufferSize(dirtyRect.size(), lowResScale)));
++
+     IntRect initialClip(IntPoint::zero(), dirtyRect.size());
+     context.clip(initialClip);
+ 
+@@ -139,27 +294,36 @@
+     return CoordinatedUnacceleratedTileBuffer::create(size, contentsOpaque ? CoordinatedTileBuffer::NoFlags : CoordinatedTileBuffer::SupportsAlpha);
+ }
+ 
+-Ref<CoordinatedTileBuffer> SkiaPaintingEngine::paint(const GraphicsLayerCoordinated& layer, const IntRect& dirtyRect, bool contentsOpaque, float contentsScale)
++Ref<CoordinatedTileBuffer> SkiaPaintingEngine::paint(const GraphicsLayerCoordinated& layer, const IntRect& dirtyRect, bool contentsOpaque, float contentsScale, float lowResScale)
+ {
+     // ### Synchronous rendering on main thread ###
+     ASSERT(!useThreadedRendering());
+ 
++    auto renderingMode = canPerformAcceleratedRendering() ? RenderingMode::Accelerated : RenderingMode::Unaccelerated;
++    // Low-res tiles are supported on both paths: the GPU path swaps the smaller texture in,
++    // and the CPU path uploads the whole (smaller) buffer 1:1 into a texture of the buffer's
++    // size (see CoordinatedBackingStoreTile); composite upscales to the tile rect either way.
++
+     Ref platformLayer = layer.coordinatedPlatformLayer();
+     platformLayer->willPaintTile();
+ 
+-    auto renderingMode = canPerformAcceleratedRendering() ? RenderingMode::Accelerated : RenderingMode::Unaccelerated;
+-    auto buffer = createBuffer(renderingMode, dirtyRect.size(), contentsOpaque);
++    auto buffer = createBuffer(renderingMode, lowResBufferSize(dirtyRect.size(), lowResScale), contentsOpaque);
+     buffer->beginPainting();
+ 
+     if (auto* canvas = buffer->canvas()) {
+         WTFBeginSignpost(canvas, PaintTile, "Skia/%s, dirty region %ix%i+%i+%i", buffer->isBackedByOpenGL() ? "GPU" : "CPU", dirtyRect.x(), dirtyRect.y(), dirtyRect.width(), dirtyRect.height());
++        // Cost sample: this is the synchronous main-thread path (used only when
++        // painting threads are 0), so it measures pure raster with no scheduling
++        // noise -- the cleanest sample available, when this path is live at all.
++        auto rasterStart = MonotonicTime::now();
+         canvas->save();
+         canvas->clear(SkColors::kTransparent);
+ 
+         GraphicsContextSkia context(*canvas, renderingMode, RenderingPurpose::LayerBacking);
+-        paintIntoGraphicsContext(layer, context, dirtyRect, contentsOpaque, contentsScale);
++        paintIntoGraphicsContext(layer, context, dirtyRect, contentsOpaque, contentsScale, lowResScale);
+ 
+         canvas->restore();
++        TileRasterCost::singleton().record(MonotonicTime::now() - rasterStart, buffer->size());
+         WTFEndSignpost(canvas, PaintTile);
+     }
+ 
+@@ -184,7 +348,9 @@
+         recordWithRTree() ? &rTreeFactory : nullptr);
+     GraphicsContextSkia recordingContext(*recordingCanvas, renderingMode, RenderingPurpose::LayerBacking);
+     recordingContext.beginRecording();
+-    paintIntoGraphicsContext(layer, recordingContext, recordRect, contentsOpaque, contentsScale);
++    // The recording is resolution-independent (it is replayed per tile, optionally
++    // into a low-res buffer); record at full scale.
++    paintIntoGraphicsContext(layer, recordingContext, recordRect, contentsOpaque, contentsScale, 1.0f);
+     auto imageToFenceMap = recordingContext.endRecording();
+     auto picture = pictureRecorder.finishRecordingAsPicture();
+     WTFEndSignpost(this, RecordTile);
+@@ -192,23 +358,31 @@
+     return SkiaRecordingResult::create(WTF::move(picture), WTF::move(imageToFenceMap), recordRect, renderingMode, contentsOpaque, contentsScale);
+ }
+ 
+-Ref<CoordinatedTileBuffer> SkiaPaintingEngine::replay(const GraphicsLayerCoordinated& layer, const RefPtr<SkiaRecordingResult>& recording, const IntRect& dirtyRect)
++Ref<CoordinatedTileBuffer> SkiaPaintingEngine::replay(const GraphicsLayerCoordinated& layer, const RefPtr<SkiaRecordingResult>& recording, const IntRect& dirtyRect, float lowResScale)
+ {
+     // ### Asynchronous rendering on worker threads ###
+     ASSERT(useThreadedRendering());
+ 
++    // Low-res tiles are supported on both the GPU swap path and the CPU upload path
++    // (see CoordinatedBackingStoreTile), so no need to force full resolution here.
++
+     Ref platformLayer = layer.coordinatedPlatformLayer();
+     platformLayer->willPaintTile();
+ 
+     auto renderingMode = recording->renderingMode();
+-    auto buffer = createBuffer(renderingMode, dirtyRect.size(), recording->contentsOpaque());
++    auto bufferSize = lowResBufferSize(dirtyRect.size(), lowResScale);
++    auto buffer = createBuffer(renderingMode, bufferSize, recording->contentsOpaque());
+     buffer->beginPainting();
+ 
+-    auto rasterTask = [platformLayer = WTF::move(platformLayer), buffer = Ref { buffer }, dirtyRect, recording = RefPtr { recording }]() mutable {
++    auto rasterTask = [platformLayer = WTF::move(platformLayer), buffer = Ref { buffer }, dirtyRect, bufferSize, lowResScale, recording = RefPtr { recording }]() mutable {
+         if (auto* canvas = buffer->canvas()) {
+-            auto replayPicture = [](const sk_sp<SkPicture>& picture, SkCanvas* canvas, const IntRect& recordRect, const IntRect& paintRect) {
++            auto replayPicture = [lowResScale, bufferSize](const sk_sp<SkPicture>& picture, SkCanvas* canvas, const IntRect& recordRect, const IntRect& paintRect) {
+                 canvas->save();
+                 canvas->clear(SkColors::kTransparent);
++                if (lowResScale < 1.0f) {
++                    auto effective = lowResEffectiveScale(paintRect.size(), bufferSize);
++                    canvas->scale(effective.width(), effective.height());
++                }
+                 canvas->clipRect(SkRect::MakeXYWH(0, 0, paintRect.width(), paintRect.height()));
+                 canvas->translate(recordRect.x() - paintRect.x(), recordRect.y() - paintRect.y());
+                 picture->playback(canvas);
+@@ -216,13 +390,19 @@
+             };
+ 
+             WTFBeginSignpost(canvas, PaintTile, "Skia/%s threaded, dirty region %ix%i+%i+%i", buffer->isBackedByOpenGL() ? "GPU" : "CPU", dirtyRect.x(), dirtyRect.y(), dirtyRect.width(), dirtyRect.height());
++            // Cost sample: this is the live path on the Adreno 610 stack
++            // (WEBKIT_SKIA_ENABLE_CPU_RENDERING=1 + 2 SkiaCPUWorker threads).
++            // Timing spans playback only, not buffer creation or completion, so
++            // it measures raster rather than allocation or upload.
++            auto rasterStart = MonotonicTime::now();
+             if (recording->hasFences()) {
+-                auto replayCanvas = SkiaReplayCanvas::create(dirtyRect.size(), recording);
++                auto replayCanvas = SkiaReplayCanvas::create(bufferSize, recording);
+                 replayCanvas->addCanvas(canvas);
+                 replayPicture(replayCanvas->picture(), &replayCanvas.get(), recording->recordRect(), dirtyRect);
+                 replayCanvas->removeCanvas(canvas);
+             } else
+                 replayPicture(recording->picture(), canvas, recording->recordRect(), dirtyRect);
++            TileRasterCost::singleton().record(MonotonicTime::now() - rasterStart, bufferSize);
+             WTFEndSignpost(canvas, PaintTile);
+         }
+ 
+diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h sq-B/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h
+--- a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h
++++ b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h
+@@ -38,6 +38,7 @@
+ class GraphicsLayer;
+ class GraphicsLayerCoordinated;
+ class IntRect;
++class FloatSize;
+ class IntSize;
+ class SkiaRecordingResult;
+ enum class RenderingMode : uint8_t;
+@@ -67,15 +68,44 @@
+     static bool rasterOnCompositorThread();
+     void setCompositorRunLoop(RunLoop* runLoop) { m_compositorRunLoop = runLoop; }
+ 
++    // Measured raster cost, for cost-aware scroll degradation decisions.
++    //
++    // The scroll ladder in CoordinatedBackingStoreProxy currently triggers on
++    // scroll SPEED, which describes how fast tiles are being exposed but not
++    // what they cost to paint -- so it cannot tell a raster-bound page from a
++    // cheap one, and the same low-res knob measurably helps the former while
++    // hurting the latter. These expose the missing term: an EWMA of raster
++    // nanoseconds per painted pixel, sampled on the real raster threads.
++    //
++    // Per-painted-pixel keeps the figure independent of tile size and of the
++    // low-res scale in force, so predictedTileRasterMs() stays valid as a
++    // controller varies that scale. Values are process-wide (one painting engine
++    // per WebProcess). nsPerPixel is 0 until the first sample lands; callers must
++    // treat "no samples yet" as "do not degrade" rather than as "free".
++    static double tileRasterNsPerPixel();
++    static unsigned tileRasterSampleCount();
++    static double predictedTileRasterMs(double fullResPixels);
++
+     bool useThreadedRendering() const { return m_workerPool; }
+ 
+-    Ref<CoordinatedTileBuffer> paint(const GraphicsLayerCoordinated&, const IntRect& dirtyRect, bool contentsOpaque, float contentsScale);
++    // lowResScale (<1.0) rasterizes the tile buffer at a reduced resolution during
++    // scroll; the smaller tile texture is bilinear-upscaled to its full on-screen
++    // rect at composite time (see CoordinatedBackingStore). Quadratic raster/fill
++    // saving on the serialized compositor-thread paint path. lowResScale is honoured
++    // only for accelerated (GPU) rendering; the CPU path always paints full-res.
++    Ref<CoordinatedTileBuffer> paint(const GraphicsLayerCoordinated&, const IntRect& dirtyRect, bool contentsOpaque, float contentsScale, float lowResScale = 1.0f);
+     Ref<SkiaRecordingResult> record(const GraphicsLayerCoordinated&, const IntRect& recordRect, bool contentsOpaque, float contentsScale);
+-    Ref<CoordinatedTileBuffer> replay(const GraphicsLayerCoordinated&, const RefPtr<SkiaRecordingResult>&, const IntRect& dirtyRect);
++    Ref<CoordinatedTileBuffer> replay(const GraphicsLayerCoordinated&, const RefPtr<SkiaRecordingResult>&, const IntRect& dirtyRect, float lowResScale = 1.0f);
+ 
+ private:
+     Ref<CoordinatedTileBuffer> createBuffer(RenderingMode, const IntSize&, bool contentsOpaque) const;
+-    void paintIntoGraphicsContext(const GraphicsLayer&, GraphicsContext&, const IntRect&, bool contentsOpaque, float contentsScale) const;
++    void paintIntoGraphicsContext(const GraphicsLayer&, GraphicsContext&, const IntRect&, bool contentsOpaque, float contentsScale, float lowResScale) const;
++    static IntSize lowResBufferSize(const IntSize& fullSize, float lowResScale);
++    // Scale actually used when painting a low-res tile: bufferSize/fullSize, i.e.
++    // derived from the integer buffer rather than the requested real scale, so the
++    // content fills the buffer exactly and leaves no unpainted fractional texel to
++    // be upscaled into a tile-edge seam.
++    static FloatSize lowResEffectiveScale(const IntSize& fullSize, const IntSize& bufferSize);
+ 
+     RefPtr<WorkerPool> m_workerPool;
+     RunLoop* m_compositorRunLoop { nullptr };
+diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp sq-B/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp
+@@ -84,7 +84,10 @@
+         const auto allEdgesExposed = allTileEdgesExposed(layerRect, tile.rect()) ? TextureMapper::AllEdgesExposed::Yes : TextureMapper::AllEdgesExposed::No;
+ 
+ #if ENABLE(DAMAGE_TRACKING)
+-        if (canUseDamageToDrawTextureFragment && allEdgesExposed == TextureMapper::AllEdgesExposed::No && tile.texture().isOpaque() && !tile.texture().filterOperation()) {
++        // A low-res tile's texture is smaller than its on-screen rect; the damage
++        // fragment path assumes a 1:1 texel mapping, so fall through to the upscaling
++        // drawTexture for it.
++        if (canUseDamageToDrawTextureFragment && !tile.isLowRes() && allEdgesExposed == TextureMapper::AllEdgesExposed::No && tile.texture().isOpaque() && !tile.texture().filterOperation()) {
+             const auto tileDamageRect = intersection(tile.rect(), frameDamage->bounds());
+             if (!tileDamageRect.isEmpty()) {
+                 const auto sourceRect = FloatRect { FloatPoint { tileDamageRect.location() - tile.rect().location() }, tileDamageRect.size() };
+diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp sq-B/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
+@@ -27,6 +27,10 @@
+ #include "ProcessCapabilities.h"
+ #include <wtf/CheckedArithmetic.h>
+ #include <wtf/MathExtras.h>
++
++#include <cmath>
++#include <cstdlib>
++#include <cstring>
+ #include <wtf/MemoryPressureHandler.h>
+ #include <wtf/SystemTracing.h>
+ #include <wtf/TZoneMallocInlines.h>
+@@ -39,6 +43,423 @@
+ 
+ namespace WebCore {
+ 
++// Tile prepaint tuning for scroll smoothness (see also
++// webkit-glfence-disable-env.patch / webkit-texpool-compositor-sync-env.patch):
++//  - WEBKIT_COVER_AREA_MULTIPLIER=<float 1..6>: how much area around the
++//    viewport gets prepainted (upstream hardcodes 2.0).
++//  - WEBKIT_DIRECTIONAL_TILE_COVERAGE=1: spend the cover budget mostly
++//    vertically and biased ahead of the current scroll direction, instead of
++//    inflating equally in all directions (horizontal prepaint is wasted on
++//    vertically-scrolling pages).
++static float coverAreaMultiplierFromEnvironment()
++{
++    static float multiplier = [] {
++        if (const char* env = getenv("WEBKIT_COVER_AREA_MULTIPLIER")) {
++            float value = atof(env);
++            if (value >= 1 && value <= 6)
++                return value;
++        }
++        return 2.0f;
++    }();
++    return multiplier;
++}
++
++static bool directionalCoverageEnabled()
++{
++    static bool enabled = [] {
++        const char* env = getenv("WEBKIT_DIRECTIONAL_TILE_COVERAGE");
++        return env && *env && strcmp(env, "0");
++    }();
++    return enabled;
++}
++
++// Aggressive checkerboard during fast scroll. The coordinated-graphics port
++// always rasterizes at least the visible rect every time the viewport moves, so
++// a fast fling pays the per-tile paint cost (serialized by gpu-sync glFinish) on
++// the hot path. Gecko APZ and the Cocoa TileController instead decouple scroll
++// from paint: during a fling they show already-painted tiles plus the page
++// background for the exposed area, then paint once motion settles. This mirrors
++// that. While flinging faster than this many device px/s we stop rasterizing the
++// newly-exposed tiles (the gap shows the page background). This is the top rung of
++// the scroll-speed ladder (very-fast tier, above the low-res tier). WEBKIT_
++// CHECKERBOARD_DURING_SCROLL: unset => **default 2500 px/s (ON)**; "0" = disabled;
++// "1" = 800 px/s; a number = that threshold in px/s.
++static float checkerboardScrollSpeedThreshold()
++{
++    static float threshold = [] {
++        if (const char* env = getenv("WEBKIT_CHECKERBOARD_DURING_SCROLL")) {
++            if (!*env || !strcmp(env, "0"))
++                return 0.0f;
++            float value = atof(env);
++            return value > 1.0f ? value : 800.0f;
++        }
++        // Unset => default ON at the very-fast tier (above the low-res T1 of 800).
++        return 2500.0f;
++    }();
++    return threshold;
++}
++
++// Keep checkerboarding until this many ms after the LAST fast-scroll motion, so a
++// whole flick sequence stays checkerboarded and the tiles repaint only once, at
++// rest -- instead of repainting in the gaps between flicks. The longer this is,
++// the more aggressive the checkerboard. WEBKIT_CHECKERBOARD_SETTLE_MS (default 300).
++static double checkerboardSettleMs()
++{
++    static double ms = [] {
++        if (const char* env = getenv("WEBKIT_CHECKERBOARD_SETTLE_MS")) {
++            double v = atof(env);
++            if (v >= 0 && v <= 2000)
++                return v;
++        }
++        return 300.0;
++    }();
++    return ms;
++}
++
++// Low-resolution tiles during scroll. While flinging, freshly-exposed tiles are
++// rasterized into a buffer scaled down by this factor and bilinear-upscaled back to
++// their full on-screen rect at composite time (the eye doesn't resolve detail
++// mid-fling; this is the Chrome/Android "low-res tiles" idea). Raster + fill cost is
++// quadratic in scale, so 0.3x is ~11x cheaper per painted pixel -- the lever that
++// directly cuts the per-frame GPU/raster cost on the serialized compositor-thread
++// paint path. Once the fling settles the tiles are repainted full-res (sharpen at
++// rest). WEBKIT_LOWRES_TILE_SCALE in [0.25, 1.0); **default 0.3 (ON)** when unset.
++// To disable, set it to 1.0 (or any value >=1.0). Fling detection uses the scroll-
++// speed ladder below.
++static float lowResTileScaleDuringScroll()
++{
++    static float scale = [] {
++        if (const char* env = getenv("WEBKIT_LOWRES_TILE_SCALE")) {
++            float value = atof(env);
++            if (value >= 0.25f && value < 1.0f)
++                return value;
++            // Explicitly set but out of the low-res range (e.g. 1.0) => disabled.
++            return 1.0f;
++        }
++        // Unset => default ON at 0.3.
++        return 0.3f;
++    }();
++    return scale;
++}
++
++static bool lowResTilesEnabled()
++{
++    return lowResTileScaleDuringScroll() < 1.0f;
++}
++
++// Graduated resolution: keep tiles intersecting the viewport at full resolution and
++// only paint the prepaint cushion ahead of it (cover rect beyond the visible rect)
++// at low resolution. The leading edge you actually look at as it scrolls in stays
++// crisp; only the cushion you'd reach by continuing to fling is cheap. (During a very
++// fast fling a cushion tile can still reach the viewport before settling -- it then
++// sharpens at rest.) WEBKIT_LOWRES_VIEWPORT_FULL=1 enables it; default off = uniform
++// low-res across the whole exposed band.
++static bool lowResKeepViewportFullRes()
++{
++    static bool enabled = [] {
++        const char* env = getenv("WEBKIT_LOWRES_VIEWPORT_FULL");
++        return env && *env && strcmp(env, "0");
++    }();
++    return enabled;
++}
++
++// Scroll-speed ladder, lower rung. The px/s at which low-res tiles engage. Kept
++// independent of the checkerboard (upper rung) threshold so the two form a graded
++// degradation: slow scroll = full res, quick = low-res (this threshold), ultra-fast =
++// checkerboard (WEBKIT_CHECKERBOARD_DURING_SCROLL, which should be set higher).
++// WEBKIT_LOWRES_SCROLL_SPEED; default 400 px/s when low-res is enabled, else off.
++static float lowResScrollSpeedThreshold()
++{
++    static float threshold = [] {
++        if (const char* env = getenv("WEBKIT_LOWRES_SCROLL_SPEED")) {
++            float v = atof(env);
++            if (v > 1.0f)
++                return v;
++        }
++        return lowResTilesEnabled() ? 400.0f : 0.0f;
++    }();
++    return threshold;
++}
++
++// ── Cost-based degradation trigger ───────────────────────────────────────────
++// The speed ladder above asks "how fast is the page scrolling?". That is a pure
++// geometry question -- it describes how quickly tiles are being exposed, but not
++// what a tile COSTS to rasterize, and cost is what decides whether degrading is
++// a win or a loss. Measured on build 618/620 with the identical
++// WEBKIT_LOWRES_TILE_SCALE=0.3 knob:
++//
++//   raster-bound page (282 ns/px, 13.0 ms/tile)  p95 76ms -> 44ms  (-42%)
++//   cheap page        (11.9 ns/px, 0.8 ms/tile)  p95 27ms -> 29ms  (+7%),
++//                                                jank 1.3% -> 3.4%
++//
++// Raster cost separates those pages by 23.7x while their scroll velocities are
++// indistinguishable, so no velocity threshold can tell them apart. Re-calibrating
++// the thresholds was tried and rejected: it halved engagement on the cheap page
++// with zero change to the penalty, while giving up a quarter of the raster-bound
++// page's tail win.
++//
++// This trigger asks the question that actually determines the sign of the
++// outcome: "will the tiles this pass needs to paint fit in a frame?"
++//
++//   predictedMs = tileRasterNsPerPixel * pixelsToPaint
++//   overshoot   = predictedMs / frameBudgetMs
++//
++// engaging only when overshoot > 1. Because raster cost is ~linear in painted
++// pixels and a scale of s paints s^2 of them, the scale needed to fit the budget
++// is 1/sqrt(overshoot) -- so the degradation is proportional to the overload
++// instead of a fixed cliff. On the measured numbers a 3-tile exposure is 0.15x
++// budget on the cheap page (no degradation at any speed) and 2.35x on the
++// raster-bound one (scale 0.65, which fits the budget and is far less visible
++// than the current fixed 0.3x).
++//
++// WEBKIT_LOWRES_COST_TRIGGER=1 enables it; default OFF (the speed ladder stays
++// in charge) pending the on-device A/B.
++static bool costTriggerEnabled()
++{
++    static bool enabled = [] {
++        // Unset => ON. Device-validated against the legacy speed ladder, which on
++        // real reddit scrolling put 73% of samples into checkerboard (blank bands)
++        // at an effective 267 CSS px/s; this stays at low-res ~0.40 and blanks
++        // nothing. "0" falls back to the speed ladder.
++        const char* env = getenv("WEBKIT_LOWRES_COST_TRIGGER");
++        if (!env || !*env)
++            return true;
++        return strcmp(env, "0") != 0;
++    }();
++    return enabled;
++}
++
++// Per-frame raster budget. Not the full 16.6 ms frame: raster shares the frame
++// with compositing, upload and the rest of the pipeline, so budgeting the whole
++// vsync interval to raster alone guarantees a missed frame whenever the estimate
++// is exactly met. WEBKIT_LOWRES_COST_BUDGET_MS, default 11 ms (~2/3 of a 60 Hz
++// frame).
++static double costBudgetMs()
++{
++    static double ms = [] {
++        if (const char* env = getenv("WEBKIT_LOWRES_COST_BUDGET_MS")) {
++            double v = atof(env);
++            if (v > 1.0 && v <= 100.0)
++                return v;
++        }
++        return 11.0;
++    }();
++    return ms;
++}
++
++// Floor on the derived scale. Below ~0.3 the upscale blur is obvious on text and
++// the quality cost stops being worth the raster saved.
++// WEBKIT_LOWRES_COST_SCALE_FLOOR, default 0.3, clamped to [0.25, 1.0).
++static float costScaleFloor()
++{
++    static float floorScale = [] {
++        if (const char* env = getenv("WEBKIT_LOWRES_COST_SCALE_FLOOR")) {
++            float v = atof(env);
++            if (v >= 0.25f && v < 1.0f)
++                return v;
++        }
++        return 0.3f;
++    }();
++    return floorScale;
++}
++
++// Overshoot at which the top rung (checkerboard: skip the band entirely) takes
++// over from low-res. At the scale floor, low-res can only recover 1/floor^2 --
++// about 11x at 0.3 -- so past that point painting low-res still misses the frame
++// and showing background until rest is the better trade.
++// WEBKIT_LOWRES_COST_CHECKERBOARD_X, **default 0 (disabled)**. Measured: routing
++// to checkerboard at high overshoot pinned a heavy page in the blank-band tier
++// (p95 72ms, jank 16%, worst frame 645ms -- worse than no degradation at all).
++// Floor-scale low-res still removes ~11x of the work AND keeps content visible,
++// which is the better trade; set >0 only to re-enable the rung for an A/B.
++static double costCheckerboardOvershoot()
++{
++    static double x = [] {
++        if (const char* env = getenv("WEBKIT_LOWRES_COST_CHECKERBOARD_X")) {
++            double v = atof(env);
++            if (v >= 0.0)
++                return v;
++        }
++        return 0.0;  // disabled: the scale floor is the ceiling on degradation
++    }();
++    return x;
++}
++
++// Minimum overshoot before engaging at all. Engaging is not free: every degraded
++// tile is repainted whole at full resolution once motion settles, so a marginal
++// engagement spends a full repaint to save a little raster and comes out behind.
++// Measured: at a 0.90 derived scale (overshoot 1.24) the cheap page still paid
++// the entire +1.9pp jank penalty -- the cost is per ENGAGEMENT, not per unit of
++// degradation. Requiring real overshoot also stops the trigger firing on the
++// merely-slightly-loaded pages the user sees as "low res shows too early".
++// WEBKIT_LOWRES_COST_ENGAGE_X, default 2.0 (=> never engages above scale ~0.71).
++static double costEngageOvershoot()
++{
++    static double x = [] {
++        if (const char* env = getenv("WEBKIT_LOWRES_COST_ENGAGE_X")) {
++            double v = atof(env);
++            if (v >= 1.0 && v <= 100.0)
++                return v;
++        }
++        return 2.0;
++    }();
++    return x;
++}
++
++// How long after the last scroll movement the cost trigger may still degrade.
++//
++// THIS GATE IS LOAD-BEARING. Low-res is a scroll-time trade: it is only
++// acceptable because the eye cannot resolve detail mid-fling and the tiles are
++// repainted sharp at rest. Applied to a STATIONARY page it is pure loss -- the
++// user just sees a permanently blurry page. Worse, the low-res upscale has a
++// latent edge artifact (lowResBufferSize rounds up with ceil(), so a 256px tile
++// at 0.3 paints 76.8 of 77 texels and the unpainted fraction upscales into a
++// visible seam at every tile boundary); while degradation is transient that
++// artifact flashes by unnoticed, but held at rest it becomes a permanent dark
++// GRID across the page. Both were observed on franceinfo.fr: 99 layer proxies
++// degraded to the 0.3 floor while the page sat idle.
++//
++// The speed ladder got this for free -- it could only arm inside setVisibleRect
++// when dy != 0. The cost trigger evaluates on every layer flush, so it must
++// reinstate the condition explicitly.
++// WEBKIT_LOWRES_COST_MOTION_MS, default 250 -- wide enough to span the gaps
++// between layer flushes on a heavy page, short enough to end promptly at rest.
++static double costMotionWindowMs()
++{
++    static double ms = [] {
++        if (const char* env = getenv("WEBKIT_LOWRES_COST_MOTION_MS")) {
++            double v = atof(env);
++            if (v >= 0 && v <= 2000)
++                return v;
++        }
++        return 250.0;
++    }();
++    return ms;
++}
++
++// Scroll motion is a PAGE-level fact, so it is tracked process-wide rather than
++// per backing store.
++//
++// The per-proxy version of this was wrong for the same reason the speed ladder's
++// `dt < 0.2` sample gate is wrong, and it is worth stating once because it has now
++// caused two separate bugs. A real page is many compositing layers -- franceinfo
++// has ~99 -- and each proxy's setVisibleRect / updateIfNeeded runs only when THAT
++// layer changes. Any single layer therefore sees sparse, irregular updates: its
++// own dt routinely exceeds 200 ms (so the speed ladder discards 536 of 536 samples
++// and never arms on a real page at all), and its own last-motion timestamp is
++// routinely older than the motion window (so the cost trigger saw scrolling=0 for
++// every one of 964 samples while the page was being flung).
++//
++// Neither is a property of the layer. Whether the USER is scrolling is a property
++// of the page: a fixed header never moves and a parallax layer moves at its own
++// rate, but the page is scrolling in both cases. One process-wide timestamp,
++// written by whichever layer observes movement and read by all of them, is both
++// correct and immune to per-layer sampling sparsity.
++//
++// Relaxed atomic: a smoothed liveness flag read across threads, where a slightly
++// stale read costs nothing and a lock on this path would cost more than the
++// signal.
++static std::atomic<double> s_lastScrollMotionSeconds { 0.0 };
++
++static void noteScrollMotion()
++{
++    s_lastScrollMotionSeconds.store(MonotonicTime::now().secondsSinceEpoch().value(),
++        std::memory_order_relaxed);
++}
++
++static bool pageIsScrolling(double windowMs)
++{
++    double last = s_lastScrollMotionSeconds.load(std::memory_order_relaxed);
++    if (last <= 0)
++        return false;
++    double nowSec = MonotonicTime::now().secondsSinceEpoch().value();
++    return (nowSec - last) * 1000.0 <= windowMs;
++}
++
++// Asymmetric hysteresis: engage on a single over-budget pass (a missed frame is
++// already visible), but require this many consecutive comfortably-under-budget
++// passes before disengaging. Measured motivation: a trigger that hovers near its
++// threshold is worse than one that stays either side of it -- at 43-46% armed the
++// heavy page's jank returned to baseline while raster CPU stayed elevated,
++// because every engage/disengage cycle costs a whole-tile full-res sharpen
++// repaint. WEBKIT_LOWRES_COST_DISENGAGE_PASSES, default 4.
++static unsigned costDisengagePasses()
++{
++    static unsigned n = [] {
++        if (const char* env = getenv("WEBKIT_LOWRES_COST_DISENGAGE_PASSES")) {
++            int v = atoi(env);
++            if (v >= 1 && v <= 60)
++                return static_cast<unsigned>(v);
++        }
++        return 4u;
++    }();
++    return n;
++}
++
++// Scope of the sharpen-at-rest pass.
++//
++// When degradation ends, every tile still at low resolution is invalidated WHOLE
++// and repainted at full resolution. That includes the prepaint cushion -- with the
++// default cover multiplier of 2, roughly half the tiles held are outside the
++// viewport and were never looked at. The repaint lands precisely when the user has
++// just stopped scrolling, so it is felt as a stutter at rest.
++//
++// This is also the fixed cost that makes marginal engagement a losing trade, and it
++// is measured, not assumed: halving how often the tier armed changed the cheap-page
++// penalty by nothing at all, and a barely-degraded 0.90 scale still paid the entire
++// +1.9pp jank penalty. The cost is per ENGAGEMENT, not per unit of degradation,
++// because each engagement ends in one of these full repaints.
++//
++// With WEBKIT_LOWRES_SHARPEN_VIEWPORT_ONLY=1 only tiles intersecting the viewport
++// (inflated by WEBKIT_LOWRES_SHARPEN_MARGIN_PX) are sharpened at rest. Cushion tiles
++// stay soft and sharpen later, when the viewport actually reaches them -- this same
++// pass runs on every non-degrading update, so a tile entering the margin is
++// sharpened before it is visible. Nothing is left permanently soft on screen.
++//
++// Default OFF pending the on-device A/B. Note this helps the legacy speed ladder
++// exactly as much as the cost trigger: the sharpen pass is shared by both.
++static bool sharpenViewportOnly()
++{
++    static bool enabled = [] {
++        // Unset => ON. Measured on build 626: 531 tiles sharpened vs 2172 deferred
++        // (80% of the repaint avoided), fps +6%, p95 -3%/-11%, raster CPU -7%/-5%
++        // on heavy/multilayer, non-overlapping spreads. Device-validated.
++        // "0" restores the whole-cushion repaint.
++        const char* env = getenv("WEBKIT_LOWRES_SHARPEN_VIEWPORT_ONLY");
++        if (!env || !*env)
++            return true;
++        return strcmp(env, "0") != 0;
++    }();
++    return enabled;
++}
++
++// How far beyond the viewport to sharpen, so a tile is crisp BEFORE it scrolls into
++// view rather than in the frame it becomes visible. Roughly one tile row by default.
++// WEBKIT_LOWRES_SHARPEN_MARGIN_PX, default 512.
++static int sharpenMarginPx()
++{
++    static int px = [] {
++        if (const char* env = getenv("WEBKIT_LOWRES_SHARPEN_MARGIN_PX")) {
++            int v = atoi(env);
++            if (v >= 0 && v <= 8192)
++                return v;
++        }
++        return 512;
++    }();
++    return px;
++}
++
++// Diagnostic (WEBKIT_SCROLLTIER_LOG=1): trace the scroll-speed-ladder arming decisions
++// on WebProcess stderr to see why the low-res tier does or does not engage.
++static bool scrollTierLogEnabled()
++{
++    static bool enabled = [] {
++        const char* v = getenv("WEBKIT_SCROLLTIER_LOG");
++        return v && *v && *v != '0';
++    }();
++    return enabled;
++}
++
+ WTF_MAKE_TZONE_ALLOCATED_IMPL(CoordinatedBackingStoreProxy);
+ 
+ static uint32_t generateTileID()
+@@ -107,6 +528,140 @@
+     if (!m_tiles.isEmpty())
+         invalidateRegion(dirtyRegion);
+ 
++    // Cost-based tier decision. Runs here rather than in setVisibleRect because
++    // this is the first point where the work this pass must actually do is known:
++    // the tiles just created (the newly-exposed band) plus whatever is dirty.
++    // Velocity is not consulted at all -- if the work fits the budget there is
++    // nothing to gain by degrading, however fast the page is moving.
++    if (costTriggerEnabled()) {
++        // Scroll gate: degrade only while the page is actually moving. Without
++        // this the trigger engages during load and on idle repaints, leaving the
++        // page permanently soft and exposing the low-res edge seam as a static
++        // grid. See costMotionWindowMs().
++        bool scrolling = pageIsScrolling(costMotionWindowMs());
++
++        double pixelsToPaint = 0;
++        for (const auto& tile : m_tiles.values()) {
++            if (tile.isDirty())
++                pixelsToPaint += static_cast<double>(tile.dirtyRect.width()) * tile.dirtyRect.height();
++        }
++        // Freshly created tiles are not yet in m_tiles as dirty-with-content; each
++        // costs a full tile of raster.
++        pixelsToPaint += static_cast<double>(tilesToCreate.size())
++            * m_tileSize.width() * m_tileSize.height();
++
++        // The cost signal comes from the Skia painting engine; without it there is
++        // no measurement to trigger on and the speed ladder stays in charge.
++        double predictedMs = 0;
++#if USE(SKIA)
++        predictedMs = SkiaPaintingEngine::predictedTileRasterMs(pixelsToPaint);
++#endif
++        // predictedTileRasterMs returns 0 until the cost EWMA has a sample. Treat
++        // "unknown" as "do not degrade": guessing cheap costs one soft frame,
++        // guessing expensive blurs a page that never needed it.
++        double overshoot = predictedMs > 0 ? predictedMs / costBudgetMs() : 0.0;
++
++        ScrollTier costTier = ScrollTier::None;
++        float costScale = 1.0f;
++        // Never degrade a page that is not moving, and never engage marginally.
++        if (scrolling && overshoot >= costEngageOvershoot()) {
++            double cbX = costCheckerboardOvershoot();
++            if (cbX > 0 && overshoot >= cbX)
++                costTier = ScrollTier::Checkerboard;
++            else {
++                costTier = ScrollTier::LowRes;
++                // Cost is ~linear in painted pixels, and scale s paints s^2 of
++                // them, so 1/sqrt(overshoot) is the scale that fits the budget.
++                costScale = clampTo<float>(1.0 / std::sqrt(overshoot), costScaleFloor(), 1.0f);
++            }
++        }
++
++        if (costTier != ScrollTier::None) {
++            m_scrollTier = costTier;
++            m_costLowResScale = costScale;
++            m_underBudgetPasses = 0;
++            // Reuse the existing hold window so the downstream sharpen/defer logic
++            // is unchanged; hysteresis below decides when it is allowed to lapse.
++            m_checkerboardHoldUntil = MonotonicTime::now() + Seconds::fromMilliseconds(checkerboardSettleMs());
++        } else if (m_scrollTier != ScrollTier::None) {
++            // Motion stopped => disengage NOW, bypassing the hysteresis. The
++            // hysteresis exists to stop oscillation *during* a fling; applying it
++            // at rest would leave the page soft (and the tile-edge seam visible)
++            // for several extra flushes after the user has stopped scrolling,
++            // which is precisely the artifact this gate exists to prevent.
++            if (!scrolling)
++                m_underBudgetPasses = costDisengagePasses();
++            // Only count a pass as "under budget" when it is comfortably so (70%),
++            // so a trigger sitting exactly on the threshold cannot oscillate.
++            else if (overshoot < 0.7)
++                ++m_underBudgetPasses;
++            else
++                m_underBudgetPasses = 0;
++            if (m_underBudgetPasses >= costDisengagePasses()) {
++                m_scrollTier = ScrollTier::None;
++                m_costLowResScale = 1.0f;
++                m_checkerboardHoldUntil = MonotonicTime::now();  // let it lapse now
++            } else {
++                // Hold the tier (and the window) while we wait out the hysteresis.
++                m_checkerboardHoldUntil = MonotonicTime::now() + Seconds::fromMilliseconds(checkerboardSettleMs());
++            }
++        }
++
++        if (scrollTierLogEnabled() && (predictedMs > 0 || m_scrollTier != ScrollTier::None)) {
++            double nsPerPx = 0;
++#if USE(SKIA)
++            nsPerPx = SkiaPaintingEngine::tileRasterNsPerPixel();
++#endif
++            fprintf(stderr, "[costtier] proxy %p scrolling=%d px=%.0f predMs=%.2f budget=%.1f "
++                "overshoot=%.2f engageX=%.1f tier=%d scale=%.2f underBudget=%u nsPerPx=%.1f\n",
++                this, scrolling, pixelsToPaint, predictedMs, costBudgetMs(), overshoot,
++                costEngageOvershoot(), static_cast<int>(m_scrollTier),
++                m_costLowResScale, m_underBudgetPasses, nsPerPx);
++        }
++    }
++
++    // Scroll-ladder bookkeeping. A degradation tier is active while the hold window is
++    // open; the low-res tier paints the exposed band at reduced resolution (in the
++    // dirty-tile loop below). Once the scroll truly settles (no tier), repaint any
++    // tiles still at low resolution back to full resolution (sharpen at rest),
++    // coalesced to a single whole-tile pass per tile. While any tier is active we do
++    // NOT sharpen (don't fight an ongoing fling, and don't repaint during checkerboard).
++    bool scrollDegrading = m_scrollTier != ScrollTier::None && MonotonicTime::now() < m_checkerboardHoldUntil;
++    bool lowResScrollActive = scrollDegrading && m_scrollTier == ScrollTier::LowRes && lowResTilesEnabled();
++    if (scrollTierLogEnabled() && (scrollDegrading || m_scrollTier != ScrollTier::None))
++        fprintf(stderr, "[scrolltier] proxy %p PAINT-DECIDE degrading=%d lowResActive=%d tier=%d holdRemainMs=%.0f\n", this, scrollDegrading, lowResScrollActive, static_cast<int>(m_scrollTier), (m_checkerboardHoldUntil - MonotonicTime::now()).milliseconds());
++    if (lowResTilesEnabled() && !scrollDegrading) {
++        // Sharpen at rest. Optionally limited to what the user can actually see --
++        // see sharpenViewportOnly(). Deferred cushion tiles keep isLowRes and are
++        // picked up by this same pass once the viewport (plus margin) reaches them,
++        // so they are never left soft while visible. Deliberately does NOT set
++        // m_pendingTileCreation for them: there is no work to finish until the
++        // viewport moves, and re-arming the poll would spin.
++        const bool limitToViewport = sharpenViewportOnly();
++        IntRect sharpenRect = m_visibleRect;
++        if (limitToViewport)
++            sharpenRect.inflate(sharpenMarginPx());
++        unsigned sharpened = 0;
++        unsigned deferred = 0;
++        for (auto& tile : m_tiles.values()) {
++            if (!tile.isLowRes)
++                continue;
++            if (limitToViewport && !tile.rect.intersects(sharpenRect)) {
++                ++deferred;
++                continue;
++            }
++            tile.dirtyRect = tile.rect; // whole-tile => full-res fast-path swap
++            ++sharpened;
++        }
++        if (scrollTierLogEnabled() && (sharpened || deferred))
++            fprintf(stderr, "[sharpen] proxy %p sharpened=%u deferred=%u viewportOnly=%d margin=%d\n",
++                this, sharpened, deferred, limitToViewport, limitToViewport ? sharpenMarginPx() : 0);
++    } else if (scrollDegrading) {
++        // Keep getting polled while degrading so the sharpen pass above runs once the
++        // hold window expires, even if no further scroll motion arrives.
++        m_pendingTileCreation = true;
++    }
++
+     OptionSet<UpdateResult> result;
+     if (m_pendingTileCreation)
+         result.add(UpdateResult::TilesPending);
+@@ -114,10 +669,16 @@
+     // Update the dirty tiles.
+     IntRect tileDirtyRectUnion;
+     unsigned dirtyTilesCount = 0;
+-    for (const auto& tile : m_tiles.values()) {
++    for (auto& tile : m_tiles.values()) {
+         if (!tile.isDirty())
+             continue;
+ 
++        // A low-res tile must be repainted whole (so the compositor fast-path swap
++        // replaces its low-res texture, never a partial copy into it); expand a
++        // partial dirty to the whole tile before the record union is computed.
++        if (tile.isLowRes && tile.dirtyRect != tile.rect)
++            tile.dirtyRect = tile.rect;
++
+         tileDirtyRectUnion.unite(tile.dirtyRect);
+         ++dirtyTilesCount;
+     }
+@@ -141,16 +702,31 @@
+             WTFBeginSignpost(this, UpdateTile, "%u/%u, id: %d, rect: %ix%i+%i+%i, dirty: %ix%i+%i+%i", ++dirtyTileIndex, dirtyTilesCount, tile.id,
+                 tile.rect.x(), tile.rect.y(), tile.rect.width(), tile.rect.height(), tile.dirtyRect.x(), tile.dirtyRect.y(), tile.dirtyRect.width(), tile.dirtyRect.height());
+ 
++            // Paint low-res only while flinging and only for a whole-tile update
++            // (the compositor swaps the whole low-res texture in; a partial copy
++            // into a low-res texture would be invalid -- see CoordinatedBackingStoreTile).
++            bool paintLowRes = lowResScrollActive && tile.dirtyRect == tile.rect;
++            // Graduated mode: keep the tiles under the viewport full-res; only the
++            // prepaint cushion ahead of it goes low-res.
++            if (paintLowRes && lowResKeepViewportFullRes() && tile.rect.intersects(m_visibleRect))
++                paintLowRes = false;
++            // Under the cost trigger the scale is derived per pass from how far
++            // over budget the work is, rather than being a fixed cliff.
++            float lowResScale = paintLowRes
++                ? (costTriggerEnabled() ? m_costLowResScale : lowResTileScaleDuringScroll())
++                : 1.0f;
++
+ #if USE(SKIA)
+-            auto buffer = recording ? layer.replay(recording, tile.dirtyRect) : layer.paint(tile.dirtyRect);
++            auto buffer = recording ? layer.replay(recording, tile.dirtyRect, lowResScale) : layer.paint(tile.dirtyRect, lowResScale);
+ #else
+-            auto buffer = layer.paint(tile.dirtyRect);
++            auto buffer = layer.paint(tile.dirtyRect, lowResScale);
+ #endif
+ 
+             IntRect updateRect(tile.dirtyRect);
+             updateRect.move(-tile.rect.x(), -tile.rect.y());
+             tilesToUpdate.append({ tile.id, tile.rect, WTF::move(updateRect), WTF::move(buffer) });
+             tile.markClean();
++            tile.isLowRes = lowResScale < 1.0f;
+             result.add(UpdateResult::BuffersChanged);
+ 
+             WTFEndSignpost(this, UpdateTile);
+@@ -203,7 +779,7 @@
+ 
+ void CoordinatedBackingStoreProxy::createOrDestroyTiles(const IntRect& unscaledVisibleRect, const IntRect& unscaledContentsRect, const IntSize& unscaledViewportSize, float contentsScale, int maxTextureSize, Damage& damage, Vector<uint32_t>& tilesToCreate, Vector<uint32_t>& tilesToRemove)
+ {
+-    float coverAreaMultiplier = MemoryPressureHandler::singleton().isUnderMemoryPressure() ? 1.0f : 2.0f;
++    float coverAreaMultiplier = MemoryPressureHandler::singleton().isUnderMemoryPressure() ? 1.0f : coverAreaMultiplierFromEnvironment();
+     bool contentsScaleChanged = m_contentsScale != contentsScale;
+     m_contentsScale = contentsScale;
+ 
+@@ -215,6 +791,66 @@
+         return;
+ 
+     if (geometryChanged) {
++        // Track the vertical scroll direction (only when the viewport moved
++        // within unchanged content, so layout changes don't count) to bias
++        // directional coverage ahead of the motion. Hysteresis: the bias only
++        // flips after half a viewport of sustained movement in the new
++        // direction — the small counter-movement when a finger lands for the
++        // next flick must not flip it (a flip relocates the cover rect, and
++        // thrashing it caused visible repaint gaps).
++        if (scrollTierLogEnabled() && m_visibleRect != visibleRect) {
++            fprintf(stderr, "[scrolltier] proxy %p dyPath=%d contentsRectChanged=%d heightSame=%d dy=%d visY=%d->%d\n",
++                this, !contentsRectChanged && visibleRect.height() == m_visibleRect.height(), contentsRectChanged,
++                visibleRect.height() == m_visibleRect.height(), visibleRect.y() - m_visibleRect.y(), m_visibleRect.y(), visibleRect.y());
++        }
++        if (!contentsRectChanged && visibleRect.height() == m_visibleRect.height()) {
++            int dy = visibleRect.y() - m_visibleRect.y();
++            if (dy) {
++                // Record motion process-wide, not on this proxy: see
++                // noteScrollMotion(). Any layer observing movement means the page
++                // is moving, which is the fact the cost trigger actually needs.
++                noteScrollMotion();
++                if ((dy > 0) != (m_scrollAccumulatorY > 0))
++                    m_scrollAccumulatorY = 0;
++                m_scrollAccumulatorY += dy;
++                if (std::abs(m_scrollAccumulatorY) > m_visibleRect.height() / 2)
++                    m_lastScrollDirectionY = m_scrollAccumulatorY > 0 ? 1 : -1;
++
++                float lowResSpeed = lowResScrollSpeedThreshold();
++                float checkerboardSpeed = checkerboardScrollSpeedThreshold();
++                // The cost trigger owns the tier when enabled; velocity must not
++                // also arm it, or the two would fight (speed would re-arm the tier
++                // that the cost hysteresis is trying to let lapse).
++                if (costTriggerEnabled())
++                    lowResSpeed = checkerboardSpeed = 0;
++                if (lowResSpeed || checkerboardSpeed) {
++                    auto now = MonotonicTime::now();
++                    double dtSec = (now - m_lastScrollSampleTime).seconds();
++                    m_lastScrollSampleTime = now;
++                    // Classify the current fling speed into a degradation tier and (re)arm
++                    // the shared hold window. Faster scroll = more aggressive tier:
++                    // ultra-fast checkerboards the exposed band, quick paints it low-res,
++                    // slow leaves it full-res. The whole flick sequence holds the tier so
++                    // it repaints once, at rest (sharpen).
++                    if (dtSec > 0 && dtSec < 0.2) {
++                        double speed = std::abs(dy) / dtSec;
++                        ScrollTier tier = ScrollTier::None;
++                        if (checkerboardSpeed && speed >= checkerboardSpeed)
++                            tier = ScrollTier::Checkerboard;
++                        else if (lowResSpeed && speed >= lowResSpeed)
++                            tier = ScrollTier::LowRes;
++                        if (tier != ScrollTier::None) {
++                            m_scrollTier = tier;
++                            m_checkerboardHoldUntil = now + Seconds::fromMilliseconds(checkerboardSettleMs());
++                        }
++                        if (scrollTierLogEnabled())
++                            fprintf(stderr, "[scrolltier] proxy %p ARM dy=%d dt=%.3f speed=%.0f tier=%d (lowResT=%.0f cbT=%.0f)\n", this, dy, dtSec, speed, static_cast<int>(tier), lowResSpeed, checkerboardSpeed);
++                    } else if (scrollTierLogEnabled())
++                        fprintf(stderr, "[scrolltier] proxy %p SKIP dy=%d dt=%.3f (gate: 0<dt<0.2)\n", this, dy, dtSec);
++                }
++            }
++        }
++
+         m_contentsRect = contentsRect;
+         m_visibleRect = visibleRect;
+         m_coverAreaMultiplier = coverAreaMultiplier;
+@@ -278,6 +914,19 @@
+     if (m_coverRect.isEmpty())
+         return;
+ 
++    // Aggressive checkerboard (top rung of the scroll-speed ladder): while in the
++    // ultra-fast tier, hold off rasterizing the newly-exposed tiles (the gap shows the
++    // page background) until the scroll has settled for WEBKIT_CHECKERBOARD_SETTLE_MS
++    // after the LAST fast motion -- so a whole flick sequence stays checkerboarded and
++    // we repaint only once, at rest. Tiles inside keepRect were retained above and just
++    // scroll. The m_pendingTileCreation timer re-enters this method until the hold
++    // expires. The low-res tier does NOT defer here -- it paints the band low-res in
++    // updateIfNeeded instead.
++    if (m_scrollTier == ScrollTier::Checkerboard && MonotonicTime::now() < m_checkerboardHoldUntil) {
++        m_pendingTileCreation = true;
++        return;
++    }
++
+     // Resize tiles at the edge in case the contents size has changed, but only do so
+     // after having dropped tiles outside the keep rect.
+     if (contentsRectChanged) {
+@@ -468,9 +1117,38 @@
+ 
+     // If we cover more that the actual viewport we can be smart about which tiles we choose to render.
+     if (m_coverAreaMultiplier > 1) {
+-        // The initial cover area covers equally in each direction, according to the coverAreaMultiplier.
+-        coverRect.inflateX(m_visibleRect.width() * (m_coverAreaMultiplier - 1) / 2);
+-        coverRect.inflateY(m_visibleRect.height() * (m_coverAreaMultiplier - 1) / 2);
++        if (directionalCoverageEnabled()) {
++            // Spend the budget vertically (scroll direction), biased ahead of
++            // the last observed motion: 70% ahead / 30% behind, and only a
++            // quarter viewport of horizontal slack on each side. The keep
++            // rect stays symmetric at the maximum extent so a direction flip
++            // re-aims future painting but never evicts already-painted tiles.
++            coverRect.inflateX(m_visibleRect.width() / 4);
++            int extraY = m_visibleRect.height() * (m_coverAreaMultiplier - 1);
++            int aheadY = extraY * 7 / 10;
++            int behindY = extraY - aheadY;
++            if (m_lastScrollDirectionY < 0)
++                std::swap(aheadY, behindY);
++            else if (!m_lastScrollDirectionY)
++                aheadY = behindY = extraY / 2;
++            coverRect.setHeight(coverRect.height() + aheadY + behindY);
++            coverRect.setY(coverRect.y() - behindY);
++            keepRect = m_visibleRect;
++            keepRect.inflateX(m_visibleRect.width() / 4);
++            keepRect.inflateY(std::max(aheadY, behindY));
++            ASSERT(keepRect.contains(coverRect));
++            adjustForContentsRect(coverRect);
++            keepRect.unite(coverRect);
++            keepRect.inflateX(m_tileSize.width() / 2);
++            keepRect.inflateY(m_tileSize.height() / 2);
++            keepRect.intersect(m_contentsRect);
++            return { WTF::move(coverRect), WTF::move(keepRect) };
++        }
++        {
++            // The initial cover area covers equally in each direction, according to the coverAreaMultiplier.
++            coverRect.inflateX(m_visibleRect.width() * (m_coverAreaMultiplier - 1) / 2);
++            coverRect.inflateY(m_visibleRect.height() * (m_coverAreaMultiplier - 1) / 2);
++        }
+         keepRect = coverRect;
+         ASSERT(keepRect.contains(coverRect));
+     }
+diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h sq-B/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h
+@@ -27,6 +27,7 @@
+ #include <wtf/Assertions.h>
+ #include <wtf/HashMap.h>
+ #include <wtf/Lock.h>
++#include <wtf/MonotonicTime.h>
+ #include <wtf/TZoneMalloc.h>
+ #include <wtf/ThreadSafeRefCounted.h>
+ 
+@@ -126,6 +127,11 @@
+         IntPoint position;
+         IntRect rect;
+         IntRect dirtyRect;
++        // True when this tile was last rasterized at reduced resolution during a
++        // fling (low-res-during-scroll). Such a tile must only ever receive a
++        // whole-tile update next (so the compositor's fast-path swap replaces its
++        // low-res texture cleanly); it is repainted full-res once scrolling settles.
++        bool isLowRes { false };
+     };
+ 
+     CoordinatedBackingStoreProxy() = default;
+@@ -142,9 +148,26 @@
+     IntPoint tilePositionForPoint(const IntPoint&) const;
+     void forEachTilePositionInRect(const IntRect&, Function<void(IntPoint&&)>&&);
+ 
++    // Scroll-speed degradation ladder, held for a settle window after the last fast
++    // motion: None = full res, LowRes = paint exposed band at reduced resolution,
++    // Checkerboard = defer the band entirely (show background) until rest.
++    enum class ScrollTier : uint8_t { None, LowRes, Checkerboard };
++
+     float m_contentsScale { 1 };
+     IntSize m_tileSize;
+     float m_coverAreaMultiplier { 2 };
++    int m_lastScrollDirectionY { 0 };
++    int m_scrollAccumulatorY { 0 };
++    MonotonicTime m_lastScrollSampleTime;
++    MonotonicTime m_checkerboardHoldUntil;
++    ScrollTier m_scrollTier { ScrollTier::None };
++    // Cost trigger (WEBKIT_LOWRES_COST_TRIGGER): scale derived per pass from how
++    // far the pass's predicted raster work overshoots the frame budget, and the
++    // run of consecutive comfortably-under-budget passes seen since the tier last
++    // engaged (asymmetric hysteresis -- engage on one bad pass, disengage only
++    // after a run of good ones, because each disengage costs a full-res repaint).
++    float m_costLowResScale { 1.0f };
++    unsigned m_underBudgetPasses { 0 };
+     bool m_pendingTileCreation { false };
+     IntRect m_contentsRect;
+     IntRect m_visibleRect;
+diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp sq-B/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp
+@@ -75,14 +75,26 @@
+         }
+ #endif
+ 
++        // A whole-tile update may carry a reduced-resolution buffer (low-res tiles
++        // during scroll). The fast-path swap below requires the tile texture to match
++        // the incoming buffer's size, and paintToTextureMapper upscales the smaller
++        // texture to the full tile rect. Partial updates always keep a full-size tile
++        // texture, since the source sub-rect is copied into it 1:1.
++        bool wholeTileUpdate = update.sourceRect.size() == update.tileRect.size();
++        IntSize textureSize = wholeTileUpdate ? update.buffer->size() : update.tileRect.size();
++
+         WTFBeginSignpost(this, AcquireTexture);
+-        if (!m_texture || unscaledTileRect != m_rect) {
++        if (!m_texture || unscaledTileRect != m_rect || m_texture->size() != textureSize) {
+             m_rect = unscaledTileRect;
+-            m_texture = BitmapTexturePool::singleton().acquireTexture(update.tileRect.size(), flags);
++            m_texture = BitmapTexturePool::singleton().acquireTexture(textureSize, flags);
+         } else if (update.buffer->supportsAlpha() == m_texture->isOpaque())
+-            m_texture->reset(update.tileRect.size(), flags);
++            m_texture->reset(textureSize, flags);
+         WTFEndSignpost(this, AcquireTexture);
+ 
++        // The tile is low-res when its texture is smaller than its full device-pixel
++        // rect; paintToTextureMapper must then avoid the 1:1 damage-fragment fast path.
++        m_isLowRes = textureSize != update.tileRect.size();
++
+         update.buffer->waitUntilPaintingComplete();
+ 
+ #if USE(SKIA)
+@@ -107,7 +119,13 @@
+         WTFBeginSignpost(this, CopyTextureCPUToGPU);
+         ASSERT(!update.buffer->isBackedByOpenGL());
+         auto& buffer = static_cast<CoordinatedUnacceleratedTileBuffer&>(update.buffer.get());
+-        m_texture->updateContents(buffer.data(), update.sourceRect, update.bufferOffset, buffer.stride(), buffer.pixelFormat());
++        // A whole-tile low-res update carries a buffer smaller than the tile rect; the
++        // texture was acquired at the buffer's size above, so upload the whole buffer 1:1
++        // (update.sourceRect still has full-tile dimensions). Composite upscales it.
++        if (wholeTileUpdate && update.buffer->size() != update.sourceRect.size())
++            m_texture->updateContents(buffer.data(), IntRect(IntPoint::zero(), update.buffer->size()), IntPoint::zero(), buffer.stride(), buffer.pixelFormat());
++        else
++            m_texture->updateContents(buffer.data(), update.sourceRect, update.bufferOffset, buffer.stride(), buffer.pixelFormat());
+         WTFEndSignpost(this, CopyTextureCPUToGPU);
+ 
+         WTFEndSignpost(this, CoordinatedSwapBuffer);
+diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h sq-B/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h
+@@ -38,6 +38,10 @@
+     float scale() const { return m_scale; }
+     const FloatRect& rect() const { return m_rect; }
+ 
++    // True when the tile texture was rasterized at reduced resolution during scroll
++    // and is bilinear-upscaled to its full rect at composite time.
++    bool isLowRes() const { return m_isLowRes; }
++
+     struct Update {
+         Ref<CoordinatedTileBuffer> buffer;
+         IntRect sourceRect;
+@@ -55,6 +59,7 @@
+     Vector<Update> m_updates;
+     float m_scale { 1. };
+     FloatRect m_rect;
++    bool m_isLowRes { false };
+ };
+ 
+ } // namespace WebCore
+diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp sq-B/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp
+@@ -844,12 +844,13 @@
+         m_client->didPaintTile();
+ }
+ 
+-Ref<CoordinatedTileBuffer> CoordinatedPlatformLayer::paint(const IntRect& dirtyRect)
++Ref<CoordinatedTileBuffer> CoordinatedPlatformLayer::paint(const IntRect& dirtyRect, float lowResScale)
+ {
+     ASSERT(m_lock.isHeld());
+     ASSERT(m_client);
+     ASSERT(m_owner);
+ #if USE(CAIRO)
++    UNUSED_PARAM(lowResScale);
+     FloatRect scaledDirtyRect(dirtyRect);
+     scaledDirtyRect.scale(1 / m_contentsScale);
+ 
+@@ -859,7 +860,7 @@
+ #elif USE(SKIA)
+     auto& paintingEngine = m_client->paintingEngine();
+     ASSERT(!paintingEngine.useThreadedRendering());
+-    return paintingEngine.paint(*m_owner, dirtyRect, m_contentsOpaque, m_contentsScale);
++    return paintingEngine.paint(*m_owner, dirtyRect, m_contentsOpaque, m_contentsScale, lowResScale);
+ #endif
+ }
+ 
+@@ -874,7 +875,7 @@
+     return paintingEngine.record(*m_owner, recordRect, m_contentsOpaque, m_contentsScale);
+ }
+ 
+-Ref<CoordinatedTileBuffer> CoordinatedPlatformLayer::replay(const RefPtr<SkiaRecordingResult>& recording, const IntRect& dirtyRect)
++Ref<CoordinatedTileBuffer> CoordinatedPlatformLayer::replay(const RefPtr<SkiaRecordingResult>& recording, const IntRect& dirtyRect, float lowResScale)
+ {
+     ASSERT(m_lock.isHeld());
+     ASSERT(m_client);
+@@ -882,7 +883,7 @@
+     ASSERT(recording);
+     auto& paintingEngine = m_client->paintingEngine();
+     ASSERT(paintingEngine.useThreadedRendering());
+-    return paintingEngine.replay(*m_owner, recording, dirtyRect);
++    return paintingEngine.replay(*m_owner, recording, dirtyRect, lowResScale);
+ }
+ #endif
+ 
+diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.h sq-B/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.h
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.h
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.h
+@@ -187,10 +187,10 @@
+     RunLoop* compositingRunLoop() const;
+     int maxTextureSize() const;
+ 
+-    Ref<CoordinatedTileBuffer> paint(const IntRect&);
++    Ref<CoordinatedTileBuffer> paint(const IntRect&, float lowResScale = 1.0f);
+ #if USE(SKIA)
+     Ref<SkiaRecordingResult> record(const IntRect&);
+-    Ref<CoordinatedTileBuffer> replay(const RefPtr<SkiaRecordingResult>&, const IntRect&);
++    Ref<CoordinatedTileBuffer> replay(const RefPtr<SkiaRecordingResult>&, const IntRect&, float lowResScale = 1.0f);
+ #endif
+     void willPaintTile();
+     void didPaintTile();
+diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp sq-B/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp
+@@ -36,6 +36,8 @@
+ #include <WebCore/Region.h>
+ #include <WebCore/ShareableBitmap.h>
+ #include <array>
++#include <cstdlib>
++#include <cstring>
+ #include <fcntl.h>
+ #include <unistd.h>
+ #include <wtf/SafeStrerror.h>
+@@ -1046,6 +1048,30 @@
+         glViewport(0, 0, size.width(), size.height());
+ }
+ 
++// True when aggressive checkerboarding (WEBKIT_CHECKERBOARD_DURING_SCROLL) is
++// enabled. See CoordinatedBackingStoreProxy: during a fast fling the backing store
++// deliberately leaves the newly-exposed viewport region untiled so it "shows the
++// page background". But CoordinatedBackingStore::paintToTextureMapper only paints
++// the tiles that exist -- nothing fills the gap. The page background is put there
++// solely by the clear() below, which for an opaque page upstream restricts to
++// AsyncScrolling composites. The checkerboard hold, however, also recomposites via
++// RenderingUpdate (m_pendingTileCreation -> isWaitingForTiles -> the settle tail),
++// and on those frames the opaque-background clear was skipped -- so the recycled
++// swap-chain target showed stale prior-frame content in the gap, i.e. the "glitch"
++// instead of a clean background. When checkerboarding is on we therefore clear the
++// opaque background on every composite too. The clear is scissored to the current
++// repaint/damage region (TextureMapper keeps GL_SCISSOR_TEST enabled and the clip
++// stack constrains the box), so it never erases undamaged tiles; the only cost is a
++// fullscreen clear while actively scrolling, which already happened via AsyncScrolling.
++static bool checkerboardClearsOpaqueBackground()
++{
++    static bool enabled = [] {
++        const char* env = getenv("WEBKIT_CHECKERBOARD_DURING_SCROLL");
++        return env && *env && strcmp(env, "0");
++    }();
++    return enabled;
++}
++
+ void AcceleratedSurface::clear(const OptionSet<WebCore::CompositionReason>& reasons)
+ {
+     ASSERT(!RunLoop::isMain());
+@@ -1053,7 +1079,7 @@
+     if (!isColorOpaque(backgroundColor)) {
+         glClearColor(0, 0, 0, 0);
+         glClear(GL_COLOR_BUFFER_BIT);
+-    } else if (reasons.contains(CompositionReason::AsyncScrolling)) {
++    } else if (checkerboardClearsOpaqueBackground() || reasons.contains(CompositionReason::AsyncScrolling)) {
+         auto [r, g, b, a] = backgroundColor;
+         glClearColor(r, g, b, a);
+         glClear(GL_COLOR_BUFFER_BIT);

@@ -1,0 +1,230 @@
+# Header self-sufficiency / compile fixes for WebCore.
+# Merged from 11 patches: webkit-quirks-no-video,
+# webkit-webcore-user-message-handlers-platform,
+# webkit-webcore-colorconversion-export-macros,
+# webkit-webcore-webkitnamespace-platform, webkit-webcore-avif-platform,
+# webkit-webcore-avif-reader-platform, webkit-webcore-context-export-macros,
+# webkit-webcore-bitmaptexturepool-owners, webkit-webcore-texmap-owner-headers,
+# webkit-renderbox-isnan, webkit-shapeoutside-isnan.
+#
+# Same class as the WTF/PAL and JSC portability patches (Platform.h /
+# PlatformExportMacros.h / <cmath> ownership), plus two shape fixes that belong
+# with them: `isnan` -> `std::isnan` with an explicit <cmath>, and an
+# ENABLE(VIDEO) guard around the HTMLVideoElement include in Quirks.cpp for
+# video-less configurations. Behaviour-neutral.
+#
+# ---
+diff -ruN wc-A/Source/WebCore/dom/ContextDestructionObserver.h wc-B/Source/WebCore/dom/ContextDestructionObserver.h
+--- a/Source/WebCore/dom/ContextDestructionObserver.h
++++ b/Source/WebCore/dom/ContextDestructionObserver.h
+@@ -26,6 +26,7 @@
+ 
+ #pragma once
+ 
++#include <WebCore/PlatformExportMacros.h>
+ #include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
+ #include <wtf/Forward.h>
+ #include <wtf/WeakPtr.h>
+diff -ruN wc-A/Source/WebCore/page/Quirks.cpp wc-B/Source/WebCore/page/Quirks.cpp
+--- a/Source/WebCore/page/Quirks.cpp
++++ b/Source/WebCore/page/Quirks.cpp
+@@ -52,7 +52,9 @@
+ #include "HTMLObjectElement.h"
+ #include "HTMLScriptElement.h"
+ #include "HTMLTextAreaElement.h"
++#if ENABLE(VIDEO)
+ #include "HTMLVideoElement.h"
++#endif
+ #include "JSEventListener.h"
+ #include "KeyframeEffect.h"
+ #include "LayoutUnit.h"
+diff -ruN wc-A/Source/WebCore/page/UserMessageHandlersNamespace.h wc-B/Source/WebCore/page/UserMessageHandlersNamespace.h
+--- a/Source/WebCore/page/UserMessageHandlersNamespace.h
++++ b/Source/WebCore/page/UserMessageHandlersNamespace.h
+@@ -25,6 +25,8 @@
+ 
+ #pragma once
+ 
++#include <wtf/Platform.h>
++
+ #if ENABLE(USER_MESSAGE_HANDLERS)
+ 
+ #include <WebCore/FrameDestructionObserver.h>
+diff -ruN wc-A/Source/WebCore/page/WebKitNamespace.h wc-B/Source/WebCore/page/WebKitNamespace.h
+--- a/Source/WebCore/page/WebKitNamespace.h
++++ b/Source/WebCore/page/WebKitNamespace.h
+@@ -25,6 +25,8 @@
+ 
+ #pragma once
+ 
++#include <wtf/Platform.h>
++
+ #if ENABLE(USER_MESSAGE_HANDLERS)
+ 
+ #include "LocalDOMWindowProperty.h"
+diff -ruN wc-A/Source/WebCore/platform/graphics/ColorConversion.h wc-B/Source/WebCore/platform/graphics/ColorConversion.h
+--- a/Source/WebCore/platform/graphics/ColorConversion.h
++++ b/Source/WebCore/platform/graphics/ColorConversion.h
+@@ -26,6 +26,7 @@
+ #pragma once
+ 
+ #include <WebCore/ColorTypes.h>
++#include <WebCore/PlatformExportMacros.h>
+ #include <numeric>
+ #include <wtf/MathExtras.h>
+ 
+diff -ruN wc-A/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h wc-B/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h
+--- a/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h
++++ b/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h
+@@ -26,6 +26,9 @@
+ 
+ #pragma once
+ 
++#include <wtf/Platform.h>
++#include <WebCore/PlatformExportMacros.h>
++
+ #if USE(TEXTURE_MAPPER)
+ 
+ #include "BitmapTexture.h"
+diff -ruN wc-A/Source/WebCore/platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.h wc-B/Source/WebCore/platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.h
+--- a/Source/WebCore/platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.h
++++ b/Source/WebCore/platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.h
+@@ -23,6 +23,9 @@
+  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  */
+ 
++#include <WebCore/PlatformExportMacros.h>
++#include <wtf/Platform.h>
++
+ #pragma once
+ 
+ #if ENABLE(WEBGL) && USE(TEXTURE_MAPPER)
+diff -ruN wc-A/Source/WebCore/platform/graphics/texmap/TextureMapperAnimation.h wc-B/Source/WebCore/platform/graphics/texmap/TextureMapperAnimation.h
+--- a/Source/WebCore/platform/graphics/texmap/TextureMapperAnimation.h
++++ b/Source/WebCore/platform/graphics/texmap/TextureMapperAnimation.h
+@@ -17,6 +17,9 @@
+  * Boston, MA 02110-1301, USA.
+  */
+ 
++#include <WebCore/PlatformExportMacros.h>
++#include <wtf/Platform.h>
++
+ #pragma once
+ 
+ #if USE(TEXTURE_MAPPER)
+diff -ruN wc-A/Source/WebCore/platform/graphics/texmap/TextureMapperDamageVisualizer.h wc-B/Source/WebCore/platform/graphics/texmap/TextureMapperDamageVisualizer.h
+--- a/Source/WebCore/platform/graphics/texmap/TextureMapperDamageVisualizer.h
++++ b/Source/WebCore/platform/graphics/texmap/TextureMapperDamageVisualizer.h
+@@ -23,6 +23,8 @@
+  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  */
+ 
++#include <wtf/Platform.h>
++
+ #pragma once
+ 
+ #if ENABLE(DAMAGE_TRACKING)
+diff -ruN wc-A/Source/WebCore/platform/graphics/texmap/TextureMapper.h wc-B/Source/WebCore/platform/graphics/texmap/TextureMapper.h
+--- a/Source/WebCore/platform/graphics/texmap/TextureMapper.h
++++ b/Source/WebCore/platform/graphics/texmap/TextureMapper.h
+@@ -17,6 +17,9 @@
+  Boston, MA 02110-1301, USA.
+  */
+ 
++#include <WebCore/PlatformExportMacros.h>
++#include <wtf/Platform.h>
++
+ #pragma once
+ 
+ #if USE(TEXTURE_MAPPER)
+diff -ruN wc-A/Source/WebCore/platform/graphics/texmap/TextureMapperPlatformLayer.h wc-B/Source/WebCore/platform/graphics/texmap/TextureMapperPlatformLayer.h
+--- a/Source/WebCore/platform/graphics/texmap/TextureMapperPlatformLayer.h
++++ b/Source/WebCore/platform/graphics/texmap/TextureMapperPlatformLayer.h
+@@ -17,6 +17,9 @@
+     Boston, MA 02110-1301, USA.
+ */
+ 
++#include <WebCore/PlatformExportMacros.h>
++#include <wtf/Platform.h>
++
+ #pragma once
+ 
+ #if USE(TEXTURE_MAPPER)
+diff -ruN wc-A/Source/WebCore/platform/image-decoders/avif/AVIFImageDecoder.cpp wc-B/Source/WebCore/platform/image-decoders/avif/AVIFImageDecoder.cpp
+--- a/Source/WebCore/platform/image-decoders/avif/AVIFImageDecoder.cpp
++++ b/Source/WebCore/platform/image-decoders/avif/AVIFImageDecoder.cpp
+@@ -24,6 +24,7 @@
+  */
+ 
+ #include "config.h"
++#include <wtf/Platform.h>
+ 
+ #if USE(AVIF)
+ 
+diff -ruN wc-A/Source/WebCore/platform/image-decoders/avif/AVIFImageReader.cpp wc-B/Source/WebCore/platform/image-decoders/avif/AVIFImageReader.cpp
+--- a/Source/WebCore/platform/image-decoders/avif/AVIFImageReader.cpp
++++ b/Source/WebCore/platform/image-decoders/avif/AVIFImageReader.cpp
+@@ -25,6 +25,7 @@
+  */
+ 
+ #include "config.h"
++#include <wtf/Platform.h>
+ 
+ #if USE(AVIF)
+ 
+diff -ruN wc-A/Source/WebCore/platform/ScrollAnimationKeyboard.cpp wc-B/Source/WebCore/platform/ScrollAnimationKeyboard.cpp
+--- a/Source/WebCore/platform/ScrollAnimationKeyboard.cpp
++++ b/Source/WebCore/platform/ScrollAnimationKeyboard.cpp
+@@ -135,8 +135,8 @@
+     // x = sqrt(v^2 * m / k)
+     auto displacementMagnitudeSquared = (m_velocity * m_velocity).scaled(params.springMass / params.springStiffness);
+     FloatPoint displacement = {
+-        std::copysign(sqrt(displacementMagnitudeSquared.width()), m_velocity.width()),
+-        std::copysign(sqrt(displacementMagnitudeSquared.height()), m_velocity.height())
++        (float)std::copysign(sqrt(displacementMagnitudeSquared.width()), m_velocity.width()),
++        (float)std::copysign(sqrt(displacementMagnitudeSquared.height()), m_velocity.height())
+     };
+ 
+     // If the spring would settle before the minimum travel distance
+diff -ruN wc-A/Source/WebCore/rendering/RenderBox.h wc-B/Source/WebCore/rendering/RenderBox.h
+--- a/Source/WebCore/rendering/RenderBox.h
++++ b/Source/WebCore/rendering/RenderBox.h
+@@ -35,6 +35,8 @@
+ #include <WebCore/StyleUnevaluatedCalculation.h>
+ #include <wtf/TypeCasts.h>
+ 
++#include <cmath>
++
+ namespace WebCore {
+ 
+ class LayoutRoundedRectRadii;
+@@ -699,7 +701,7 @@
+ 
+     void computePreferredLogicalWidths(const Style::MinimumSize& minLogicalWidth, const Style::MaximumSize& maxLogicalWidth, LayoutUnit borderAndPaddingLogicalWidth);
+ 
+-    bool isAspectRatioDegenerate(double aspectRatio) const { return !aspectRatio || isnan(aspectRatio); }
++    bool isAspectRatioDegenerate(double aspectRatio) const { return !aspectRatio || std::isnan(aspectRatio); }
+ 
+     bool overflowChangesMayAffectLayout() const final;
+ 
+diff -ruN wc-A/Source/WebCore/rendering/shapes/ShapeOutsideInfo.cpp wc-B/Source/WebCore/rendering/shapes/ShapeOutsideInfo.cpp
+--- a/Source/WebCore/rendering/shapes/ShapeOutsideInfo.cpp
++++ b/Source/WebCore/rendering/shapes/ShapeOutsideInfo.cpp
+@@ -38,6 +38,8 @@
+ #include "RenderBoxModelObjectInlines.h"
+ #include "RenderFragmentContainer.h"
+ #include "RenderImage.h"
++
++#include <cmath>
+ #include "RenderView.h"
+ #include <JavaScriptCore/ConsoleTypes.h>
+ #include <wtf/TZoneMallocInlines.h>
+@@ -257,7 +259,7 @@
+ 
+     auto logicalMargin = [&] {
+         auto shapeMargin = Style::evaluate<LayoutUnit>(style.shapeMargin(), containingBlock.contentBoxLogicalWidth(), Style::ZoomNeeded { }).toFloat();
+-        return isnan(shapeMargin) ? 0.0f : shapeMargin;
++        return std::isnan(shapeMargin) ? 0.0f : shapeMargin;
+     }();
+ 
+     return WTF::switchOn(shapeOutside,

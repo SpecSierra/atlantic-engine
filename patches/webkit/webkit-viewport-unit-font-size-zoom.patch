@@ -1,3 +1,18 @@
+#  webkit-viewport-unit-font-size-zoom.patch: fix font-size resolved from
+#  viewport (vw/vh/...) or container (cqw/cqi/...) percentage units coming
+#  out deviceScaleFactor times too large — db.no and vg.no headlines
+#  overflowing the viewport while every non-text box on the page was
+#  correct. The 3x UI scale is page zoom, so both the viewport size and a
+#  query container's contentBox are in device px; ordinary lengths skip the
+#  "* zoom" step and stay correct, but a font-size stores a *specified*
+#  (unzoomed) value that computedFontSizeFromSpecifiedSize() multiplies by
+#  usedZoom later — so these units got zoomed twice. DEFAULT ON since 630,
+#  after an interleaved on-device A/B on 629 (all five affected units
+#  3.00x -> 1.00x, dagbladet headline 164.12 -> 54.71px, every length/px/rem
+#  control unchanged). WEBKIT_FONT_SIZE_UNIT_UNZOOM=0 restores the old
+#  double-zoomed behaviour.
+#
+# ---
 Unzoom viewport- and container-percentage units when resolving font-size
 (DEFAULT ON; WEBKIT_FONT_SIZE_UNIT_UNZOOM=0 restores the old behaviour).
 

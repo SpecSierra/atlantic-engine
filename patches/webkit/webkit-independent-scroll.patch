@@ -1,0 +1,542 @@
+# Scrolling off the main thread (the APZ bargain), in four dependent parts.
+# Merged from: webkit-force-async-scroll-env, webkit-independent-scroll-env,
+# webkit-scrolling-thread-display-link-env, webkit-scrolling-thread-tick-env.
+# Shipped default ON since build 540.
+#
+# None of the four does anything useful without the others, and all four are
+# device-root-caused on franceinfo:
+#
+#  1. WEBKIT_FORCE_ASYNC_SCROLL — the page's non-composited fixed/sticky
+#     elements set SynchronousScrollingReason::HasNonLayerViewportConstrained-
+#     Objects, which forbids the scrolling thread from applying layer positions
+#     (canUpdateLayersOnScrollingThread false): ZERO async-scroll composites,
+#     every visible scroll frame waits for a full ~1 s main-thread rendering
+#     update = the 1 fps notch-by-notch scroll. gdb-proven, composites:updates
+#     24:23 stock vs 23:6 after neutralizing the 28 fixed/sticky elements via
+#     JS. The flag drops the slow-repaint reasons at the single
+#     AsyncScrollingCoordinator::setSynchronousScrollingReasons choke point.
+#  2. WEBKIT_INDEPENDENT_SCROLL — upstream is a *conditional* desync: on every
+#     display refresh the scrolling thread blocks on m_stateCondition for up to
+#     half a frame waiting for the main thread's rendering update, and only on
+#     timeout may it write scroll offsets into the compositor scene itself. So
+#     every scroll frame pays a main-thread latency tax and a merely-slow main
+#     thread drags scrolling with it. This makes the existing off-main-thread
+#     path the default: apply layer positions + request an AsyncScrolling
+#     composite on EVERY refresh, stop round-tripping willStartRenderingUpdate
+#     through the scrolling thread, and stop letting sync-scrolling reasons veto
+#     canUpdateLayersOnScrollingThread. Nothing in the compositor needs the main
+#     thread to recomposite a committed scene.
+#  3. The display-link half, which is what makes (2) actually do anything: the
+#     scrolling thread's only heartbeat was owned by the main thread. The only
+#     display-link observer ever registered on WPE is the main thread's
+#     WebDisplayRefreshMonitor (EventDispatcher::startDisplayDidRefreshCallbacks
+#     exists but is called only by MomentumEventDispatcher, not ENABLE()d for
+#     WPE), DisplayRefreshMonitor drops ticks while !isPreviousFrameDone() and
+#     stops the mechanism after ONE unscheduled fire, and
+#     DisplayLink::notifyObserversDisplayDidRefresh skips clients with an empty
+#     observer list. A stalled main thread therefore killed the display link and
+#     with it the scrolling thread's tick (device-measured 59/59 sched calls;
+#     scroll composites 7.3/s, scrollapply ~11/s instead of 60, 1.3 s gaps,
+#     compositor ~84% idle). The vblank source was fine — it is the observer
+#     bookkeeping that dies. EventDispatcher now holds its own observer while
+#     the scrolling tree reports hasRecentActivity().
+#  4. Its own tick, because (3) still was not enough: with 1-3 in place and a
+#     verified-clean single-instance foreground rig, the scrolling thread ticked
+#     ~5/s and requested AsyncScrolling composites ~3/s instead of 60, and a
+#     10 s freeze contained exactly ONE scrollapply. Forcing a free-running 60 Hz
+#     vblank (WEBKIT_FORCE_VBLANK_TIMER=1) made it worse (5.2/s, applies moved
+#     back to the main thread), which rules out the clock source. So while a
+#     scroll is live, a plain repeating timer (WEBKIT_INDEPENDENT_SCROLL_TICK_MS,
+#     default 16) on the scrolling thread's own run loop drives
+#     displayDidRefreshOnScrollingThread() — no display link, no IPC routing, no
+#     main thread. Armed from scrollingTreeNodeDidScroll, disarms when
+#     hasRecentActivity() goes false, so an idle page costs nothing and a fling
+#     is self-sustaining. Sets the pace of scroll OFFSETS; the compositor still
+#     throttles on frameComplete.
+#
+# Lossy, the same bargain as Gecko APZ: scroll-linked JS and `scroll` events fire
+# at main-thread cadence, and newly-exposed content is painted only once the main
+# thread runs (more low-res/checkerboard on slow pages instead of a freeze) —
+# pairs with webkit-scroll-degradation. Unset/0 = stock throughout.
+#
+# ---
+diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/AsyncScrollingCoordinator.cpp sq-B/Source/WebCore/page/scrolling/AsyncScrollingCoordinator.cpp
+--- a/Source/WebCore/page/scrolling/AsyncScrollingCoordinator.cpp
++++ b/Source/WebCore/page/scrolling/AsyncScrollingCoordinator.cpp
+@@ -58,6 +58,8 @@
+ #include "Settings.h"
+ #include "WheelEventTestMonitor.h"
+ #include "pal/HysteresisActivity.h"
++#include <cstdlib>
++#include <cstring>
+ #include <wtf/ProcessID.h>
+ #include <wtf/SystemTracing.h>
+ #include <wtf/TZoneMallocInlines.h>
+@@ -1211,12 +1213,36 @@
+         ASSERT_NOT_REACHED();
+ }
+ 
++// WEBKIT_FORCE_ASYNC_SCROLL: never fall back to main-thread ("synchronous")
++// scrolling because of slow-repaint content. Pages with a non-composited
++// position:fixed/sticky element (HasNonLayerViewportConstrainedObjects) or
++// slow-repaint objects like background-attachment:fixed (HasSlowRepaintObjects)
++// normally force EVERY scroll frame to wait for a full main-thread rendering
++// update; on main-thread-bound pages (franceinfo: ~1s per update) that means
++// scrolling at ~1fps. With this set, those reasons are ignored so the scrolling
++// thread keeps applying layer positions and compositing at full rate.
++// Deliberately lossy: the affected fixed/sticky elements are repositioned only
++// at main-thread cadence (they visibly lag/jitter during the scroll), and fixed
++// backgrounds can shift. Structural reasons (ForcedOnMainThread, IsImageDocument,
++// HasViewportConstrainedObjectsWithoutSupportingFixedLayers) are preserved.
++static bool forceAsyncScrollEnabled()
++{
++    static bool enabled = [] {
++        const char* env = getenv("WEBKIT_FORCE_ASYNC_SCROLL");
++        return env && *env && strcmp(env, "0");
++    }();
++    return enabled;
++}
++
+ void AsyncScrollingCoordinator::setSynchronousScrollingReasons(std::optional<ScrollingNodeID> nodeID, OptionSet<SynchronousScrollingReason> reasons)
+ {
+     RefPtr scrollingStateNode = dynamicDowncast<ScrollingStateScrollingNode>(stateNodeForNodeID(nodeID));
+     if (!scrollingStateNode)
+         return;
+ 
++    if (forceAsyncScrollEnabled())
++        reasons.remove({ SynchronousScrollingReason::HasSlowRepaintObjects, SynchronousScrollingReason::HasNonLayerViewportConstrainedObjects });
++
+     if (reasons && is<ScrollingStateFrameScrollingNode>(*scrollingStateNode)) {
+         // The LocalFrameView's GraphicsLayer is likely to be out-of-synch with the PlatformLayer
+         // at this point. So we'll update it before we switch back to main thread scrolling
+diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/ThreadedScrollingTree.cpp sq-B/Source/WebCore/page/scrolling/ThreadedScrollingTree.cpp
+--- a/Source/WebCore/page/scrolling/ThreadedScrollingTree.cpp
++++ b/Source/WebCore/page/scrolling/ThreadedScrollingTree.cpp
+@@ -37,6 +37,8 @@
+ #include "ScrollingTreeNode.h"
+ #include "ScrollingTreeOverflowScrollProxyNode.h"
+ #include "ScrollingTreeScrollingNode.h"
++#include <cstdlib>
++#include <cstring>
+ #include <wtf/RunLoop.h>
+ #include <wtf/SetForScope.h>
+ #include <wtf/SystemTracing.h>
+@@ -234,8 +236,52 @@
+     }
+ }
+ 
++// WEBKIT_INDEPENDENT_SCROLL: fully separate scrolling from the main-thread
++// rendering update, the way Gecko/APZ (and the EmbedLite port) do it.
++//
++// Upstream's design is a *conditional* desync: on every display refresh the
++// scrolling thread blocks on m_stateCondition for up to half a frame waiting for
++// the main thread to finish its rendering update, and only when that times out is
++// it allowed to write scroll offsets into the compositor scene itself
++// (SynchronizationState::Desynchronized). So every single scroll frame pays a
++// main-thread latency tax, and a main thread that is merely slow -- not stuck --
++// still drags the scroll with it.
++//
++// The machinery to scroll without the main thread already exists and is exercised
++// (that Desynchronized path); this flag simply makes it the default rather than a
++// timeout fallback:
++//   1. the scrolling thread applies layer positions + requests an AsyncScrolling
++//      composite on EVERY refresh, regardless of the synchronization state;
++//   2. willStartRenderingUpdate() no longer round-trips through the scrolling
++//      thread (main thread stops blocking on a BinarySemaphore, scrolling thread
++//      stops waiting on m_stateCondition);
++//   3. synchronous-scrolling reasons no longer veto scrolling-thread layer
++//      updates -- WEBKIT_FORCE_ASYNC_SCROLL already accepts that trade-off for
++//      the dispatch path, and vetoing here is inconsistent with it.
++//
++// Nothing in the compositor needs the main thread to recomposite an already
++// committed scene: requestComposition(AsyncScrolling) reaches renderLayerTree with
++// no main-thread involvement, and m_isWaitingForRenderer only gates composites
++// whose reason is RenderingUpdate.
++//
++// Deliberately lossy, same bargain as APZ: scroll-linked JS and `scroll` events
++// fire at main-thread cadence rather than per frame, and content newly scrolled
++// into view is only painted once the main thread runs, so a slow page shows more
++// low-res/checkerboard tiles while scrolling instead of freezing.
++static bool independentScrollEnabled()
++{
++    static bool enabled = [] {
++        const char* env = getenv("WEBKIT_INDEPENDENT_SCROLL");
++        return env && *env && strcmp(env, "0");
++    }();
++    return enabled;
++}
++
+ bool ThreadedScrollingTree::canUpdateLayersOnScrollingThread() const
+ {
++    if (independentScrollEnabled())
++        return true;
++
+     return !m_hasNodesWithSynchronousScrollingReasons;
+ }
+ 
+@@ -264,6 +310,11 @@
+ 
+     LOG_WITH_STREAM(Scrolling, stream << "ThreadedScrollingTree::scrollingTreeNodeDidScroll " << node.scrollingNodeID() << " to " << scrollPosition << " triggering main thread rendering update");
+ 
++    // Independent scrolling: we are on the scrolling thread and actually
++    // scrolling, so make sure our own tick is running (see ensureIndependentTick).
++    if (independentScrollEnabled() && ScrollingThread::isCurrentThread())
++        ensureIndependentTick();
++
+     addPendingScrollUpdate(WTF::move(scrollUpdate));
+ 
+     auto deferrer = ScrollingTreeWheelEventTestMonitorCompletionDeferrer { *this, node.scrollingNodeID(), WheelEventTestMonitor::DeferReason::ScrollingThreadSyncNeeded };
+@@ -404,6 +455,16 @@
+     if (!hasRecentActivity())
+         return;
+ 
++    // Independent scrolling: the scrolling thread commits layer positions on its
++    // own refresh tick, so there is nothing to synchronize with -- skip the
++    // semaphore hop and the half-frame m_stateCondition wait entirely. The state
++    // is still tracked so renderingUpdateComplete() stays coherent.
++    if (independentScrollEnabled()) {
++        Locker locker { m_treeLock };
++        m_state = SynchronizationState::InRenderingUpdate;
++        return;
++    }
++
+     tracePoint(ScrollingThreadRenderUpdateSyncStart);
+ 
+     // Wait for the scrolling thread to acquire m_treeLock. This ensures that any pending wheel events are processed.
+@@ -508,6 +569,83 @@
+     m_state = SynchronizationState::Desynchronized;
+ }
+ 
++// WEBKIT_INDEPENDENT_SCROLL: give the scrolling thread a tick of its own.
++//
++// displayDidRefreshOnScrollingThread() -- which services scroll animations,
++// commits layer positions and requests the AsyncScrolling composite -- is the
++// scrolling thread's whole heartbeat, and everything that delivers it is owned by
++// somebody else:
++//
++//   - the tick only reaches EventDispatcher when the UIProcess has decided the
++//     client wants full-speed updates (DisplayLinkProcessProxyClient), which it
++//     derives from wheel-event hysteresis in WebPageProxy;
++//   - the display link's only observer is normally the main thread's
++//     WebDisplayRefreshMonitor, which stops it after one unscheduled fire;
++//   - ScrollingTree::displayDidRefresh() then drops the tick entirely unless
++//     hasRecentActivity().
++//
++// Device-measured on franceinfo, with both the scheduling patch and an
++// EventDispatcher-owned display-link observer in place: the scrolling thread still
++// only ticked ~5-19/s instead of 60, AsyncScrolling composites were requested
++// ~10/s, and a 10s freeze contained exactly ONE scrollapply -- during a fling,
++// when no input is needed and the scroll should be pure animation, the ticks dry
++// up. Forcing a free-running 60Hz vblank (WEBKIT_FORCE_VBLANK_TIMER=1) made it
++// worse (5.2/s, and layer positions went back to being applied on the main
++// thread), which rules the clock source out: the problem is that the scrolling
++// thread has to be *given* a tick by machinery the main thread and UIProcess
++// gate.
++//
++// So stop asking. While a scroll is live, run a plain repeating timer on the
++// scrolling thread's own run loop and drive displayDidRefreshOnScrollingThread()
++// from it. No display link, no IPC routing, no main thread. The timer is armed
++// whenever the scrolling thread actually scrolls (scrollingTreeNodeDidScroll) and
++// disarms itself once hasRecentActivity() goes false (no wheel event within 50ms
++// and no running scroll animation), so an idle page costs nothing. A fling is
++// self-sustaining: each tick services the animation, which scrolls, which re-arms.
++//
++// Deliberately not vsync-aligned -- the compositor still throttles itself on
++// frameComplete, so this sets the pace of scroll offsets, not of buffer swaps.
++// WEBKIT_INDEPENDENT_SCROLL_TICK_MS overrides the interval (default 16ms).
++static Seconds independentTickInterval()
++{
++    static double ms = [] {
++        if (const char* env = getenv("WEBKIT_INDEPENDENT_SCROLL_TICK_MS")) {
++            double v = atof(env);
++            if (v >= 1 && v <= 100)
++                return v;
++        }
++        return 16.0;
++    }();
++    return Seconds::fromMilliseconds(ms);
++}
++
++void ThreadedScrollingTree::ensureIndependentTick()
++{
++    ASSERT(ScrollingThread::isCurrentThread());
++
++    if (!m_independentTickTimer) {
++        m_independentTickTimer = makeUnique<RunLoop::Timer>(RunLoop::currentSingleton(), "ThreadedScrollingTree::IndependentTickTimer"_s, this, &ThreadedScrollingTree::independentTickFired);
++    }
++
++    if (!m_independentTickTimer->isActive())
++        m_independentTickTimer->startRepeating(independentTickInterval());
++}
++
++void ThreadedScrollingTree::independentTickFired()
++{
++    ASSERT(ScrollingThread::isCurrentThread());
++
++    // Disarm once the gesture and any fling have finished. Never delete the timer
++    // from inside its own callback -- just stop it and let ensureIndependentTick()
++    // restart it on the next scroll.
++    if (!hasRecentActivity()) {
++        m_independentTickTimer->stop();
++        return;
++    }
++
++    displayDidRefreshOnScrollingThread();
++}
++
+ void ThreadedScrollingTree::displayDidRefreshOnScrollingThread()
+ {
+     TraceScope tracingScope(ScrollingThreadDisplayDidRefreshStart, ScrollingThreadDisplayDidRefreshEnd, displayID());
+@@ -519,7 +657,11 @@
+     m_lastDisplayDidRefreshTime = now;
+     serviceScrollAnimations(now);
+ 
+-    if (m_state != SynchronizationState::Idle && canUpdateLayersOnScrollingThread())
++    // Independent scrolling: commit the latest scroll offsets into the compositor
++    // scene every refresh, even while Idle. Upstream skips Idle because it expects
++    // the main thread's rendering update to do the commit; with the handshake gone
++    // (willStartRenderingUpdate above) nobody else would.
++    if ((m_state != SynchronizationState::Idle || independentScrollEnabled()) && canUpdateLayersOnScrollingThread())
+         applyLayerPositionsInternal();
+ 
+     switch (m_state) {
+diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/ThreadedScrollingTree.h sq-B/Source/WebCore/page/scrolling/ThreadedScrollingTree.h
+--- a/Source/WebCore/page/scrolling/ThreadedScrollingTree.h
++++ b/Source/WebCore/page/scrolling/ThreadedScrollingTree.h
+@@ -108,6 +108,11 @@
+     void didCommitTreeOnScrollingThread() WTF_REQUIRES_LOCK(m_treeLock);
+ 
+     void displayDidRefreshOnScrollingThread();
++
++    // WEBKIT_INDEPENDENT_SCROLL: scrolling-thread-owned tick. See the comment on
++    // ensureIndependentTick() in the implementation.
++    void ensureIndependentTick();
++    void independentTickFired();
+     void waitForRenderingUpdateCompletionOrTimeout() WTF_REQUIRES_LOCK(m_treeLock);
+ 
+     bool canUpdateLayersOnScrollingThread() const WTF_REQUIRES_LOCK(m_treeLock);
+@@ -145,6 +150,9 @@
+ 
+     // Dynamically allocated because it has to use the ScrollingThread's runloop.
+     std::unique_ptr<RunLoop::Timer> m_delayedRenderingUpdateDetectionTimer WTF_GUARDED_BY_LOCK(m_treeLock);
++    // WEBKIT_INDEPENDENT_SCROLL: created, started, stopped and fired only on the
++    // scrolling thread (its own run loop), so it needs no lock.
++    std::unique_ptr<RunLoop::Timer> m_independentTickTimer;
+ 
+     HashMap<ScrollingNodeID, RequestedScrollData> m_nodesWithPendingScrollAnimations WTF_GUARDED_BY_LOCK(m_treeLock);
+     HashMap<ScrollingNodeID, RequestedKeyboardScrollData> m_nodesWithPendingKeyboardScrollAnimations WTF_GUARDED_BY_LOCK(m_treeLock);
+diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/EventDispatcher.cpp sq-B/Source/WebKit/WebProcess/WebPage/EventDispatcher.cpp
+--- a/Source/WebKit/WebProcess/WebPage/EventDispatcher.cpp
++++ b/Source/WebKit/WebProcess/WebPage/EventDispatcher.cpp
+@@ -34,6 +34,7 @@
+ #include "WebPageProxyMessages.h"
+ #include "WebProcess.h"
+ #include "WebProcessProxyMessages.h"
++#include <WebCore/AnimationFrameRate.h>
+ #include "WebTouchEvent.h"
+ #include "WebWheelEvent.h"
+ #include <WebCore/DisplayUpdate.h>
+@@ -61,11 +62,25 @@
+ #include <WebCore/ScrollingThread.h>
+ #include <WebCore/ScrollingTreeNode.h>
+ #include <WebCore/ThreadedScrollingTree.h>
++#include <cstdlib>
++#include <cstring>
+ #endif
+ 
+ namespace WebKit {
+ using namespace WebCore;
+ 
++#if HAVE(DISPLAY_LINK)
++// WEBKIT_INDEPENDENT_SCROLL: see ensureScrollingDisplayLink() below.
++static bool independentScrollEnabled()
++{
++    static bool enabled = [] {
++        const char* env = getenv("WEBKIT_INDEPENDENT_SCROLL");
++        return env && *env && strcmp(env, "0");
++    }();
++    return enabled;
++}
++#endif
++
+ EventDispatcher::EventDispatcher(WebProcess& process)
+     : m_process(process)
+     , m_queue(WorkQueue::create("com.apple.WebKit.EventDispatcher"_s, WorkQueue::QOS::UserInteractive))
+@@ -74,6 +89,9 @@
+     , m_momentumEventDispatcher(WTF::makeUnique<MomentumEventDispatcher>(*this))
+     , m_observerID(DisplayLinkObserverID::generate())
+ #endif
++#if HAVE(DISPLAY_LINK)
++    , m_scrollingObserverID(DisplayLinkObserverID::generate())
++#endif
+ {
+ }
+ 
+@@ -160,6 +178,30 @@
+         auto processingSteps = scrollingTree->determineWheelEventProcessing(platformWheelEvent);
+         bool useMainThreadForScrolling = processingSteps.contains(WheelEventProcessingSteps::SynchronousScrolling);
+ 
++        // WEBKIT_FORCE_ASYNC_SCROLL (see AsyncScrollingCoordinator.cpp): never route
++        // wheel-driven scrolling through the main thread. When the event region at
++        // the touch point demands synchronous dispatch (non-passive wheel/touch
++        // listeners), the stock path blocks the SCROLLING THREAD in
++        // waitForEventToBeProcessedByMainThread() until the main thread has run the
++        // page's handlers -- on main-thread-bound pages (~1s per rendering update)
++        // that freezes scrolling, kinetic animation and composition for the whole
++        // pass, and the UIProcess coalesces all further wheel events behind the
++        // missing ack (measured: 240 touch moves -> 16 delivered wheel events).
++        // Instead scroll on the scrolling thread and deliver the DOM wheel event
++        // non-blocking. Deliberately lossy: pages can no longer preventDefault()
++        // wheel-driven scrolling (same trade-off as forced-passive listeners).
++        static bool forceAsyncScrollWheel = [] {
++            const char* env = getenv("WEBKIT_FORCE_ASYNC_SCROLL");
++            return env && *env && strcmp(env, "0");
++        }();
++        if (forceAsyncScrollWheel) {
++            processingSteps.remove(WheelEventProcessingSteps::SynchronousScrolling);
++            processingSteps.remove(WheelEventProcessingSteps::BlockingDOMEventDispatch);
++            processingSteps.add(WheelEventProcessingSteps::AsyncScrolling);
++            processingSteps.add(WheelEventProcessingSteps::NonBlockingDOMEventDispatch);
++            useMainThreadForScrolling = false;
++        }
++
+ #if !PLATFORM(COCOA)
+         // Deliver continuing scroll gestures directly to the scrolling thread until the end.
+         if ((platformWheelEvent.phase() == PlatformWheelEventPhase::Changed || platformWheelEvent.phase() == PlatformWheelEventPhase::Ended)
+@@ -167,6 +209,14 @@
+             useMainThreadForScrolling = false;
+ #endif
+ 
++        // Independent scrolling: take our own display-link observer for the
++        // duration of the gesture, so the scrolling thread keeps ticking even if
++        // the main thread stalls and drops its own observer.
++#if HAVE(DISPLAY_LINK)
++        if (independentScrollEnabled())
++            ensureScrollingDisplayLink(scrollingTree->displayID());
++#endif
++
+         scrollingTree->willProcessWheelEvent();
+ 
+         ScrollingThread::dispatch([scrollingTree, wheelEvent, platformWheelEvent, processingSteps, useMainThreadForScrolling, pageID, wheelEventOrigin, this, protectedThis = Ref { *this }] {
+@@ -343,13 +393,87 @@
+ void EventDispatcher::notifyScrollingTreesDisplayDidRefresh(PlatformDisplayID displayID)
+ {
+ #if ENABLE(ASYNC_SCROLLING) && ENABLE(SCROLLING_THREAD)
+-    Locker locker { m_scrollingTreesLock };
+-    for (Ref scrollingTree : m_scrollingTrees.values())
+-        scrollingTree->displayDidRefresh(displayID);
++    bool anyTreeIsActive = false;
++    {
++        Locker locker { m_scrollingTreesLock };
++        for (Ref scrollingTree : m_scrollingTrees.values()) {
++            scrollingTree->displayDidRefresh(displayID);
++            if (scrollingTree->hasRecentActivity())
++                anyTreeIsActive = true;
++        }
++    }
++
++#if HAVE(DISPLAY_LINK)
++    // Independent scrolling: we hold a display-link observer only while a scroll
++    // is live (see ensureScrollingDisplayLink), so release it once every tree has
++    // settled -- otherwise an idle page would keep the link running forever.
++    if (independentScrollEnabled() && !anyTreeIsActive)
++        stopScrollingDisplayLink();
++#endif
++#else
++    UNUSED_PARAM(displayID);
+ #endif
+ }
+ 
+ #if HAVE(DISPLAY_LINK)
++// WEBKIT_INDEPENDENT_SCROLL (see ThreadedScrollingTree.cpp for the scheduling
++// half): give the scrolling thread a display-link observer of its own.
++//
++// The scrolling thread's only heartbeat is displayDidRefresh: it is what drives
++// displayDidRefreshOnScrollingThread -> applyLayerPositions ->
++// requestComposition(AsyncScrolling). On this port that heartbeat is owned by the
++// main thread, which makes "independent" scrolling impossible by construction:
++//
++//   - The only display-link observer ever registered is the main thread's
++//     WebDisplayRefreshMonitor (its startNotificationMechanism is driven by
++//     DisplayRefreshMonitorManager::scheduleAnimation). EventDispatcher already
++//     has startDisplayDidRefreshCallbacks(), but it is called only by
++//     MomentumEventDispatcher, which is not ENABLE()d for WPE -- dead code here.
++//   - DisplayRefreshMonitor::displayLinkFired() drops the tick outright while
++//     !isPreviousFrameDone(), and stops the notification mechanism after a single
++//     unscheduled fire (m_maxUnscheduledFireCount is 0).
++//   - DisplayLink::notifyObserversDisplayDidRefresh() skips any client whose
++//     observer list is empty, and DisplayLinkProcessProxyClient only sends
++//     EventDispatcher::DisplayDidRefresh (the scrolling-thread path) when the
++//     client wants full-speed updates.
++//
++// So a main thread that stalls -- franceinfo, m_isWaitingForRenderer stuck --
++// stops scheduling animations, its observer is removed, the display link goes
++// quiet, and the scrolling thread simply stops ticking. Device-measured: scroll
++// composites (ftrace reqcomp r=8) at 7.3/s and scrollapply at ~11/s instead of
++// 60, with 1.3s gaps, while the compositor thread sat ~84% idle. The vblank
++// source itself is fine (even the timer fallback is 60fps) -- it is the observer
++// bookkeeping that dies with the main thread.
++//
++// Registering our own observer for the duration of scroll activity keeps the
++// client's observer list non-empty and the link alive independently of the main
++// thread. We hold it while the scrolling tree reports recent activity
++// (ScrollingTree::hasRecentActivity(): wheel events within 50ms, or a running
++// scroll animation) and drop it as soon as scrolling settles, so an idle page
++// costs nothing.
++void EventDispatcher::ensureScrollingDisplayLink(PlatformDisplayID displayID)
++{
++    if (m_scrollingDisplayLinkID && *m_scrollingDisplayLinkID == displayID)
++        return;
++
++    if (m_scrollingDisplayLinkID)
++        stopScrollingDisplayLink();
++
++    WebProcess::singleton().protectedParentProcessConnection()->send(Messages::WebProcessProxy::StartDisplayLink(m_scrollingObserverID, displayID, WebCore::FullSpeedFramesPerSecond), 0);
++    m_scrollingDisplayLinkID = displayID;
++}
++
++void EventDispatcher::stopScrollingDisplayLink()
++{
++    if (!m_scrollingDisplayLinkID)
++        return;
++
++    WebProcess::singleton().protectedParentProcessConnection()->send(Messages::WebProcessProxy::StopDisplayLink(m_scrollingObserverID, *m_scrollingDisplayLinkID), 0);
++    m_scrollingDisplayLinkID = std::nullopt;
++}
++#endif
++
++#if HAVE(DISPLAY_LINK)
+ void EventDispatcher::displayDidRefresh(PlatformDisplayID displayID, const DisplayUpdate& displayUpdate, bool sendToMainThread)
+ {
+     tracePoint(DisplayRefreshDispatchingToMainThread, displayID, sendToMainThread);
+diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/EventDispatcher.h sq-B/Source/WebKit/WebProcess/WebPage/EventDispatcher.h
+--- a/Source/WebKit/WebProcess/WebPage/EventDispatcher.h
++++ b/Source/WebKit/WebProcess/WebPage/EventDispatcher.h
+@@ -149,6 +149,12 @@
+ 
+ #if HAVE(DISPLAY_LINK)
+     void displayDidRefresh(WebCore::PlatformDisplayID, const WebCore::DisplayUpdate&, bool sendToMainThread);
++
++    // WEBKIT_INDEPENDENT_SCROLL: display-link observer owned by the EventDispatcher
++    // thread, so the scrolling thread keeps ticking when the main thread stalls.
++    // See the comment on ensureScrollingDisplayLink() in the implementation.
++    void ensureScrollingDisplayLink(WebCore::PlatformDisplayID);
++    void stopScrollingDisplayLink();
+ #endif
+ 
+ #if ENABLE(SCROLLING_THREAD)
+@@ -185,6 +191,14 @@
+     std::unique_ptr<MomentumEventDispatcher> m_momentumEventDispatcher;
+     DisplayLinkObserverID m_observerID;
+ #endif
++
++#if HAVE(DISPLAY_LINK)
++    // WEBKIT_INDEPENDENT_SCROLL. Both are touched only on the EventDispatcher
++    // thread (internalWheelEvent and displayDidRefresh both run on m_queue), so
++    // they need no lock.
++    DisplayLinkObserverID m_scrollingObserverID;
++    std::optional<WebCore::PlatformDisplayID> m_scrollingDisplayLinkID;
++#endif
+ };
+ 
+ } // namespace WebKit

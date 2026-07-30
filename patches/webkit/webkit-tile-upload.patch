@@ -1,0 +1,577 @@
+# Bound the tile work one composite may do, and make the fill-in look right.
+# Merged from: webkit-tile-upload-budget-env, webkit-tile-upload-scroll-gate,
+# webkit-tile-upload-nonblocking-settle.
+#
+# Device-root-caused (build 495): after each ~1 s main-thread pass commits
+# screenfuls of CPU-painted tiles, the next composite (a) BLOCKS in
+# waitUntilPaintingComplete for buffers Skia workers are still painting and
+# (b) uploads tens of MB via glTexSubImage in one go (franceinfo layers up to
+# 23460x1269). Compositor-thread samples showed the stalls inside driver-blob
+# code / idle-waiting, FPS 0.2-3 during scroll. With WEBKIT_TILE_UPLOAD_BUDGET_MB,
+# still-painting buffers and out-of-budget updates stay queued (never dropped)
+# and renderLayerTree schedules follow-up composites to drain them. Lossy:
+# stale/blank tile content for a few frames. Unset/0 = stock.
+#
+# Then two corrections that make it behave like other browsers:
+#  - WEBKIT_TILE_UPLOAD_BUDGET_SCROLL_ONLY (default 1): meter only while the
+#    scrolling tree reports motion (atomic stamp from scrollingTreeNodeDidScroll
+#    + WEBKIT_TILE_UPLOAD_SCROLL_SETTLE_MS, default 250), and drain tiles ordered
+#    along the scroll direction (leading edge first) so fill-in reads as a
+#    progressive wave, not random squares popping in.
+#  - The settled composite originally fell back to the STOCK drain — unbounded
+#    glTexSubImage batch plus blocking on still-painting buffers — so every
+#    settle flip stalled composition for the whole queued batch (the residual
+#    franceinfo scroll freeze). Device A/B (fresh-load continuous scroll, build
+#    509): non-blocking alone did NOT help (mean FPS 2.0 — byte volume, not the
+#    blocking wait, dominates); metering every frame gave mean 7.4. So settled
+#    composites are metered too, at a larger WEBKIT_TILE_UPLOAD_REST_BUDGET_MB
+#    (ships 16, 0 = unlimited), and never block on still-painting buffers (they
+#    defer to the TileDrain follow-up composite).
+#
+# Must apply AFTER webkit-composite-scroll-sync and webkit-fling-throttle-env
+# (ThreadedCompositor.cpp / ScrollingTree.* contexts overlap).
+#
+# ---
+diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/ScrollingTree.cpp sq-B/Source/WebCore/page/scrolling/ScrollingTree.cpp
+--- a/Source/WebCore/page/scrolling/ScrollingTree.cpp
++++ b/Source/WebCore/page/scrolling/ScrollingTree.cpp
+@@ -42,6 +42,9 @@
+ #include "ScrollingTreeOverflowScrollingNode.h"
+ #include "ScrollingTreePositionedNode.h"
+ #include "ScrollingTreeScrollingNode.h"
++#if USE(COORDINATED_GRAPHICS)
++#include "CoordinatedBackingStoreTile.h"
++#endif
+ #include <algorithm>
+ #include <cmath>
+ #include <cstdlib>
+@@ -383,6 +386,22 @@
+     if (flingThrottleEnabled())
+         noteScrollForFlingThrottle(node);
+ 
++#if USE(COORDINATED_GRAPHICS)
++    // Tile-upload-budget scroll gate: any scrolling-tree position change arms
++    // the budget window (see TileUploadBudget in CoordinatedBackingStoreTile.h).
++    // Direction (for the drain ordering) is sampled from the root node only —
++    // it dominates any real fling; nested-scroller deltas would just add noise.
++    if (TileUploadBudget::enabled()) {
++        float deltaY = 0;
++        if (node.isRootNode()) {
++            float y = node.currentScrollPosition().y();
++            deltaY = y - m_tileUploadBudgetLastRootScrollY;
++            m_tileUploadBudgetLastRootScrollY = y;
++        }
++        TileUploadBudget::noteScrollActivity(deltaY);
++    }
++#endif
++
+     if (node.isRootNode())
+         setMainFrameScrollPosition(node.currentScrollPosition());
+ }
+diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/ScrollingTree.h sq-B/Source/WebCore/page/scrolling/ScrollingTree.h
+--- a/Source/WebCore/page/scrolling/ScrollingTree.h
++++ b/Source/WebCore/page/scrolling/ScrollingTree.h
+@@ -308,6 +308,11 @@
+     MonotonicTime m_flingThrottleSampleTime WTF_GUARDED_BY_LOCK(m_flingThrottleSampleLock);
+     std::atomic<double> m_flingThrottleActiveUntilSeconds { 0 };
+ 
++    // Tile-upload-budget scroll gate: last root scroll Y, sampled in
++    // scrollingTreeNodeDidScroll to derive the scroll direction for the tile
++    // drain ordering. Only touched on the thread delivering didScroll.
++    float m_tileUploadBudgetLastRootScrollY { 0 };
++
+     bool updateTreeFromStateNodeRecursive(const ScrollingStateNode*, struct CommitTreeState&) WTF_REQUIRES_LOCK(m_treeLock);
+     virtual void propagateSynchronousScrollingReasons(const HashSet<ScrollingNodeID>&) WTF_REQUIRES_LOCK(m_treeLock) { }
+ 
+diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp sq-B/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp
+@@ -25,6 +25,7 @@
+ #include "CoordinatedTileBuffer.h"
+ #include "GraphicsLayer.h"
+ #include "TextureMapper.h"
++#include <algorithm>
+ #include <wtf/SystemTracing.h>
+ 
+ namespace WebCore {
+@@ -49,8 +50,41 @@
+ 
+ void CoordinatedBackingStore::processPendingUpdates()
+ {
+-    for (auto& tile : m_tiles.values())
+-        tile.processPendingUpdates();
++    // Stock (and budget-at-rest) path: drain every tile; HashMap order is fine
++    // because everything uploads this composite anyway.
++    if (!TileUploadBudget::throttlingThisFrame()) {
++        for (auto& tile : m_tiles.values())
++            tile.processPendingUpdates();
++        return;
++    }
++
++    // Budgeted composite: drain tiles in scroll order (leading edge of the
++    // motion first, i.e. top-to-bottom when scrolling down), and once the byte
++    // budget is exhausted stop instead of letting whichever small update still
++    // fits jump the queue. Turns the fill-in from randomly popping squares into
++    // a progressive wave from the edge the user is scrolling toward.
++    Vector<CoordinatedBackingStoreTile*, 32> pendingTiles;
++    for (auto& tile : m_tiles.values()) {
++        if (tile.hasPendingUpdates())
++            pendingTiles.append(&tile);
++    }
++    if (pendingTiles.isEmpty())
++        return;
++
++    int direction = TileUploadBudget::scrollDirection();
++    std::sort(pendingTiles.begin(), pendingTiles.end(), [direction](auto* a, auto* b) {
++        auto rectA = a->firstPendingUpdateRect();
++        auto rectB = b->firstPendingUpdateRect();
++        if (rectA.y() != rectB.y())
++            return direction >= 0 ? rectA.y() < rectB.y() : rectA.y() > rectB.y();
++        return rectA.x() < rectB.x();
++    });
++
++    for (auto* tile : pendingTiles) {
++        if (TileUploadBudget::budgetExhaustedThisFrame())
++            break;
++        tile->processPendingUpdates();
++    }
+ }
+ 
+ void CoordinatedBackingStore::resize(const FloatSize& size, float scale)
+@@ -81,6 +115,15 @@
+ 
+     for (const auto& tile : m_tiles.values()) {
+         ASSERT(tile.scale() == m_scale);
++        // With the tile upload budget (WEBKIT_TILE_UPLOAD_BUDGET_MB) a freshly
++        // created tile's FIRST update can be deferred to a later composite, so a
++        // tile may reach paint with no texture yet -- stock code never sees this
++        // (every created tile is updated in the same flush) and dereferences the
++        // texture unconditionally, which crashed the compositor thread (device
++        // core: drawTexture <- paintToTextureMapper, build 498). Skip such tiles;
++        // the gap shows the layer background until the deferred update drains.
++        if (!tile.canBePainted())
++            continue;
+         const auto allEdgesExposed = allTileEdgesExposed(layerRect, tile.rect()) ? TextureMapper::AllEdgesExposed::Yes : TextureMapper::AllEdgesExposed::No;
+ 
+ #if ENABLE(DAMAGE_TRACKING)
+diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp sq-B/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp
+@@ -25,6 +25,10 @@
+ #include "BitmapTexturePool.h"
+ #include "CoordinatedTileBuffer.h"
+ #include "GraphicsLayer.h"
++#include <atomic>
++#include <cstdlib>
++#include <cstring>
++#include <wtf/MonotonicTime.h>
+ #include <wtf/SystemTracing.h>
+ 
+ #if USE(SKIA)
+@@ -33,6 +37,171 @@
+ 
+ namespace WebCore {
+ 
++namespace TileUploadBudget {
++
++// Compositor-thread only (renderLayerTree -> flushCompositingState ->
++// processPendingUpdates all run on the compositing run loop), so plain statics.
++// Exception: the scroll-activity stamps below are atomics written from the
++// scrolling thread (ScrollingTree::scrollingTreeNodeDidScroll).
++static size_t s_bytesThisFrame = 0;
++static bool s_deferredThisFrame = false;
++static bool s_budgetExhaustedThisFrame = false;
++static bool s_throttlingThisFrame = false;
++static std::atomic<double> s_scrollActiveUntilSeconds { 0 };
++static std::atomic<int> s_scrollDirection { 1 };
++
++// WEBKIT_TILE_UPLOAD_BUDGET_SCROLL_ONLY (default 1): only meter uploads while a
++// scroll is in progress. The budget exists to keep composites cheap while the
++// compositor is animating a scroll; applied unconditionally it makes freshly
++// exposed content trickle in tile-by-tile even after motion stops. With the
++// scroll gate, the last drain after settle uploads everything in one composite
++// (stock behavior), so content completes atomically like other browsers. =0
++// restores the always-on budget.
++static bool scrollOnly()
++{
++    static const bool on = []() -> bool {
++        if (const char* env = getenv("WEBKIT_TILE_UPLOAD_BUDGET_SCROLL_ONLY"))
++            return atoi(env);
++        return true;
++    }();
++    return on;
++}
++
++// WEBKIT_TILE_UPLOAD_SCROLL_SETTLE_MS (default 250): how long after the last
++// scrolling-tree position change the budget stays armed, so a fling's decay tail
++// keeps metering and the unlimited settle drain happens once, after real rest.
++static double scrollSettleMs()
++{
++    static const double ms = []() -> double {
++        if (const char* env = getenv("WEBKIT_TILE_UPLOAD_SCROLL_SETTLE_MS")) {
++            double v = atof(env);
++            if (v >= 0 && v <= 5000)
++                return v;
++        }
++        return 250.0;
++    }();
++    return ms;
++}
++
++static bool scrollActiveNow()
++{
++    double until = s_scrollActiveUntilSeconds.load(std::memory_order_relaxed);
++    return until > 0 && MonotonicTime::now().secondsSinceEpoch().seconds() < until;
++}
++
++static size_t budgetBytes()
++{
++    static const size_t bytes = []() -> size_t {
++        if (const char* env = getenv("WEBKIT_TILE_UPLOAD_BUDGET_MB")) {
++            double mb = atof(env);
++            if (mb > 0 && mb <= 512)
++                return static_cast<size_t>(mb * 1024 * 1024);
++        }
++        return 0;
++    }();
++    return bytes;
++}
++
++// WEBKIT_TILE_UPLOAD_REST_BUDGET_MB (default 16, 0 = unlimited): the byte
++// budget for settled (non-scrolling) composites. An UNLIMITED settled drain is
++// what froze franceinfo scrolling (device-measured, build 509): every gap
++// between gestures longer than SETTLE_MS flipped the next composite to an
++// unmetered drain that pushed the whole queued batch (tens of MB, DPR3 CPU
++// tiles) through glTexSubImage in one frame — mean scroll FPS 2.0 unlimited vs
++// 7.4 metered. A rest budget a few times the scroll budget keeps post-scroll
++// fill-in completing in one or two big directional waves (the anti-popping
++// behavior the scroll gate exists for) while bounding any single composite.
++static size_t restBudgetBytes()
++{
++    static const size_t bytes = []() -> size_t {
++        if (const char* env = getenv("WEBKIT_TILE_UPLOAD_REST_BUDGET_MB")) {
++            double mb = atof(env);
++            if (mb >= 0 && mb <= 512)
++                return static_cast<size_t>(mb * 1024 * 1024);
++        }
++        return 16 * 1024 * 1024;
++    }();
++    return bytes;
++}
++
++static size_t s_frameBudgetBytes = 0;
++
++bool enabled()
++{
++    return !!budgetBytes();
++}
++
++void beginFrame()
++{
++    s_bytesThisFrame = 0;
++    s_deferredThisFrame = false;
++    s_budgetExhaustedThisFrame = false;
++    if (!enabled()) {
++        s_throttlingThisFrame = false;
++        s_frameBudgetBytes = 0;
++        return;
++    }
++    // Latched once per composite so every tile in the frame sees the same
++    // decision, even if the scroll settles mid-flush. Scrolling composites
++    // (or all composites with SCROLL_ONLY=0) use the tight scroll budget;
++    // settled composites use the larger rest budget (0 = unlimited).
++    const bool scrolling = !scrollOnly() || scrollActiveNow();
++    s_frameBudgetBytes = scrolling ? budgetBytes() : restBudgetBytes();
++    s_throttlingThisFrame = !!s_frameBudgetBytes;
++}
++
++bool throttlingThisFrame()
++{
++    return s_throttlingThisFrame;
++}
++
++bool budgetExhaustedThisFrame()
++{
++    return s_budgetExhaustedThisFrame;
++}
++
++int scrollDirection()
++{
++    return s_scrollDirection.load(std::memory_order_relaxed);
++}
++
++void noteScrollActivity(float deltaY)
++{
++    if (!enabled() || !scrollOnly())
++        return;
++    auto until = MonotonicTime::now() + Seconds::fromMilliseconds(scrollSettleMs());
++    s_scrollActiveUntilSeconds.store(until.secondsSinceEpoch().seconds(), std::memory_order_relaxed);
++    if (deltaY > 0)
++        s_scrollDirection.store(1, std::memory_order_relaxed);
++    else if (deltaY < 0)
++        s_scrollDirection.store(-1, std::memory_order_relaxed);
++}
++
++bool deferredThisFrame()
++{
++    return s_deferredThisFrame;
++}
++
++bool tryConsume(size_t bytes)
++{
++    // The first update of a frame always fits, so forward progress is
++    // guaranteed even when a single update exceeds the whole budget.
++    if (s_bytesThisFrame && s_bytesThisFrame + bytes > s_frameBudgetBytes) {
++        s_deferredThisFrame = true;
++        s_budgetExhaustedThisFrame = true;
++        return false;
++    }
++    s_bytesThisFrame += bytes;
++    return true;
++}
++
++void noteDeferred()
++{
++    s_deferredThisFrame = true;
++}
++
++} // namespace TileUploadBudget
++
+ CoordinatedBackingStoreTile::CoordinatedBackingStoreTile(float scale)
+     : m_scale(scale)
+ {
+@@ -42,16 +211,65 @@
+ 
+ void CoordinatedBackingStoreTile::addUpdate(Update&& update)
+ {
++    // Budget mode defers updates across composites, so the queue can outlive one
++    // frame; without coalescing, a paint storm (page load) grows it -- and the
++    // tile buffers it keeps alive -- unboundedly, until the process is OOM-killed.
++    // A whole-tile update replaces the texture wholesale, making every earlier
++    // queued update for this tile dead weight: drop them and release their
++    // buffers immediately. (Stock unbudgeted mode drains the queue every
++    // composite, so it never accumulates and keeps exact upstream behavior.)
++    if (TileUploadBudget::enabled() && !m_updates.isEmpty() && update.sourceRect.size() == update.tileRect.size())
++        m_updates.clear();
+     m_updates.append(WTF::move(update));
+ }
+ 
+ void CoordinatedBackingStoreTile::processPendingUpdates()
+ {
+-    auto updates = WTF::move(m_updates);
+-    auto updatesCount = updates.size();
+-    if (!updatesCount)
++    if (m_updates.isEmpty())
+         return;
+ 
++    // Per-composite upload budget (see TileUploadBudget above): consume the
++    // queue incrementally so deferred updates survive to the next composite.
++    // Updates within a tile are ordered; a deferral stops this tile's queue.
++    // With the scroll gate (SCROLL_ONLY), a settled frame uploads the whole
++    // remaining queue in one composite (no byte metering, so newly exposed
++    // content completes atomically) -- but it must still NOT block on buffers a
++    // Skia worker is painting: during a heavy scroll the paint queue runs
++    // seconds deep, and a settled composite that falls back to the stock
++    // blocking drain stalls composition for all of it (device-measured on
++    // franceinfo: mean scroll FPS 2.5 blocking vs 11.8 non-blocking).
++    // Still-painting updates stay queued; the TileDrain follow-up composite
++    // picks them up once painted.
++    Vector<Update> updates;
++    if (!TileUploadBudget::enabled())
++        updates = WTF::move(m_updates);
++    else {
++        const bool metered = TileUploadBudget::throttlingThisFrame();
++        while (!m_updates.isEmpty()) {
++            auto& next = m_updates.first();
++            // Don't block the composite waiting for a worker still painting
++            // this buffer -- leave it queued and drain on a later frame.
++            if (!next.buffer->isPaintingComplete()) {
++                TileUploadBudget::noteDeferred();
++                break;
++            }
++            if (metered) {
++                // GPU-backed buffers swap textures (no upload); only CPU buffers
++                // pay the glTexSubImage cost the budget meters.
++                size_t bytes = 0;
++                if (!next.buffer->isBackedByOpenGL())
++                    bytes = static_cast<size_t>(next.buffer->size().area().value()) * 4;
++                if (bytes && !TileUploadBudget::tryConsume(bytes))
++                    break;
++            }
++            updates.append(WTF::move(m_updates.first()));
++            m_updates.removeAt(0);
++        }
++        if (updates.isEmpty())
++            return;
++    }
++
++    auto updatesCount = updates.size();
+     WTFBeginSignpost(this, CoordinatedSwapBuffers, "%zu updates", updatesCount);
+     for (unsigned updateIndex = 0; updateIndex < updatesCount; ++updateIndex) {
+         auto& update = updates[updateIndex];
+diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h sq-B/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h
+@@ -51,6 +51,11 @@
+     void addUpdate(Update&&);
+ 
+     void processPendingUpdates();
++    bool hasPendingUpdates() const { return !m_updates.isEmpty(); }
++    // Position of the next queued update, for the scroll-directional drain order
++    // in CoordinatedBackingStore::processPendingUpdates(). (m_rect is not usable
++    // here: it is only set once a first update has been processed.)
++    IntRect firstPendingUpdateRect() const { return m_updates.isEmpty() ? IntRect() : m_updates.first().tileRect; }
+ 
+     bool canBePainted() const { return !!m_texture; }
+ 
+@@ -62,6 +67,34 @@
+     bool m_isLowRes { false };
+ };
+ 
++// Per-composite tile upload budget (WEBKIT_TILE_UPLOAD_BUDGET_MB, unset/0 =
++// stock unlimited). All functions are compositor-thread only. When enabled,
++// CoordinatedBackingStoreTile::processPendingUpdates() defers (a) updates whose
++// buffer is still being painted by a worker (instead of blocking the composite
++// in waitUntilPaintingComplete) and (b) updates beyond the per-frame upload
++// byte budget. Deferred updates stay queued; ThreadedCompositor::renderLayerTree
++// checks deferredThisFrame() after the flush and schedules a follow-up composite
++// so they drain over subsequent frames. Lossy: stale/blank tile content shows
++// until the drain catches up.
++// Scroll gate (WEBKIT_TILE_UPLOAD_BUDGET_SCROLL_ONLY, default 1): the budget is
++// only applied while the scrolling tree reports motion (noteScrollActivity, an
++// atomic stamp written on the scrolling thread, plus a settle window
++// WEBKIT_TILE_UPLOAD_SCROLL_SETTLE_MS). Once motion settles, the next composite
++// drains every queued update at once (stock behavior), so newly exposed content
++// completes in a single frame instead of trickling in square-by-square.
++// beginFrame() latches the decision per composite (throttlingThisFrame).
++namespace TileUploadBudget {
++WEBCORE_EXPORT bool enabled();
++WEBCORE_EXPORT void beginFrame();
++WEBCORE_EXPORT bool deferredThisFrame();
++bool throttlingThisFrame();
++bool budgetExhaustedThisFrame();
++int scrollDirection();
++void noteScrollActivity(float deltaY);
++bool tryConsume(size_t bytes);
++void noteDeferred();
++} // namespace TileUploadBudget
++
+ } // namespace WebCore
+ 
+ #endif // USE(COORDINATED_GRAPHICS)
+diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedCompositionReason.h sq-B/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedCompositionReason.h
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedCompositionReason.h
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedCompositionReason.h
+@@ -35,6 +35,12 @@
+     VideoFrame = 1 << 1,
+     Animation = 1 << 2,
+     AsyncScrolling = 1 << 3,
++    // Drain composite for tile updates deferred by the per-composite upload
++    // budget (WEBKIT_TILE_UPLOAD_BUDGET_MB). Deliberately distinct from
++    // RenderingUpdate: that reason is deferred by the compositor while
++    // isWaitingForTiles, which would stall the drain behind the very tile
++    // batch it is meant to spread out.
++    TileDrain = 1 << 4,
+ };
+ 
+ } // namespace WebCore
+@@ -47,7 +53,8 @@
+         WebCore::CompositionReason::RenderingUpdate,
+         WebCore::CompositionReason::VideoFrame,
+         WebCore::CompositionReason::Animation,
+-        WebCore::CompositionReason::AsyncScrolling
++        WebCore::CompositionReason::AsyncScrolling,
++        WebCore::CompositionReason::TileDrain
+     >;
+ };
+ 
+diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp sq-B/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp
+@@ -898,7 +898,7 @@
+ {
+     ASSERT(!isMainThread());
+     Locker locker { m_lock };
+-    if (m_pendingChanges.isEmpty() && (!reasons.contains(CompositionReason::RenderingUpdate) || !m_backingStoreProxy))
++    if (m_pendingChanges.isEmpty() && (!reasons.containsAny({ CompositionReason::RenderingUpdate, CompositionReason::TileDrain }) || !m_backingStoreProxy))
+         return;
+ 
+     auto& layer = ensureTarget();
+@@ -1082,6 +1082,12 @@
+         }
+     }
+ 
++    // Tile-drain composites only flush the tile updates the upload budget
++    // deferred (WEBKIT_TILE_UPLOAD_BUDGET_MB); RenderingUpdate composites
++    // already did so in the backing-store block above.
++    if (reasons.contains(CompositionReason::TileDrain) && !reasons.contains(CompositionReason::RenderingUpdate) && m_backingStore)
++        m_backingStore->processPendingUpdates();
++
+     if (reasons.containsAny({ CompositionReason::RenderingUpdate, CompositionReason::VideoFrame, CompositionReason::AsyncScrolling })) {
+         if (m_pendingChanges.contains(Change::ContentsBuffer)) {
+             m_contentsBuffer.committed = WTF::move(m_contentsBuffer.pending);
+diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp sq-B/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp
+@@ -106,6 +106,12 @@
+ #endif
+ }
+ 
++bool CoordinatedTileBuffer::isPaintingComplete()
++{
++    Locker locker { m_painting.lock };
++    return m_painting.state == PaintingState::Complete;
++}
++
+ void CoordinatedTileBuffer::waitUntilPaintingComplete()
+ {
+     Locker locker { m_painting.lock };
+diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.h sq-B/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.h
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.h
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.h
+@@ -67,6 +67,10 @@
+     virtual void beginPainting();
+     virtual void completePainting();
+     void waitUntilPaintingComplete();
++    // Non-blocking probe of the painting handshake, for the per-composite tile
++    // upload budget (WEBKIT_TILE_UPLOAD_BUDGET_MB): lets the compositor defer a
++    // still-painting tile update instead of blocking in waitUntilPaintingComplete.
++    WEBCORE_EXPORT bool isPaintingComplete();
+ 
+ #if USE(SKIA)
+     SkCanvas* canvas();
+diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp sq-B/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
+@@ -33,6 +33,7 @@
+ #include "RenderProcessInfo.h"
+ #include "WebPage.h"
+ #include "WebProcess.h"
++#include <WebCore/CoordinatedBackingStoreTile.h>
+ #include <WebCore/CoordinatedPlatformLayer.h>
+ #include <WebCore/Damage.h>
+ #include <WebCore/PlatformDisplay.h>
+@@ -452,6 +453,10 @@
+ 
+     m_surface->willRenderFrame(viewportSize);
+ 
++    // Per-composite tile upload budget (WEBKIT_TILE_UPLOAD_BUDGET_MB): reset the
++    // frame's byte counter before the layer flush processes tile updates.
++    WebCore::TileUploadBudget::beginFrame();
++
+     RunLoop::mainSingleton().dispatch([this, protectedThis = Ref { *this }] {
+         if (m_layerTreeHost)
+             m_layerTreeHost->willRenderFrame();
+@@ -467,6 +472,12 @@
+ 
+     updateFPSCounter();
+ 
++    // Tile updates deferred by the upload budget stay queued in their
++    // CoordinatedBackingStoreTile; schedule a follow-up composite so they drain
++    // over the next frames instead of waiting for unrelated activity.
++    if (WebCore::TileUploadBudget::enabled() && WebCore::TileUploadBudget::deferredThisFrame())
++        requestComposition(CompositionReason::TileDrain);
++
+     if (shouldNotifiyDidComposite)
+         m_didCompositeRunLoopObserver->schedule(&RunLoop::mainSingleton());
+ 

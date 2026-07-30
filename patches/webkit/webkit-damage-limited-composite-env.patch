@@ -1,3 +1,12 @@
+#  Damage-limited compositing: enable WebKit's compiled-in-but-WPE-disabled
+#  damage subsystem so a composite is scissored to the region that actually
+#  changed instead of redrawing the whole scene (WEBKIT_DAMAGE_COMPOSITING,
+#  default OFF in runtime-common.sh). Only touches LayerTreeHost.cpp; must
+#  apply AFTER every other patch that touches that file (raster-on-compositor,
+#  the composite-scroll-sync trio, fling-throttle) so its context matches the
+#  fully-patched tree.
+#
+# ---
 Damage-limited compositing: scissor the scene composite to the changed region.
 
 WPE compiles WebKit's damage-tracking subsystem in (ENABLE_DAMAGE_TRACKING=1)

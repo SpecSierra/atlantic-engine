@@ -17,10 +17,7 @@ OUT = ROOT / "patches" / "SERIES.md"
 
 # Patches that only make the tree compile on the CI host / SFOS sysroot: added
 # includes, owner headers, export macros, platform guards. Behaviour-neutral.
-BUILD_FIX = re.compile(
-    r"(wtf|pal|jsc|webcore)-|icu-imported|isnan|llint-build|shell-object"
-    r"|-cstdint|-cstddef|unistdextras|memoryfootprint|ramsize|includes\.patch"
-)
+BUILD_FIX = re.compile(r"portability-|build-cmake-fixes")
 
 ARRAY_RE = re.compile(r"^readonly (\w+)=\(")
 
@@ -49,6 +46,24 @@ def parse_order():
             note = []
 
 
+def header(text: str) -> str:
+    """The patch's own rationale header (prose before the first diff line)."""
+    out = []
+    for line in text.splitlines():
+        if line.startswith("# ---") or line.startswith("--- "):
+            break
+        if line.startswith("#"):
+            out.append(line.lstrip("#").strip())
+    # first paragraph only — SERIES.md is an index, the patch is the document
+    para: list[str] = []
+    for line in out:
+        if not line and para:
+            break
+        if line:
+            para.append(line)
+    return " ".join(para)
+
+
 def describe(patch: pathlib.Path):
     text = patch.read_text(errors="replace")
     files = sorted(set(re.findall(r"^\+\+\+ b/(\S+)", text, re.M)))
@@ -59,7 +74,7 @@ def describe(patch: pathlib.Path):
             if not f.endswith("_")
         )
     )
-    return files, flags
+    return files, flags, header(text)
 
 
 def main():
@@ -69,15 +84,16 @@ def main():
         if not p.exists():
             print(f"missing: {rel}", file=sys.stderr)
             return 1
-        files, flags = describe(p)
-        rows.append((array, rel, note, files, flags))
+        files, flags, hdr = describe(p)
+        rows.append((array, rel, hdr or note, files, flags))
 
     lines = [
         "# Patch series",
         "",
         "**Generated — do not edit.** `python3 scripts/gen-patch-series.py`",
         "",
-        "Why each patch exists: [RATIONALE.md](RATIONALE.md) (hand-maintained).",
+        "Why each patch exists: the header comment inside the patch file. "
+        "[RATIONALE.md](RATIONALE.md) covers the stack as a whole.",
         "",
         "Apply order comes from `scripts/patches.sh` and is load-bearing: patches "
         "that touch the same file must stay in this order. Validate the stack "
@@ -92,6 +108,9 @@ def main():
     build = [r for r in rows if BUILD_FIX.search(pathlib.Path(r[1]).name)]
     feature = [r for r in rows if r not in build]
     lines += [
+        "Each patch carries its own rationale as a header comment at the top of the "
+        "patch file; the Note column below is its first paragraph.",
+        "",
         f"| | Count |",
         f"|---|---|",
         f"| Patches | {len(rows)} |",

@@ -1,3 +1,12 @@
+# WPE_GL_FENCE_DISABLED=1 makes GL fences unavailable so every call site falls
+# back to its synchronous path (GrSyncCpu::kYes / glFinish), guaranteeing the
+# producing context's work is complete before any consumer sees the texture.
+# The escape hatch for the libhybris EGL gap: EGL_ANDROID_native_fence_sync is
+# in the driver but not exposed by libhybris-libEGL, so fence waits can be
+# no-ops and the compositor samples half-written textures. See memory
+# egl-native-fence-hybris-gap.
+#
+# ---
 --- a/Source/WebCore/platform/graphics/egl/GLFence.cpp	2026-06-11 13:51:34.857793489 +0000
 +++ b/Source/WebCore/platform/graphics/egl/GLFence.cpp	2026-06-11 13:52:08.882042234 +0000
 @@ -27,6 +27,9 @@

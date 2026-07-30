@@ -134,7 +134,7 @@ atlantic_export_helper_env() {
     export GST_PLUGIN_PATH="${ATLANTIC_GSTREAMER_PLUGIN_DIR}"
     export GST_PLUGIN_FEATURE_RANK="${ATLANTIC_GST_PLUGIN_FEATURE_RANK}"
     # GStreamer pipeline tuning. The three WEBKIT_GST_* knobs below are consumed
-    # by patches/webkit/webkit-gst-buffer-tuning.patch (MediaPlayerPrivate-
+    # by patches/webkit/webkit-gst-media.patch (MediaPlayerPrivate-
     # GStreamer::configureElement) — they are NOT upstream env vars, so they do
     # nothing unless that patch is in scripts/patches.sh.
     #   queue2 high-watermark 0.05 (upstream hardcodes 0.10): start playback at
@@ -179,7 +179,7 @@ atlantic_export_helper_env() {
     # module-meego-mainvolume) control browser audio natively. That policy only
     # steps PulseAudio streams whose media.role is "x-maemo"; WebKit hardcodes
     # "video"/"music", which it ignores. WEBKIT_GST_MEDIA_ROLE (engine patch
-    # webkit-gst-media-role-env.patch) overrides the role WebKit stamps on every
+    # webkit-gst-media.patch) overrides the role WebKit stamps on every
     # audio sink so all browser audio joins the media-volume group.
     #
     # Note: PULSE_PROP[_OVERRIDE] CANNOT do this — it only sets the client/context
@@ -187,7 +187,7 @@ atlantic_export_helper_env() {
     # The old PULSE_PROP_OVERRIDE=media.role=x-maemo here was a no-op; removed.
     export WEBKIT_GST_MEDIA_ROLE="${WEBKIT_GST_MEDIA_ROLE:-x-maemo}"
     # Lock the HTML media element volume to the system volume (engine patch
-    # webkit-volume-locked-env.patch, upstream m_volumeLocked — the iPhone
+    # webkit-gst-media.patch, upstream m_volumeLocked — the iPhone
     # model). Without it every new <video> (= new pulse stream) got the page's
     # el.volume (1.0, YouTube sets it per video) stamped on as an explicit
     # stream volume, resetting loudness to 100% on each video instead of
@@ -201,7 +201,7 @@ atlantic_export_helper_env() {
     # sink is the pipeline clock provider, the slaved pipeline deadlocks (audio
     # plays only the buffered ~250 ms then cuts out, picture freezes, element still
     # reports playing+unmuted). WEBKIT_GST_AUDIO_SYSTEM_CLOCK (engine patch
-    # webkit-gst-audio-system-clock.patch) forces provide-clock=FALSE on the
+    # webkit-gst-media.patch) forces provide-clock=FALSE on the
     # pulsesink so the pipeline uses the monotonic system clock instead; pulsesink
     # resamples (slave-method=skew) to track the audio HW clock. Unset = upstream.
     export WEBKIT_GST_AUDIO_SYSTEM_CLOCK="${WEBKIT_GST_AUDIO_SYSTEM_CLOCK:-1}"
@@ -379,7 +379,7 @@ atlantic_export_browser_env() {
     # baseline/DFG compiles of barely-warm functions during page load —
     # exactly the heavy-page phase that was slow — and increasing DFG
     # recompiles from early type instability. Late-tier latency is already
-    # addressed by webkit-jsc-linux-arm64-jit-thresholds.patch (FTL threshold
+    # addressed by webkit-jsc-arm64-tuning.patch (FTL threshold
     # 64000 → 15000).
     #
     # GC: the previous JSC_smallHeapRAMFraction=0.50 did the OPPOSITE of its
@@ -394,7 +394,7 @@ atlantic_export_browser_env() {
           JSC_useTypeProfiler JSC_useControlFlowProfiler 2>/dev/null || true
 
     # ── WebKit memory-pressure budget ─────────────────────────────────────────
-    # Honoured by webkit-memory-pressure-threshold-env.patch. WebKit's
+    # Honoured by webkit-memory-pressure.patch. WebKit's
     # MemoryPressureHandler purges decoded-image / page / TILE caches when RSS
     # crosses base*0.33 (conservative) / base*0.5 (strict); defaults
     # (base = min(3 GB, RAM), 30 s poll) never fire usefully on this device.
@@ -424,7 +424,7 @@ atlantic_export_browser_env() {
     export WEBKIT_MEMORY_POLL_INTERVAL_MS="${WEBKIT_MEMORY_POLL_INTERVAL_MS:-3000}"
 
     # ── Texture pool cap (synchronous) ───────────────────────────────────────
-    # Honoured by webkit-texpool-synchronous-cap.patch. The BitmapTexturePool
+    # Honoured by webkit-texture-pool.patch. The BitmapTexturePool
     # releases unused GL textures from a WebProcess MAIN-THREAD timer, which
     # starves exactly when texture churn peaks (video playback uploads one
     # ~9 MB BGRA frame texture per composited frame; page loads churn tile
@@ -446,7 +446,7 @@ atlantic_export_browser_env() {
     export ATLANTIC_CACHE_MODEL="${ATLANTIC_CACHE_MODEL:-viewer}"
 
     # ── HTTP disk cache (bounded) ─────────────────────────────────────────────
-    # Honoured by webkit-url-cache-disk-capacity-env.patch (read by the
+    # Honoured by webkit-http-cache.patch (read by the
     # NetworkProcess). The viewer cache model above zeroes WebKit's HTTP DISK
     # cache along with the RAM caches, so every repeat visit re-downloaded every
     # subresource over the radio (device-verified: ~/.cache/org.atlantic held
@@ -458,8 +458,8 @@ atlantic_export_browser_env() {
     export WEBKIT_URL_CACHE_DISK_CAPACITY_MB="${WEBKIT_URL_CACHE_DISK_CAPACITY_MB:-100}"
 
     # ── Scroll tile policy: low-resolution tiles during scroll ────────────────
-    # Honoured by webkit-lowres-tiles-during-scroll-env.patch +
-    # webkit-directional-tile-coverage-env.patch (read by the WebProcess).
+    # Honoured by webkit-scroll-degradation.patch +
+    # webkit-scroll-degradation.patch (read by the WebProcess).
     # Policy: during a fast fling, rasterize newly-exposed tiles at reduced
     # resolution (WEBKIT_LOWRES_TILE_SCALE) and bilinear-upscale them, then repaint
     # full-res once motion settles — keeps content visible (soft) instead of blank,
@@ -545,7 +545,7 @@ atlantic_export_browser_env() {
     # Neutral-to-better without it.
     #
     # The patch itself is kept (not deleted) purely for patch-stack reasons:
-    # webkit-tile-upload-scroll-gate.patch carries fling-throttle's added lines
+    # webkit-tile-upload.patch carries fling-throttle's added lines
     # (flingThrottleEnabled()/noteScrollForFlingThrottle, m_flingThrottleSampleTime,
     # m_flingThrottleActiveUntilSeconds) as unchanged CONTEXT, so dropping
     # fling-throttle from scripts/patches.sh makes scroll-gate fail to apply (CI
@@ -562,7 +562,7 @@ atlantic_export_browser_env() {
     # dispatch fake mouse-moves (real mouse events unaffected). 0 = stock.
     export WEBKIT_NO_FAKE_MOUSE_MOVE="${WEBKIT_NO_FAKE_MOUSE_MOVE:-1}"
 
-    # Honoured by webkit-force-async-scroll-env.patch. Never fall back to
+    # Honoured by webkit-independent-scroll.patch. Never fall back to
     # main-thread scrolling because of slow-repaint content (non-composited
     # fixed/sticky elements, background-attachment:fixed). Without it, such pages
     # scroll at the main-thread rendering-update rate — franceinfo/radiofrance
@@ -571,7 +571,7 @@ atlantic_export_browser_env() {
     # pinning perfectly. 0/unset = stock (the A/B switch).
     export WEBKIT_FORCE_ASYNC_SCROLL="${WEBKIT_FORCE_ASYNC_SCROLL:-1}"
 
-    # Honoured by webkit-independent-scroll-env.patch. Fully separate scrolling
+    # Honoured by webkit-independent-scroll.patch. Fully separate scrolling
     # from the main-thread rendering update (Gecko/APZ, like the EmbedLite port).
     # force-async-scroll above stops the main thread from *vetoing* async scroll;
     # this stops it from *pacing* it: upstream makes the scrolling thread wait up
@@ -587,11 +587,11 @@ atlantic_export_browser_env() {
     #
     # SHIPPED ON, device-verified user-validated (build 540, franceinfo). Three
     # patches act on this one flag:
-    #   webkit-independent-scroll-env.patch          — scheduling: the scrolling
+    #   webkit-independent-scroll.patch          — scheduling: the scrolling
     #     thread stops waiting on the main thread's rendering update.
-    #   webkit-scrolling-thread-display-link-env.patch — EventDispatcher keeps a
+    #   webkit-independent-scroll.patch — EventDispatcher keeps a
     #     display-link observer of its own for the duration of a scroll.
-    #   webkit-scrolling-thread-tick-env.patch       — the one that mattered: a
+    #   webkit-independent-scroll.patch       — the one that mattered: a
     #     16ms timer on the SCROLLING THREAD's own run loop drives its tick, so it
     #     no longer has to be handed a clock by the main thread / UIProcess at all
     #     (WEBKIT_INDEPENDENT_SCROLL_TICK_MS overrides the interval).
@@ -616,7 +616,7 @@ atlantic_export_browser_env() {
     # not an engine over-invalidation). 0 = stock full-page repaint (the A/B switch).
     export WEBKIT_SKIP_ROOT_CUSTOMPROP_REPAINT="${WEBKIT_SKIP_ROOT_CUSTOMPROP_REPAINT:-1}"
 
-    # webkit-no-full-repaint-on-composited-move.patch is default-ON (baked into the
+    # webkit-repaint-scope.patch is default-ON (baked into the
     # patch, no export needed): a self-painting composited layer that merely moved (or
     # jittered <=1px) during layout is NOT whole-backing repainted -- the compositor
     # repositions it and the tiled backing paints exposed tiles. Fixes franceinfo.fr's
@@ -690,22 +690,6 @@ atlantic_export_browser_env() {
     # (unattributed but correlated); reverted to opt-in pending a clean A/B.
     export ATLANTIC_ACK_ON_SAMPLE="${ATLANTIC_ACK_ON_SAMPLE:-0}"
 
-    # Honoured by webkit-video-composite-tile-gate-env.patch. DEFAULT 0 (stock).
-    # ThreadedCompositor::scheduleUpdateLocked()'s State::Idle branch holds back
-    # EVERY composition request while a tile batch is pending, not just the
-    # RenderingUpdate-reason ones its own helper says should wait. Device-measured
-    # on fullscreen 1080p YouTube (build 605): each full-viewport repaint parks
-    # 6-20 VideoFrame requests and the picture freezes 240-800 ms, ~every 5 s,
-    # while decode stays clean at 25 fps / 0 dropped. With this at 1 the Idle
-    # branch uses isOnlyRenderingUpdatePendingAndWaitingForTiles(), the same
-    # predicate resume()/frameComplete() use, so video keeps presenting against
-    # already-committed tiles (cost: a few stale tiles under the video).
-    # The identical scheduling change was landed and reverted in July for the
-    # SCROLL case (engine b13215f / 29b4fc7) where it measured flat — keep it
-    # opt-in until the ATLANTIC_FRAME_TRACE "schedupd wt=1" evidence and a 5x5
-    # A/B on fullscreen 1080p say otherwise.
-    export WEBKIT_VIDEO_COMPOSITE_UNGATED="${WEBKIT_VIDEO_COMPOSITE_UNGATED:-0}"
-
     # Honoured by webkit-composite-skip-locked-layers-env.patch. DEFAULT 0 (stock).
     # The video fast path: a composite that carries no RenderingUpdate tryLock()s
     # each CoordinatedPlatformLayer instead of blocking, and skips the ones the
@@ -730,7 +714,7 @@ atlantic_export_browser_env() {
     # stale-layer or missing-repaint report).
     export WEBKIT_COMPOSITE_SKIP_LOCKED_LAYERS="${WEBKIT_COMPOSITE_SKIP_LOCKED_LAYERS:-1}"
 
-    # Honoured by webkit-tile-upload-budget-env.patch. Cap the tile work a single
+    # Honoured by webkit-tile-upload.patch. Cap the tile work a single
     # composite may do: don't block on buffers the Skia workers are still
     # painting, and upload at most this many MB of CPU tile pixels per frame —
     # the rest stays queued and drains over follow-up composites (stale/blank
@@ -741,7 +725,7 @@ atlantic_export_browser_env() {
     # smoothness (smaller per-composite hitch) and content fill-in latency.
     export WEBKIT_TILE_UPLOAD_BUDGET_MB="${WEBKIT_TILE_UPLOAD_BUDGET_MB:-6}"
 
-    # Honoured by webkit-tile-upload-scroll-gate.patch. Only meter tile uploads
+    # Honoured by webkit-tile-upload.patch. Only meter tile uploads
     # while a scroll is actually in progress (plus the settle window, ms); at
     # rest the queued tiles drain in one composite, so freshly exposed content
     # completes atomically like other browsers instead of trickling in
@@ -752,7 +736,7 @@ atlantic_export_browser_env() {
     export WEBKIT_TILE_UPLOAD_BUDGET_SCROLL_ONLY="${WEBKIT_TILE_UPLOAD_BUDGET_SCROLL_ONLY:-1}"
     export WEBKIT_TILE_UPLOAD_SCROLL_SETTLE_MS="${WEBKIT_TILE_UPLOAD_SCROLL_SETTLE_MS:-800}"
 
-    # Honoured by webkit-tile-upload-nonblocking-settle.patch. Byte budget for
+    # Honoured by webkit-tile-upload.patch. Byte budget for
     # SETTLED (non-scrolling) composites. Unlimited settled drains were the
     # residual franceinfo scroll freeze (device A/B, build 509, Jul 2026):
     # every inter-gesture gap > SETTLE_MS flipped the next composite to an
@@ -763,8 +747,8 @@ atlantic_export_browser_env() {
     export WEBKIT_TILE_UPLOAD_REST_BUDGET_MB="${WEBKIT_TILE_UPLOAD_REST_BUDGET_MB:-16}"
 
     # ── Load-time responsiveness ─────────────────────────────────────────────
-    # Honoured by webkit-loading-timer-alignment-env.patch and
-    # webkit-parser-time-limit-env.patch. During a heavy page load the
+    # Honoured by webkit-load-responsiveness.patch and
+    # webkit-load-responsiveness.patch. During a heavy page load the
     # WebProcess main thread is saturated (measured ~91% CPU, mostly site JS)
     # and queued touch events starve — the page can't scroll until the load
     # event fires. Align maximally-nested DOM timers to a coarse grid while
@@ -782,36 +766,27 @@ atlantic_export_browser_env() {
     # (device-repro'd on onche.org). It also never moved DCL. The env + observer
     # patches and WEBKIT_LOAD_RENDERING_INTERVAL_MS are removed. See memory
     # franceinfo-load-slowness-analysis.md.)
-    # Touch-ack timeout (webkit-touch-ack-timeout-env.patch): if the WebProcess
+    # Touch-ack timeout (webkit-load-responsiveness.patch): if the WebProcess
     # doesn't ack touch events within this many ms, the UIProcess recognizes the
     # gesture itself and scrolls via the scrolling thread — flicks work during
     # page load instead of being silently dropped. =0 disables for A/B.
     export WEBKIT_TOUCH_ACK_TIMEOUT_MS="${WEBKIT_TOUCH_ACK_TIMEOUT_MS:-100}"
 
-    # ── Smart stylesheet reconstructs (PoC, default OFF) ──────────────────────
-    # Honoured by webkit-style-smart-reconstruct.patch. =1 downgrades spurious
-    # ContentsOrInterpretation updates (updateStyleForLayout resolver-null hack)
-    # from full resolver Reconstruct + whole-document restyle to an additive
-    # resolver update + scoped invalidation (or a no-op). Default ON (user
-    # accepted the risk for the perf upside); =0 to A/B against stock.
-    # WEBKIT_STYLE_LOG=1 logs the decision mix ([stylelog]).
-    export WEBKIT_STYLE_SMART_RECONSTRUCT="${WEBKIT_STYLE_SMART_RECONSTRUCT:-1}"
-
     # ── Overlay scrollbar size ────────────────────────────────────────────────
-    # Honoured by webkit-adwaita-scrollbar-scale-env.patch. Atlantic's 3x UI
+    # Honoured by webkit-scrollbar.patch. Atlantic's 3x UI
     # scale is implemented as page zoom (webkit_web_view_set_zoom_level), which
     # the native overlay scrollbar ignores — unscaled, the Adwaita thumb paints
     # 3 physical px wide on the 1080px screen. Scale the scrollbar metrics by
     # the same factor as the zoom level.
     export WEBKIT_SCROLLBAR_SCALE="${WEBKIT_SCROLLBAR_SCALE:-3}"
-    # Honoured by webkit-scrollbar-sprite-and-smoothing.patch. Sprite mode
+    # Honoured by webkit-scrollbar.patch. Sprite mode
     # paints the thumb once (CPU raster) and moves it as compositor geometry —
     # fixes the blink/teleport from unsynchronized per-frame Ganesh repaints
     # into reused pooled GL textures on this driver. Smoothing (0..1, 1 = off)
     # low-pass filters the displayed position so residual data jumps glide.
     export WEBKIT_SCROLLBAR_SPRITE="${WEBKIT_SCROLLBAR_SPRITE:-1}"
     export WEBKIT_SCROLLBAR_SMOOTHING="${WEBKIT_SCROLLBAR_SMOOTHING:-0.4}"
-    # Honoured by webkit-scrollbar-no-hover-expand.patch. Touching the scrollbar
+    # Honoured by webkit-scrollbar.patch. Touching the scrollbar
     # must not blow the thumb up into the fat desktop hover/press bar + trough:
     # always paint the idle thin form. =0 restores upstream expansion.
     export WEBKIT_SCROLLBAR_NO_HOVER="${WEBKIT_SCROLLBAR_NO_HOVER:-1}"

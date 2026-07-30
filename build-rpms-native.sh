@@ -692,7 +692,7 @@ mkdir     ${HOME}/.config/org.sailfishos/browser
 whitelist ${HOME}/.config/org.sailfishos/browser
 
 # WebKit's default cache tree. The bounded HTTP disk cache
-# (WEBKIT_URL_CACHE_DISK_CAPACITY_MB, webkit-url-cache-disk-capacity-env.patch)
+# (WEBKIT_URL_CACHE_DISK_CAPACITY_MB, webkit-http-cache.patch)
 # and the CacheStorage / service-worker store live under ~/.cache/wpe; Base
 # whitelist-locks ~/.cache, so without this every NetworkProcess cache write
 # vanishes inside the jail and the HTTP cache silently stays empty.

@@ -7,12 +7,10 @@ URL:        https://wpewebkit.org
 # Download from: https://wpewebkit.org/releases/wpewebkit-2.52.5.tar.xz
 Source0:    wpewebkit-%{version}.tar.xz
 Source1:    sfos-toolchain.cmake
-Source2:    webkit-quirks-no-video.patch
+Source2:    webkit-portability-webcore.patch
 Source3:    patch-glibc-versions.py
-Source4:    webkit-icu-imported-targets.patch
-Source5:    webkit-renderbox-isnan.patch
-Source6:    webkit-shapeoutside-isnan.patch
-Source7:    webkit-gst-buffer-tuning.patch
+Source4:    webkit-build-cmake-fixes.patch
+Source5:    webkit-gst-media.patch
 Source8:    atlantic-wpe-features.cmake
 Source9:    write-webkit-feature-flags.py
 
@@ -75,11 +73,14 @@ on Sailfish OS.
 # ===========================================================================
 %prep
 %setup -q -n wpewebkit-%{version}
+# NOTE: this sfdk/rpmbuild path applies only a subset of the stack; the real
+# build is the CI native one, which applies all of scripts/patches.sh. These
+# three are the consolidated patches that cover what the subset used to be
+# (WebCore portability incl. the isnan/Quirks fixes, the CMake repairs, and the
+# GStreamer integration).
 patch -p1 < %{SOURCE2}
 patch -p1 < %{SOURCE4}
 patch -p1 < %{SOURCE5}
-patch -p1 < %{SOURCE6}
-patch -p1 < %{SOURCE7}
 
 %build
 cmake -B WebKitBuild/Release -G Ninja \

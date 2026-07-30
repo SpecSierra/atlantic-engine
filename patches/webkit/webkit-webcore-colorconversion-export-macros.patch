@@ -1,9 +1,0 @@
---- a/Source/WebCore/platform/graphics/ColorConversion.h
-+++ b/Source/WebCore/platform/graphics/ColorConversion.h
-@@ -26,6 +26,7 @@
- #pragma once
- 
- #include <WebCore/ColorTypes.h>
-+#include <WebCore/PlatformExportMacros.h>
- #include <numeric>
- #include <wtf/MathExtras.h>

@@ -1,0 +1,111 @@
+# Memory-pressure handler: purge earlier, but stop nuking the style resolver.
+# Merged from: webkit-memory-pressure-threshold-env,
+# webkit-preserve-style-resolver-on-memory-pressure.
+#
+# WebKit's default baseThreshold = min(3 GB, RAM) means it only purges its
+# decoded-image / tile caches at ~1 GB and re-checks every 30 s, so on this
+# ~3.5 GB device it never feels pressure before the kernel lowmemorykiller
+# thrashes (device root cause of the reddit multi-second scroll spikes: the
+# WebProcess footprint that pushes the SYSTEM into thrashing is only ~700 MB).
+# WEBKIT_MEMORY_BASE_THRESHOLD_MB / WEBKIT_MEMORY_POLL_INTERVAL_MS make both
+# tunable; the device default (1200 MB base, 3 s poll) purges at ~400-600 MB.
+# Kill threshold is unaffected (ramSize-based).
+#
+# The aggressive threshold then exposed a second problem: releaseCriticalMemory()
+# also calls Document::styleScope().releaseMemory(), so every poll nuked and
+# rebuilt the CSS style resolver. On reddit (many stylesheets + shadow DOM) that
+# rebuild ran on every style update during scroll and pinned the main thread
+# ~88% (gdb-profiled), starving tile recording. That one call is now skipped by
+# default; all footprint-bounding purges (decoded images, bfcache, caches, GC)
+# are kept. WEBKIT_PURGE_STYLE_ON_MEMORY_PRESSURE=1 restores upstream.
+#
+# ---
+diff -ruN --no-dereference sq-A/Source/WebCore/page/MemoryRelease.cpp sq-B/Source/WebCore/page/MemoryRelease.cpp
+--- a/Source/WebCore/page/MemoryRelease.cpp
++++ b/Source/WebCore/page/MemoryRelease.cpp
+@@ -65,6 +65,8 @@
+ #include "WorkerGlobalScope.h"
+ #include "WorkerThread.h"
+ #include <JavaScriptCore/VM.h>
++#include <cstdlib>
++#include <cstring>
+ #include <wtf/ResourceUsage.h>
+ #include <wtf/SystemTracing.h>
+ #include <wtf/text/MakeString.h>
+@@ -115,6 +117,28 @@
+ #endif
+ }
+ 
++// The memory-pressure purge of the CSS style resolver (Style::Scope::releaseMemory
++// -> clearResolver + shared shadow-tree resolvers) frees little memory but forces a
++// full rebuild of every author stylesheet / RuleSet on the next style update. On
++// script-heavy, many-stylesheet, shadow-DOM pages (e.g. reddit) the aggressive
++// low-threshold purge that is required to bound decoded-image / GPU-texture memory
++// then fires this rebuild on every poll DURING scroll, pinning the main thread in
++// Style::Resolver::appendAuthorStyleSheets and starving tile recording and input
++// (device-profiled on Sailfish/Adreno). The footprint that actually drives OOM --
++// decoded images, back/forward cache, URL/disk cache, JS code -- is freed by the
++// other steps in releaseCriticalMemory(); the resolver is not the hog, so by default
++// we preserve it under pressure. WEBKIT_PURGE_STYLE_ON_MEMORY_PRESSURE=1 restores the
++// upstream behaviour (always purge).
++static bool purgeStyleResolverOnMemoryPressure()
++{
++    static bool purge = [] {
++        if (const char* envString = getenv("WEBKIT_PURGE_STYLE_ON_MEMORY_PRESSURE"))
++            return envString[0] && strcmp(envString, "0");
++        return false;
++    }();
++    return purge;
++}
++
+ static void releaseCriticalMemory(Synchronous synchronous, MaintainBackForwardCache maintainBackForwardCache, MaintainMemoryCache maintainMemoryCache)
+ {
+     // Right now, the only reason we call release critical memory while not under memory pressure is if the process is about to be suspended.
+@@ -143,7 +167,8 @@
+     });
+     for (auto& document : protectedDocuments) {
+         document->clearQuerySelectorAllResults();
+-        document->styleScope().releaseMemory();
++        if (purgeStyleResolverOnMemoryPressure())
++            document->styleScope().releaseMemory();
+         if (RefPtr fontSelector = document->fontSelectorIfExists())
+             fontSelector->emptyCaches();
+         document->protectedCachedResourceLoader()->garbageCollectDocumentResources();
+diff -ruN --no-dereference sq-A/Source/WTF/wtf/MemoryPressureHandler.cpp sq-B/Source/WTF/wtf/MemoryPressureHandler.cpp
+--- a/Source/WTF/wtf/MemoryPressureHandler.cpp
++++ b/Source/WTF/wtf/MemoryPressureHandler.cpp
+@@ -28,6 +28,7 @@
+ 
+ #include <algorithm>
+ #include <atomic>
++#include <cstdlib>
+ #include <functional>
+ #include <ranges>
+ #include <wtf/Logging.h>
+@@ -373,6 +374,26 @@
+     , killThresholdFraction(s_killThresholdFraction)
+     , pollInterval(s_pollInterval)
+ {
++    // Atlantic: on a memory-constrained device (3.5 GB, most of it held by
++    // lipstick/system) the upstream defaults purge caches far too late - only at
++    // ~1 GB footprint (conservative) / ~1.5 GB (strict), re-checked every 30 s -
++    // while the WebProcess footprint that actually drives the SYSTEM into the
++    // kernel lowmemorykiller (and multi-second major-fault thrashing during
++    // scroll) is only ~700 MB. WebKit therefore never releases its
++    // decoded-image / page / tile caches before the kernel starts reaping. Allow
++    // the device to set a realistic budget so the handler purges early and often.
++    // Only the purge thresholds move; the kill threshold is derived from
++    // ramSize(), not baseThreshold, so the process is not killed any earlier.
++    // Defaults are unchanged when the env vars are unset. See
++    // webkit-memory-pressure-threshold-env.patch.
++    if (const char* baseMB = getenv("WEBKIT_MEMORY_BASE_THRESHOLD_MB")) {
++        if (long mb = atol(baseMB); mb > 0)
++            baseThreshold = static_cast<uint64_t>(mb) * MB;
++    }
++    if (const char* intervalMS = getenv("WEBKIT_MEMORY_POLL_INTERVAL_MS")) {
++        if (long ms = atol(intervalMS); ms > 0)
++            pollInterval = Seconds::fromMilliseconds(ms);
++    }
+ }
+ 
+ MemoryPressureHandlerConfiguration::MemoryPressureHandlerConfiguration(uint64_t base, double conservative, double strict, std::optional<double> kill, Seconds interval)

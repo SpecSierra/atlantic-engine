@@ -1,3 +1,9 @@
+#  Touch devices: kill the fake mouse-move WebKit dispatches after every
+#  scroll at the stale synthetic-tap position, which :hover-highlights
+#  whatever link scrolls under the invisible cursor
+#  (WEBKIT_NO_FAKE_MOUSE_MOVE, default 1 in runtime-common.sh).
+#
+# ---
 --- a/Source/WebCore/page/EventHandler.cpp	2026-07-13 10:25:09.407425520 +0000
 +++ b/Source/WebCore/page/EventHandler.cpp	2026-07-13 10:25:23.355514875 +0000
 @@ -149,6 +149,7 @@

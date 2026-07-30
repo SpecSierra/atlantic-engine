@@ -1,3 +1,11 @@
+#  Video contents-buffer proxy: when the <video> element's backing layer is
+#  rebuilt (fullscreen enter/exit, navigation), the OLD GraphicsLayer's
+#  teardown unbound the shared buffer proxy AFTER the new layer had bound
+#  it, silently degrading video to the main-thread pending-buffer path
+#  (~4fps on an idle fullscreen page). Guarded unbind: clear only if the
+#  proxy still points at the caller's platform layer.
+#
+# ---
 Video contents-buffer proxy: don't let a dying GraphicsLayer unbind the
 proxy from its successor.
 

@@ -33,6 +33,7 @@ filter-list URLs and hashes.
 | `scripts/build-webkit.sh` | WPE WebKit + the `qt5-plugin/` overlay |
 | `scripts/build-ui.sh` | Atlantic UI against the staged engine |
 | `scripts/patches.sh` | applies the patch stack — order is load-bearing ([patches/SERIES.md](../patches/SERIES.md)) |
+| `scripts/verify-patch-stack.sh` | applies the stack to a pristine tree and hashes the result — the cheap bump/consolidation guard, no compiler needed |
 | `scripts/package-rpms.sh` → `build-rpms-native.sh` | RPM staging and packaging |
 | `scripts/ci-build.sh` | the CI wrapper around all of it |
 
@@ -40,7 +41,8 @@ filter-list URLs and hashes.
 
 | Path | Contents |
 |---|---|
-| `patches/webkit/`, `patches/engine/` | the local patch stack, applied in `patches.sh` order |
+| `patches/webkit/`, `patches/engine/` | the local patch stack, applied in `patches.sh` order; each patch carries its own rationale as a header comment |
+| `patches/disabled/` | kept but never applied |
 | `qt5-plugin/` | self-contained Qt5 WPE bridge (adapted from upstream qt6), overlaid onto the pinned WebKit at build time |
 | `adblock-engine/` | Brave/Rust adblock engine: `libatlantic_adblock.so` + the `builder` that compiles lists into `engine.dat` |
 | `web-extension/` | WebProcess extension running the Brave engine on every resource request — the only network blocker |

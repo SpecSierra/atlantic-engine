@@ -1,0 +1,263 @@
+# Stop full-layer repaints that nothing asked for, plus the paint log that found
+# them.
+# Merged from: webkit-no-full-repaint-on-layer-grow,
+# webkit-no-full-repaint-on-composited-move, webkit-paint-log-diagnostic.
+#
+#  - LAYER GROWTH: a layer changing size does not need a whole repaint — the
+#    coordinated tiled backing store keeps existing tile content valid across
+#    resizes and only newly exposed tiles need painting. During a heavy load the
+#    page content layer grows every time an image/ad lands, and each growth
+#    full-repainted the page (device-proven on franceinfo.fr: 572 whole-layer
+#    invalidations, ~595 Mpx = 219 screenfuls CPU-rastered in ONE load). Covers
+#    the generic GraphicsLayer::setSize() path
+#    (shouldRepaintOnSizeChange override) and the explicit scrolled-contents
+#    resize invalidation in RenderLayerBacking::updateGeometry() (grow-only skip;
+#    shrink and padding-box offset changes still repaint).
+#    WEBKIT_REPAINT_ON_LAYER_RESIZE=1 = stock.
+#  - COMPOSITED MOVE: the scroll-time analog. A self-painting composited layer
+#    that merely MOVED (or jittered <= 1px in size) during a layout does not need
+#    its whole backing re-rastered. franceinfo.fr runs a full doc layout on ~every
+#    scroll frame, and recursiveUpdateLayerPositions -> repaintAfterLayoutIfNeeded
+#    then full-repainted each of ~14 composited section layers whose location
+#    shifted (device-proven build 524: 11x onche.org's full-layer paint = the felt
+#    ~10x scroll slowdown). Only skips move/jitter of layers that own their
+#    backing store; forced/style repaints and ancestor-painting layers unaffected.
+#    WEBKIT_REPAINT_ON_COMPOSITED_MOVE=1 = stock.
+#  - WEBKIT_PAINT_LOG=1 (WebProcess stderr, zero overhead when unset) logs
+#    per-layer damage (GLC FULL/RECT), per-proxy dirty rects (INVAL), tile-paint
+#    passes (PAINT) and full tile drops (DROP-ALL with reason). This is the tool
+#    that root-caused both of the above and the franceinfo repaint storm; kept
+#    because that class of bug recurs on every site.
+#
+# NOTE: the load-rendering-throttle patches that once sat here are GONE (dropped
+# after builds 465-471) and must not be retried. Coalescing main-thread rendering
+# updates during load fundamentally deadlocks the compositor's
+# composition <- tiles <- flush handshake: moving during a load reveals content
+# whose tiles are painted by updateRendering(), and deferring that paint sticks
+# m_isWaitingForRenderer true = permanent freeze (reproduced every attempt, incl.
+# the observer+timer and compositor-gated variants). It also never moved DCL
+# (raster is on Skia worker threads). If load-time paint work is revisited, target
+# style-recalc/layout coalescing, off the compositor path.
+# See docs/investigations/ and memory franceinfo-load-slowness-analysis.
+#
+# ---
+diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp sq-B/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
+@@ -30,6 +30,16 @@
+ 
+ #include <cstdlib>
+ #include <cstring>
++#include <cstdio>
++
++static bool coordPaintLogEnabled()
++{
++    static bool enabled = [] {
++        const char* v = getenv("WEBKIT_PAINT_LOG");
++        return v && *v && *v != '0';
++    }();
++    return enabled;
++}
+ #include <wtf/MemoryPressureHandler.h>
+ #include <wtf/SystemTracing.h>
+ #include <wtf/TZoneMallocInlines.h>
+@@ -290,6 +300,8 @@
+ 
+     Vector<Update::TileUpdate> tilesToUpdate;
+     if (dirtyTilesCount) {
++        if (coordPaintLogEnabled())
++            fprintf(stderr, "[paintlog] proxy %p PAINT dirtyTiles=%u union=%d,%d %dx%d contents=%dx%d newTiles=%u\n", this, dirtyTilesCount, tileDirtyRectUnion.x(), tileDirtyRectUnion.y(), tileDirtyRectUnion.width(), tileDirtyRectUnion.height(), m_contentsRect.width(), m_contentsRect.height(), static_cast<unsigned>(tilesToCreate.size()));
+         WTFBeginSignpost(this, UpdateTiles, "dirty tiles: %u", dirtyTilesCount);
+ 
+ #if USE(SKIA)
+@@ -357,6 +369,10 @@
+ 
+ void CoordinatedBackingStoreProxy::invalidateRegion(const Vector<IntRect, 1>& dirtyRegion)
+ {
++    if (coordPaintLogEnabled()) {
++        for (const auto& r : dirtyRegion)
++            fprintf(stderr, "[paintlog] proxy %p INVAL %d,%d %dx%d\n", this, r.x(), r.y(), r.width(), r.height());
++    }
+     for (const auto& contentsDirtyRect : dirtyRegion) {
+         IntRect dirtyRect(mapFromContents(contentsDirtyRect));
+         IntRect keepRectFitToTileSize = tileRectForPosition(tilePositionForPoint(m_keepRect.minXMinYCorner()));
+@@ -450,6 +466,8 @@
+             m_coverRect = { };
+             m_keepRect = { };
+             if (!m_tiles.isEmpty()) {
++                if (coordPaintLogEnabled())
++                    fprintf(stderr, "[paintlog] proxy %p DROP-ALL tiles=%u tileSizeChanged=%d scaleChanged=%d contents=%dx%d\n", this, static_cast<unsigned>(m_tiles.size()), tileSizeChanged, contentsScaleChanged, m_contentsRect.width(), m_contentsRect.height());
+                 for (const auto& tile : m_tiles.values())
+                     tilesToRemove.append(tile.id);
+                 m_tiles.clear();
+diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp sq-B/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp
+@@ -44,6 +44,17 @@
+ #include "GraphicsLayerKeyframeValueList.h"
+ #include "Image.h"
+ #include "NativeImage.h"
++#include <cstdlib>
++#include <cstdio>
++
++static bool coordPaintLogEnabled()
++{
++    static bool enabled = [] {
++        const char* v = getenv("WEBKIT_PAINT_LOG");
++        return v && *v && *v != '0';
++    }();
++    return enabled;
++}
+ #include <wtf/Locker.h>
+ 
+ namespace WebCore {
+@@ -81,6 +92,19 @@
+     return m_platformLayer->id();
+ }
+ 
++bool GraphicsLayerCoordinated::shouldRepaintOnSizeChange() const
++{
++    // The tiled backing store keeps existing tile content valid across
++    // resizes and paints only newly exposed tiles, so a whole-layer repaint
++    // on resize is redundant (renderer-level repaints cover content whose
++    // rendering actually changed).
++    static bool repaintOnResize = [] {
++        const char* v = getenv("WEBKIT_REPAINT_ON_LAYER_RESIZE");
++        return v && *v && *v != '0';
++    }();
++    return repaintOnResize && drawsContent();
++}
++
+ void GraphicsLayerCoordinated::setNeedsDisplay()
+ {
+     if (!m_drawsContent || !m_contentsVisible || m_size.isEmpty())
+@@ -94,6 +118,9 @@
+     } else
+         m_dirtyRegion = Damage(m_size, Damage::Mode::Full);
+ 
++    if (coordPaintLogEnabled())
++        fprintf(stderr, "[paintlog] GLC %p FULL size=%.0fx%.0f\n", this, m_size.width(), m_size.height());
++
+     noteLayerPropertyChanged(Change::DirtyRegion, ScheduleFlush::Yes);
+     addRepaintRect({ { }, m_size });
+ }
+@@ -118,6 +145,9 @@
+     if (!m_dirtyRegion)
+         m_dirtyRegion = Damage(m_size, Damage::Mode::Rectangles, s_maxDamageRectanglesForHighResolutionDamage);
+ 
++    if (coordPaintLogEnabled() && rect.width() * rect.height() >= 500000)
++        fprintf(stderr, "[paintlog] GLC %p RECT %.0f,%.0f %.0fx%.0f size=%.0fx%.0f\n", this, rect.x(), rect.y(), rect.width(), rect.height(), m_size.width(), m_size.height());
++
+     if (m_dirtyRegion->add(rect))
+         noteLayerPropertyChanged(Change::DirtyRegion, ScheduleFlush::Yes);
+ }
+diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.h sq-B/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.h
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.h
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.h
+@@ -119,6 +119,7 @@
+ 
+     void setNeedsDisplay() override;
+     void setNeedsDisplayInRect(const FloatRect&, ShouldClipToLayer = ShouldClipToLayer::Clip) override;
++    bool shouldRepaintOnSizeChange() const override;
+ 
+     FloatSize pixelAlignmentOffset() const override { return m_pixelAlignmentOffset; }
+ 
+diff -ruN --no-dereference sq-A/Source/WebCore/rendering/RenderElement.cpp sq-B/Source/WebCore/rendering/RenderElement.cpp
+--- a/Source/WebCore/rendering/RenderElement.cpp
++++ b/Source/WebCore/rendering/RenderElement.cpp
+@@ -74,6 +74,7 @@
+ #include "RenderInline.h"
+ #include "RenderIterator.h"
+ #include "RenderLayer.h"
++#include "RenderLayerBacking.h"
+ #include "RenderLayerCompositor.h"
+ #include "RenderLayerInlines.h"
+ #include "RenderLayerScrollableArea.h"
+@@ -109,6 +110,7 @@
+ #include "Styleable.h"
+ #include "TextAutoSizing.h"
+ #include "ViewTransition.h"
++#include <cstdlib>
+ #include <wtf/MathExtras.h>
+ #include <wtf/StackStats.h>
+ #include <wtf/TZoneMallocInlines.h>
+@@ -1465,6 +1467,41 @@
+     if (!repaintContainer)
+         repaintContainer = &view();
+ 
++#if USE(COORDINATED_GRAPHICS)
++    // A self-painting composited layer that merely moved during layout (or
++    // jittered <=1px in size) does not need its whole backing store re-rastered:
++    // the compositor repositions the layer and the coordinated tiled backing
++    // paints newly exposed tiles on demand (same invariant as
++    // webkit-no-full-repaint-on-layer-grow). franceinfo.fr relayouts on ~every
++    // scroll frame, so without this each of ~14 composited section layers
++    // full-repaints per frame (device-proven: ~11x onche.org's full-layer paint
++    // = the felt ~10x scroll slowdown). WEBKIT_REPAINT_ON_COMPOSITED_MOVE=1
++    // restores stock behaviour.
++    if (fullRepaint && requiresFullRepaint != RequiresFullRepaint::Yes && haveOutlinesBoundsRects
++        && !oldClippedOverflowRect.isEmpty() && !newClippedOverflowRect.isEmpty()
++        && oldClippedOverflowRect.intersects(newClippedOverflowRect)) {
++        auto widthDelta = newRects.outlineBoundsRect->width() - oldRects.outlineBoundsRect->width();
++        auto heightDelta = newRects.outlineBoundsRect->height() - oldRects.outlineBoundsRect->height();
++        if (widthDelta < 0)
++            widthDelta = -widthDelta;
++        if (heightDelta < 0)
++            heightDelta = -heightDelta;
++        static bool repaintOnCompositedMove = [] {
++            const char* v = getenv("WEBKIT_REPAINT_ON_COMPOSITED_MOVE");
++            return v && *v && *v != '0';
++        }();
++        if (!repaintOnCompositedMove && widthDelta <= LayoutUnit(1) && heightDelta <= LayoutUnit(1)
++            && !mustFullRepaintOnSizeChange(*oldRects.outlineBoundsRect, *newRects.outlineBoundsRect)) {
++            if (auto* layerModelObject = dynamicDowncast<RenderLayerModelObject>(*this)) {
++                if (auto* layer = layerModelObject->layer(); layer && layer->isComposited()) {
++                    if (auto* backing = layer->backing(); backing && !backing->paintsIntoCompositedAncestor() && !backing->paintsIntoWindow())
++                        return true; // compositor moves the backing; skip the redundant full content repaint
++                }
++            }
++        }
++    }
++#endif
++
+     if (fullRepaint) {
+         if (newClippedOverflowRect.contains(oldClippedOverflowRect))
+             repaintUsingContainer(WeakPtr { repaintContainer }, newClippedOverflowRect);
+diff -ruN --no-dereference sq-A/Source/WebCore/rendering/RenderLayerBacking.cpp sq-B/Source/WebCore/rendering/RenderLayerBacking.cpp
+--- a/Source/WebCore/rendering/RenderLayerBacking.cpp
++++ b/Source/WebCore/rendering/RenderLayerBacking.cpp
+@@ -126,6 +126,10 @@
+ #include "ModelContext.h"
+ #endif
+ 
++#if USE(COORDINATED_GRAPHICS)
++#include <cstdlib>
++#endif
++
+ namespace WebCore {
+ 
+ WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderLayerBacking);
+@@ -1689,7 +1693,22 @@
+         IntSize scrollSize;
+         if (scrollableArea)
+             scrollSize = IntSize(scrollableArea->scrollWidth(), scrollableArea->scrollHeight());
+-        if (scrollSize != m_scrolledContentsLayer->size() || paddingBoxOffsetChanged)
++#if USE(COORDINATED_GRAPHICS)
++        // Grow-only resizes keep existing tile content valid; see
++        // GraphicsLayerCoordinated::shouldRepaintOnSizeChange(). Same
++        // WEBKIT_REPAINT_ON_LAYER_RESIZE kill-switch restores stock behaviour.
++        static bool repaintOnResize = [] {
++            const char* v = getenv("WEBKIT_REPAINT_ON_LAYER_RESIZE");
++            return v && *v && *v != '0';
++        }();
++        bool scrolledContentsShrank = scrollSize.width() < m_scrolledContentsLayer->size().width()
++            || scrollSize.height() < m_scrolledContentsLayer->size().height();
++        bool repaintScrolledContents = paddingBoxOffsetChanged
++            || (scrollSize != m_scrolledContentsLayer->size() && (scrolledContentsShrank || repaintOnResize));
++#else
++        bool repaintScrolledContents = scrollSize != m_scrolledContentsLayer->size() || paddingBoxOffsetChanged;
++#endif
++        if (repaintScrolledContents)
+             m_scrolledContentsLayer->setNeedsDisplay();
+ 
+         m_scrolledContentsLayer->setSize(scrollSize);

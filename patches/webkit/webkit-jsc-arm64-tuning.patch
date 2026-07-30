@@ -1,0 +1,77 @@
+# JavaScriptCore tuning for this 64-bit ARM phone.
+# Merged from: webkit-jsc-linux-arm64-thread-tuning,
+# webkit-jsc-linux-arm64-jit-thresholds.
+#
+# Worker/thread counts and JIT tier-up thresholds picked for the device's core
+# count and memory rather than desktop Linux defaults.
+#
+# ---
+diff -ruN --no-dereference sq-A/Source/JavaScriptCore/runtime/Options.cpp sq-B/Source/JavaScriptCore/runtime/Options.cpp
+--- a/Source/JavaScriptCore/runtime/Options.cpp
++++ b/Source/JavaScriptCore/runtime/Options.cpp
+@@ -596,6 +596,65 @@
+     Options::worklistFTLLoadWeight() = 20;
+ #endif
+ 
++#if OS(LINUX) && CPU(ARM64)
++    // Linux ARM64 (e.g. Snapdragon 665 big.LITTLE 8-core) has no platform
++    // tuning block, so JSC defaults to 7 FTL compiler threads and 8 GC marker
++    // threads on an 8-core device — saturating the CPU during page load.
++    // Mirror the Darwin ARM64 conservative limits here.
++    Options::numberOfGCMarkers() = std::min<unsigned>(4, WTF::numberOfProcessorCores());
++    Options::minNumberOfWorklistThreads() = 1;
++    Options::maxNumberOfWorklistThreads() = std::min<unsigned>(3, WTF::numberOfProcessorCores());
++    Options::numberOfBaselineCompilerThreads() = std::min<unsigned>(2, WTF::numberOfProcessorCores());
++    Options::numberOfDFGCompilerThreads() = std::min<unsigned>(2, WTF::numberOfProcessorCores());
++    Options::numberOfFTLCompilerThreads() = std::min<unsigned>(2, WTF::numberOfProcessorCores());
++    Options::worklistLoadFactor() = 20;
++    Options::worklistBaselineLoadWeight() = 2;
++    Options::worklistDFGLoadWeight() = 5;
++    Options::worklistFTLLoadWeight() = 20;
++#endif
++
++#if OS(LINUX) && CPU(ARM64)
++    // ── FTL/DFG compilation thresholds ──────────────────────────────────────
++    // Default thresholdForFTLOptimizeAfterWarmUp is 64000 — far too high for
++    // mobile pages that execute hot functions 5k–20k times and then navigate
++    // away.  At 64k the FTL optimising JIT never fires on real navigation;
++    // the code stays in DFG tier indefinitely, leaving 30–50% peak throughput
++    // on the table.  Lower to 15000 so FTL warms up within a Speedometer
++    // iteration or a typical SPA route change.
++    //
++    // thresholdForFTLOptimizeSoon governs recompilation urgency once the
++    // threshold is crossed.  500 (vs default 1000) keeps the compiler queue
++    // shorter on the capped 2-thread worklist set by the thread-tuning patch.
++    Options::thresholdForFTLOptimizeAfterWarmUp() = 15000;
++    Options::thresholdForFTLOptimizeSoon() = 500;
++
++    // ── Inlining budget ──────────────────────────────────────────────────────
++    // Mirror the ARM32 Linux block: depth 8 and the same caller-cost budget
++    // improve DFG/FTL code quality on framework-heavy JS (React, Vue, etc.)
++    // without significantly increasing compile time at the capped thread count.
++    Options::maximumInliningDepth() = 8;
++    Options::maximumInliningRecursion() = 3;
++    Options::maximumInliningCallerBytecodeCost() = 9912;
++
++    // ── Incremental / concurrent GC ──────────────────────────────────────────
++    // On devices with ≥4 cores JSC defaults gcIncrementScale=0, meaning the
++    // GC runs as a single stop-the-world burst.  On an 8-core Snapdragon 665
++    // this produces 100–250 ms jank spikes during scroll and animation because
++    // the 256 MB process cap means the GC heap fills quickly and triggers large
++    // synchronous collections.
++    //
++    // gcIncrementScale=1 enables incremental collection (sliced across mutator
++    // allotments).  The three accompanying options match the conservative iOS
++    // tuning already applied on Apple's own constrained ARM64 devices:
++    //   maximumMutatorUtilization=0.6  — GC gets 40% of CPU time when needed
++    //   minimumGCPauseMS=1             — each GC slice ≤ 1 ms
++    //   useStochasticMutatorScheduler=false — deterministic scheduling on mobile
++    Options::gcIncrementScale() = 1;
++    Options::maximumMutatorUtilization() = 0.6;
++    Options::minimumGCPauseMS() = 1;
++    Options::useStochasticMutatorScheduler() = false;
++#endif
++
+ #if OS(LINUX) && CPU(ARM)
+     Options::maximumFunctionForCallInlineCandidateBytecodeCostForDFG() = 77;
+     Options::maximumOptimizationCandidateBytecodeCost() = 42403;

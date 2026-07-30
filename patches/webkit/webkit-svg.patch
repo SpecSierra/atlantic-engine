@@ -1,0 +1,437 @@
+# SVG: cache what can be cached, cap what cannot.
+# Merged from: webkit-svg-raster-cache, webkit-svg-filter-results-reuse,
+# webkit-svg-filter-scale-cap. Shipped 551-553, device-verified (2x AnTuTu).
+#
+#  - WebKit has NO raster cache for SVG-as-image (SVGImageCache caches only size
+#    wrappers): SVGImage::draw re-lays-out and re-paints the whole embedded SVG
+#    document on EVERY draw, so each tile record re-vectors every visible SVG on
+#    the main thread and the CPU raster workers re-rasterize the path ops per
+#    tile. Device-proven (build 550): 2.3-2.8 ms/draw per 360px 300-path icon vs
+#    0.05 ms for a bitmap (>= 50x); a flick over an SVG grid left the whole
+#    viewport blank while the identical PNG grid painted fully mid-scroll. Now
+#    the rasterized container is cached in SVGImage, keyed on container
+#    size/zoom/fragment/backing px, 2-entry LRU, skipping animating documents and
+#    luminance masks, area-capped by WEBKIT_SVG_RASTER_CACHE_MAX_AREA_PX and
+#    invalidated on data change and chrome-client invalidations.
+#    WEBKIT_SVG_RASTER_CACHE=0 restores upstream.
+#  - Animated/transformed elements with SVG filters re-ran the ENTIRE filter
+#    graph every frame: any client invalidation (a per-frame transform translate
+#    is the common case) destroys the legacy FilterData and with it the
+#    FilterResults cache, so feTurbulence noise, lighting and blurs recompute per
+#    frame on the main thread (AnTuTu SVG subtest: ~16 iter/s, main thread 80%+
+#    in the software appliers). Effect instances are cached on the SVG primitive
+#    elements, so results keyed by them stay valid across rebuilds: retire
+#    FilterResults on client removal and re-seed the rebuilt filter when the
+#    geometry (referenceBox, region, scale, source rect) is unchanged.
+#    Source-dependent results are always cleared, param changes keep clearing via
+#    markFilterForRepaint incl. the stash, stash capped at 8 entries.
+#    WEBKIT_SVG_FILTER_RESULTS_REUSE=0 restores upstream.
+#  - What genuinely cannot be cached (the AnTuTu noise field scrolls through the
+#    moving region by design) gets capped instead: Atlantic's 3x UI scale is page
+#    zoom, so software filter buffers come out at 9x the CSS-nominal pixel count.
+#    WEBKIT_SVG_FILTER_SCALE_CAP (default 2.0, 0 = off) cuts filter pixels 2.25x
+#    and upscales at draw time — visually benign for blurry effects.
+#
+# Internal ordering is load-bearing: the scale cap edits the same function as
+# results-reuse.
+#
+# ---
+diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/filters/FilterResults.cpp sq-B/Source/WebCore/platform/graphics/filters/FilterResults.cpp
+--- a/Source/WebCore/platform/graphics/filters/FilterResults.cpp
++++ b/Source/WebCore/platform/graphics/filters/FilterResults.cpp
+@@ -91,4 +91,19 @@
+     m_resultReferences.remove(result);
+ }
+ 
++void FilterResults::clearSourceImageDependentResults()
++{
++    // Clear the source images and, transitively, every result computed from
++    // them, keeping only results of source-independent subgraphs (feTurbulence,
++    // feFlood, feImage chains) whose output cannot depend on the target's
++    // rendering.
++    Vector<Ref<FilterEffect>> sourceEffects;
++    for (auto& effect : m_results.keys()) {
++        if (effect->filterType() == FilterFunction::Type::SourceGraphic || effect->filterType() == FilterFunction::Type::SourceAlpha)
++            sourceEffects.append(effect);
++    }
++    for (auto& effect : sourceEffects)
++        clearEffectResult(effect);
++}
++
+ } // namespace WebCore
+diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/filters/FilterResults.h sq-B/Source/WebCore/platform/graphics/filters/FilterResults.h
+--- a/Source/WebCore/platform/graphics/filters/FilterResults.h
++++ b/Source/WebCore/platform/graphics/filters/FilterResults.h
+@@ -47,6 +47,7 @@
+     FilterImage* effectResult(FilterEffect&) const;
+     void setEffectResult(FilterEffect&, std::span<const Ref<FilterImage>> inputs, Ref<FilterImage>&& result);
+     void clearEffectResult(FilterEffect&);
++    WEBCORE_EXPORT void clearSourceImageDependentResults();
+ 
+ private:
+     size_t memoryCost() const;
+diff -ruN --no-dereference sq-A/Source/WebCore/rendering/svg/legacy/LegacyRenderSVGResourceFilter.cpp sq-B/Source/WebCore/rendering/svg/legacy/LegacyRenderSVGResourceFilter.cpp
+--- a/Source/WebCore/rendering/svg/legacy/LegacyRenderSVGResourceFilter.cpp
++++ b/Source/WebCore/rendering/svg/legacy/LegacyRenderSVGResourceFilter.cpp
+@@ -36,6 +36,8 @@
+ #include "SVGElementTypeHelpers.h"
+ #include "SVGRenderingContext.h"
+ #include "Settings.h"
++#include <cstdlib>
++#include <cstring>
+ #include <wtf/TZoneMallocInlines.h>
+ #include <wtf/text/TextStream.h>
+ 
+@@ -56,9 +58,40 @@
+     return SVGFilterRenderer::isIdentity(protectedFilterElement());
+ }
+ 
++static bool svgFilterResultsReuseEnabled()
++{
++    static bool enabled = [] {
++        const char* env = getenv("WEBKIT_SVG_FILTER_RESULTS_REUSE");
++        return !env || !*env || strcmp(env, "0");
++    }();
++    return enabled;
++}
++
+ void LegacyRenderSVGResourceFilter::removeAllClientsFromCache()
+ {
+     m_rendererFilterDataMap.clear();
++    m_retiredResultsMap.clear();
++}
++
++void LegacyRenderSVGResourceFilter::retireFilterDataResults(RenderElement& client, FilterData& filterData)
++{
++    if (!svgFilterResultsReuseEnabled())
++        return;
++
++    if (filterData.state != FilterData::Built || !filterData.filter)
++        return;
++
++    auto results = filterData.filter->takeResults();
++    if (!results)
++        return;
++
++    // Bound the stash: entries whose renderer never rebuilds (e.g. the client
++    // was destroyed) must not accumulate result buffers.
++    static constexpr unsigned maxRetiredResults = 8;
++    if (m_retiredResultsMap.size() >= maxRetiredResults)
++        m_retiredResultsMap.clear();
++
++    m_retiredResultsMap.set(client, RetiredFilterResults { filterData.filter->referenceBox(), filterData.filter->filterRegion(), filterData.filter->filterScale(), filterData.sourceImageRect, WTF::move(results) });
+ }
+ 
+ void LegacyRenderSVGResourceFilter::removeClientFromCache(RenderElement& client)
+@@ -68,8 +101,10 @@
+         FilterData& filterData = *findResult->value;
+         if (filterData.savedContext)
+             filterData.state = FilterData::MarkedForRemoval;
+-        else
++        else {
++            retireFilterDataResults(client, filterData);
+             m_rendererFilterDataMap.remove(findResult);
++        }
+     }
+ }
+ 
+@@ -118,6 +153,26 @@
+     // Eliminate shear of the absolute transformation matrix, to be able to produce unsheared tile images for feTile.
+     FloatSize filterScale(absoluteTransform.xScale(), absoluteTransform.yScale());
+ 
++    // Software filters are per-pixel work on the main thread, and this port's
++    // 3x UI scale is implemented as page zoom — so filter buffers come out at
++    // 9x the CSS-nominal pixel count. Cap the filter resolution: the result is
++    // upscaled at draw time, which is visually benign for the blurry effects
++    // (turbulence, lighting, blur) software filters are typically used for.
++    // WEBKIT_SVG_FILTER_SCALE_CAP=<float> tunes the cap; 0 disables it.
++    static const float filterScaleCap = [] {
++        if (const char* env = getenv("WEBKIT_SVG_FILTER_SCALE_CAP")) {
++            char* end = nullptr;
++            float value = strtof(env, &end);
++            if (end != env && value >= 0)
++                return value;
++        }
++        return 2.0f;
++    }();
++    if (filterScaleCap > 0) {
++        filterScale.setWidth(std::min(filterScale.width(), filterScaleCap));
++        filterScale.setHeight(std::min(filterScale.height(), filterScaleCap));
++    }
++
+     // Determine absolute boundaries of the filter and the drawing region.
+     filterData->sourceImageRect = renderer.strokeBoundingBox();
+     filterData->sourceImageRect.intersect(filterRegion);
+@@ -148,7 +203,22 @@
+     auto colorSpace = DestinationColorSpace::LinearSRGB();
+ #endif
+ 
++    auto retired = m_retiredResultsMap.take(renderer);
++    bool reuseRetiredResults = svgFilterResultsReuseEnabled() && retired.results
++        && retired.targetBoundingBox == targetBoundingBox
++        && retired.filterRegion == filterRegion
++        && retired.filterScale == filterScale
++        && retired.sourceImageRect == filterData->sourceImageRect;
++    if (reuseRetiredResults) {
++        // The source image is redrawn on every rebuild, so results computed
++        // from it must not be reused; source-independent results (turbulence,
++        // lighting chains) keep their cache — effect instances are stable.
++        retired.results->clearSourceImageDependentResults();
++    }
++
+     auto& results = filterData->filter->ensureResults([&]() {
++        if (reuseRetiredResults)
++            return WTF::move(retired.results);
+         return makeUnique<FilterResults>();
+     });
+ 
+@@ -251,6 +321,12 @@
+ 
+         filterData->filter->clearEffectResult(effect);
+     }
++
++    // Retired results may hold a stale result for this effect as well.
++    for (auto& retired : m_retiredResultsMap.values()) {
++        if (retired.results)
++            retired.results->clearEffectResult(effect);
++    }
+ }
+ 
+ void LegacyRenderSVGResourceFilter::markFilterForRebuild()
+diff -ruN --no-dereference sq-A/Source/WebCore/rendering/svg/legacy/LegacyRenderSVGResourceFilter.h sq-B/Source/WebCore/rendering/svg/legacy/LegacyRenderSVGResourceFilter.h
+--- a/Source/WebCore/rendering/svg/legacy/LegacyRenderSVGResourceFilter.h
++++ b/Source/WebCore/rendering/svg/legacy/LegacyRenderSVGResourceFilter.h
+@@ -87,7 +87,24 @@
+ 
+     ASCIILiteral renderName() const override { return "RenderSVGResourceFilter"_s; }
+ 
++    // When a client is invalidated for reasons that leave the filter geometry
++    // unchanged (the common case: the target element is translated every
++    // animation frame), the expensive per-effect results (feTurbulence noise,
++    // lighting, blurs) are still valid — effect instances are cached on the SVG
++    // primitive elements, so FilterResults keys stay stable across rebuilds.
++    // Retire the results on removal and re-seed the rebuilt filter with them
++    // when the geometry matches; source-dependent results are always cleared.
++    struct RetiredFilterResults {
++        FloatRect targetBoundingBox;
++        FloatRect filterRegion;
++        FloatSize filterScale;
++        FloatRect sourceImageRect;
++        std::unique_ptr<FilterResults> results;
++    };
++    void retireFilterDataResults(RenderElement&, FilterData&);
++
+     HashMap<SingleThreadWeakRef<RenderObject>, std::unique_ptr<FilterData>> m_rendererFilterDataMap;
++    HashMap<SingleThreadWeakRef<RenderObject>, RetiredFilterResults> m_retiredResultsMap;
+ };
+ 
+ WTF::TextStream& operator<<(WTF::TextStream&, FilterData::FilterDataState);
+diff -ruN --no-dereference sq-A/Source/WebCore/svg/graphics/filters/SVGFilterRenderer.h sq-B/Source/WebCore/svg/graphics/filters/SVGFilterRenderer.h
+--- a/Source/WebCore/svg/graphics/filters/SVGFilterRenderer.h
++++ b/Source/WebCore/svg/graphics/filters/SVGFilterRenderer.h
+@@ -52,6 +52,7 @@
+     FilterEffectVector effectsOfType(FilterFunction::Type) const final;
+ 
+     WEBCORE_EXPORT FilterResults& ensureResults(NOESCAPE const FilterResultsCreator&);
++    std::unique_ptr<FilterResults> takeResults() { return WTF::move(m_results); }
+     void clearEffectResult(FilterEffect&);
+     WEBCORE_EXPORT void mergeEffects(const FilterEffectVector&);
+ 
+diff -ruN --no-dereference sq-A/Source/WebCore/svg/graphics/SVGImageClients.h sq-B/Source/WebCore/svg/graphics/SVGImageClients.h
+--- a/Source/WebCore/svg/graphics/SVGImageClients.h
++++ b/Source/WebCore/svg/graphics/SVGImageClients.h
+@@ -64,6 +64,8 @@
+         if (!image || !image->internalPage())
+             return;
+ 
++        image->invalidateRasterCache();
++
+         if (RefPtr imageObserver = image->imageObserver())
+             imageObserver->imageContentChanged(*image);
+     }
+@@ -76,6 +78,10 @@
+         if (!image || !image->internalPage())
+             return;
+ 
++        // The document's rendering changed (animation tick, resource load,
++        // interactive update): any cached rasterization is stale.
++        image->invalidateRasterCache();
++
+         RefPtr imageObserver = image->imageObserver();
+         if (!imageObserver)
+             return;
+diff -ruN --no-dereference sq-A/Source/WebCore/svg/graphics/SVGImage.cpp sq-B/Source/WebCore/svg/graphics/SVGImage.cpp
+--- a/Source/WebCore/svg/graphics/SVGImage.cpp
++++ b/Source/WebCore/svg/graphics/SVGImage.cpp
+@@ -66,6 +66,9 @@
+ #include "TypedElementDescendantIteratorInlines.h"
+ #include <JavaScriptCore/JSCInlines.h>
+ #include <JavaScriptCore/JSLock.h>
++#include <cstdlib>
++#include <cstring>
++#include <wtf/SetForScope.h>
+ #include <wtf/text/TextStream.h>
+ 
+ #if PLATFORM(MAC)
+@@ -184,11 +187,112 @@
+     return IntSize(currentSize);
+ }
+ 
++static bool svgRasterCacheEnabled()
++{
++    static bool enabled = [] {
++        const char* env = getenv("WEBKIT_SVG_RASTER_CACHE");
++        return !env || !*env || strcmp(env, "0");
++    }();
++    return enabled;
++}
++
++static double svgRasterCacheMaxAreaPx()
++{
++    static double maxArea = [] {
++        if (const char* env = getenv("WEBKIT_SVG_RASTER_CACHE_MAX_AREA_PX")) {
++            if (double value = strtod(env, nullptr); value > 0)
++                return value;
++        }
++        return 4194304.; // 16 MB of BGRA backing.
++    }();
++    return maxArea;
++}
++
++std::optional<ImageDrawResult> SVGImage::tryDrawCachedRasterForContainer(GraphicsContext& context, const FloatSize& containerSize, float containerZoom, const URL& initialFragmentURL, const FloatRect& dstRect, const FloatRect& srcRect, ImagePaintingOptions options)
++{
++    if (!svgRasterCacheEnabled() || m_paintingForRasterCache)
++        return std::nullopt;
++
++    // An animating document invalidates every frame; caching would only add
++    // buffer churn on top of the repaint. Luminance masks need the vector paint.
++    if (isAnimating() || context.drawLuminanceMask())
++        return std::nullopt;
++
++    FloatRect zoomedContainerRect(FloatPoint(), containerSize);
++    zoomedContainerRect.scale(containerZoom);
++    if (zoomedContainerRect.isEmpty() || srcRect.isEmpty() || dstRect.isEmpty())
++        return std::nullopt;
++
++    // Rasterize at the resolution the destination actually needs: device pixels
++    // per zoomed-container unit, i.e. the context scale combined with the
++    // srcRect -> dstRect mapping.
++    auto ctm = context.getCTM();
++    FloatSize scale(std::abs(ctm.xScale()) * dstRect.width() / srcRect.width(), std::abs(ctm.yScale()) * dstRect.height() / srcRect.height());
++    if (scale.isEmpty())
++        return std::nullopt;
++
++    FloatSize backingSize = zoomedContainerRect.size();
++    backingSize.scale(scale.width(), scale.height());
++    IntSize roundedBackingSize = expandedIntSize(backingSize);
++    if (roundedBackingSize.isEmpty())
++        return std::nullopt;
++    if (static_cast<double>(roundedBackingSize.width()) * roundedBackingSize.height() > svgRasterCacheMaxAreaPx())
++        return std::nullopt;
++
++    RefPtr<NativeImage> image;
++    for (size_t i = 0; i < m_rasterCache.size(); ++i) {
++        auto& entry = m_rasterCache[i];
++        if (entry.containerSize == containerSize && entry.containerZoom == containerZoom && entry.initialFragmentURL == initialFragmentURL && entry.backingSize == roundedBackingSize) {
++            image = entry.image;
++            if (i)
++                std::swap(m_rasterCache[0], m_rasterCache[i]);
++            break;
++        }
++    }
++
++    if (!image) {
++        // Force an unaccelerated buffer: this runs on the main thread during
++        // tile recording, and a Ganesh surface + readback there is the slow
++        // path on drivers without cross-context fence support.
++        RefPtr buffer = ImageBuffer::create(FloatSize(roundedBackingSize), RenderingMode::Unaccelerated, RenderingPurpose::DOM, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8, nullptr);
++        if (!buffer)
++            return std::nullopt;
++        {
++            SetForScope paintingForRasterCache(m_paintingForRasterCache, true);
++            auto& bufferContext = buffer->context();
++            bufferContext.scale(FloatSize(roundedBackingSize.width() / zoomedContainerRect.width(), roundedBackingSize.height() / zoomedContainerRect.height()));
++            if (drawForContainer(bufferContext, containerSize, containerZoom, initialFragmentURL, zoomedContainerRect, zoomedContainerRect) != ImageDrawResult::DidDraw)
++                return std::nullopt;
++        }
++        image = ImageBuffer::sinkIntoNativeImage(WTF::move(buffer));
++        if (!image)
++            return std::nullopt;
++
++        static constexpr size_t maxRasterCacheEntries = 2;
++        if (m_rasterCache.size() >= maxRasterCacheEntries)
++            m_rasterCache.removeLast();
++        m_rasterCache.insert(0, RasterCacheEntry { containerSize, containerZoom, initialFragmentURL, roundedBackingSize, image });
++    }
++
++    // Map srcRect (zoomed-container coordinates) into backing pixels.
++    FloatRect scaledSrcRect = srcRect;
++    scaledSrcRect.scale(roundedBackingSize.width() / zoomedContainerRect.width(), roundedBackingSize.height() / zoomedContainerRect.height());
++    context.drawNativeImage(*image, dstRect, scaledSrcRect, options);
++
++    if (RefPtr observer = imageObserver())
++        observer->didDraw(*this);
++
++    return ImageDrawResult::DidDraw;
++}
++
+ ImageDrawResult SVGImage::drawForContainer(GraphicsContext& context, const FloatSize containerSize, float containerZoom, const URL& initialFragmentURL, const FloatRect& dstRect, const FloatRect& srcRect, ImagePaintingOptions options)
+ {
+     if (!m_page)
+         return ImageDrawResult::DidNothing;
+ 
++    if (auto cachedResult = tryDrawCachedRasterForContainer(context, containerSize, containerZoom, initialFragmentURL, dstRect, srcRect, options))
++        return *cachedResult;
++
+     RefPtr observer = imageObserver();
+ 
+     // Temporarily reset image observer, we don't want to receive any changeInRect() calls due to this relayout.
+@@ -480,6 +584,8 @@
+ 
+ EncodedDataStatus SVGImage::dataChanged(bool allDataReceived)
+ {
++    invalidateRasterCache();
++
+     // Don't do anything; it is an empty image.
+     if (!data()->size())
+         return EncodedDataStatus::Complete;
+diff -ruN --no-dereference sq-A/Source/WebCore/svg/graphics/SVGImage.h sq-B/Source/WebCore/svg/graphics/SVGImage.h
+--- a/Source/WebCore/svg/graphics/SVGImage.h
++++ b/Source/WebCore/svg/graphics/SVGImage.h
+@@ -29,6 +29,7 @@
+ #include <WebCore/Image.h>
+ #include <WebCore/Timer.h>
+ #include <wtf/URL.h>
++#include <wtf/Vector.h>
+ 
+ namespace WebCore {
+ 
+@@ -108,11 +109,28 @@
+     WEBCORE_EXPORT explicit SVGImage(ImageObserver*);
+     ImageDrawResult draw(GraphicsContext&, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions = { }) final;
+     ImageDrawResult drawForContainer(GraphicsContext&, const FloatSize containerSize, float containerZoom, const URL& initialFragmentURL, const FloatRect& dstRect, const FloatRect& srcRect, ImagePaintingOptions = { });
++
++    // WebKit has no raster cache for SVG-as-image: every draw re-lays-out and
++    // re-paints the whole embedded SVG document, which dominates tile paint on
++    // CPU-raster devices. Cache the rasterized container and blit it on
++    // subsequent draws (WEBKIT_SVG_RASTER_CACHE=0 restores upstream behaviour).
++    struct RasterCacheEntry {
++        FloatSize containerSize;
++        float containerZoom { 1 };
++        URL initialFragmentURL;
++        IntSize backingSize;
++        RefPtr<NativeImage> image;
++    };
++    std::optional<ImageDrawResult> tryDrawCachedRasterForContainer(GraphicsContext&, const FloatSize& containerSize, float containerZoom, const URL& initialFragmentURL, const FloatRect& dstRect, const FloatRect& srcRect, ImagePaintingOptions);
++    void invalidateRasterCache() { m_rasterCache.clear(); }
+     void drawPatternForContainer(GraphicsContext&, const FloatSize& containerSize, float containerZoom, const URL& initialFragmentURL, const FloatRect& srcRect, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, const FloatRect&, ImagePaintingOptions = { });
+ 
+     RefPtr<Page> m_page;
+     FloatSize m_intrinsicSize;
+ 
++    Vector<RasterCacheEntry, 2> m_rasterCache;
++    bool m_paintingForRasterCache { false };
++
+     Timer m_startAnimationTimer;
+ };
+ 

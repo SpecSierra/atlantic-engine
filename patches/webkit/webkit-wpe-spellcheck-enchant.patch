@@ -1,3 +1,7 @@
+#  WPE has no TextChecker backend upstream (spellcheck is GTK-only); port
+#  the GTK enchant-backed implementation so ENABLE_SPELLCHECK builds/works.
+#
+# ---
 diff -ruN a/Source/cmake/OptionsWPE.cmake b/Source/cmake/OptionsWPE.cmake
 --- a/Source/cmake/OptionsWPE.cmake	2026-07-05 12:28:29.029676311 +0000
 +++ b/Source/cmake/OptionsWPE.cmake	2026-07-05 12:28:47.297780322 +0000

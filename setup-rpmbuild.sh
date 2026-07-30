@@ -146,11 +146,9 @@ echo "--- Copying spec helper files ---"
 for f in \
     sfos-toolchain.cmake \
     sfos-meson-cross.ini \
-    patches/webkit/webkit-quirks-no-video.patch \
-    patches/webkit/webkit-icu-imported-targets.patch \
-    patches/webkit/webkit-renderbox-isnan.patch \
-    patches/webkit/webkit-shapeoutside-isnan.patch \
-    patches/webkit/webkit-gst-buffer-tuning.patch \
+    patches/webkit/webkit-portability-webcore.patch \
+    patches/webkit/webkit-build-cmake-fixes.patch \
+    patches/webkit/webkit-gst-media.patch \
     patch-glibc-versions.py \
     cmake/atlantic-wpe-features.cmake \
     scripts/write-webkit-feature-flags.py; do

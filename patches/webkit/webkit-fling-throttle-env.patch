@@ -1,3 +1,19 @@
+#  webkit-fling-throttle-env.patch: fling degradation for main-thread-bound
+#  pages (franceinfo/radiofrance scroll <1fps, 44% style resolution). While the
+#  scrolling thread reports a fast fling (velocity sampled in
+#  ScrollingTree::scrollingTreeNodeDidScroll, settle window like the
+#  checkerboard patch), LayerTreeHost caps main-thread rendering updates to one
+#  per WEBKIT_FLING_THROTTLE_MS. Page::updateRendering is where scroll DOM
+#  events, rAF, IntersectionObserver, style, layout and paint all run, so this
+#  one gate starves scroll-triggered page work during the fling; the compositor
+#  keeps scrolling already-painted tiles. Deliberately lossy (lazy-load/sticky
+#  JS lags until settle). SAFE vs the builds-465..471 deadlock: the repeating
+#  RenderingUpdate observer is never invalidated/deferred — the gate just
+#  early-returns and leaves it polling, plus a one-shot wakeup timer for quiet
+#  loops. Unset/0 = bit-for-bit stock scheduling. Must apply AFTER the
+#  composite-scroll-sync patches (contexts overlap in LayerTreeHost.cpp).
+#
+# ---
 diff -ur a/Source/WebCore/page/scrolling/ScrollingTree.cpp b/Source/WebCore/page/scrolling/ScrollingTree.cpp
 --- a/Source/WebCore/page/scrolling/ScrollingTree.cpp	2026-07-12 11:58:14.369873814 +0000
 +++ b/Source/WebCore/page/scrolling/ScrollingTree.cpp	2026-07-12 11:59:57.546601015 +0000

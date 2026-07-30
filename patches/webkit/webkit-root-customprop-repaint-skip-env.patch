@@ -1,3 +1,13 @@
+#  THE franceinfo scroll-freeze fix: WEBKIT_SKIP_ROOT_CUSTOMPROP_REPAINT=1 (default ON)
+#  stops RenderBox::styleWillChange from repainting the whole page when a :root/<body>
+#  custom-property changes (the site updates --offset-sticky-* on <html> every scroll
+#  frame -> full-page repaint -> ~2280-tile batch -> compositor stall -> freeze). Device-
+#  verified 34s->3.3s worst freeze. Root-caused via the frame-trace tooling above.
+#  (A broader "repaint only if background changed" variant was tried and reverted: it did
+#  NOT fix the separate settle "blinking" - that's progressive image loads + flex reflow,
+#  not the root repaint - and it risked increasing per-settle tile cost.)
+#
+# ---
 Skip the full-page root repaint for :root/<body> custom-property-only changes.
 
 Device frame-tracing (ATLANTIC_FRAME_TRACE=1 + /root/ftrace.py + symbolized
