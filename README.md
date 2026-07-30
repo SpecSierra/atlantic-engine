@@ -49,7 +49,9 @@ Full layout: [docs/BUILD.md](docs/BUILD.md).
   on-device A/B. Flip the default only if the delta clears the noise floor; if the
   flag is inert, revert it.
 - **A feature touches every layer in one pass** — engine C++, QML/UI, settings
-  storage, sailjail/D-Bus permissions. Engine-only is incomplete.
+  storage, sailjail/D-Bus permissions. List the layers and confirm the list before
+  implementing; engine-only is incomplete, and finish with an on-device check that
+  the user-visible behaviour works.
 - **Generate patches mechanically**: edit the tree, `git diff > patches/…patch`,
   validate with `git apply --check`. Hand-written hunks have repeatedly been wrong.
 - **Commit to `master`**, no feature branches; push only when asked.

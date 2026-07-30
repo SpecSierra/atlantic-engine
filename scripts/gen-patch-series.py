@@ -77,6 +77,8 @@ def main():
         "",
         "**Generated — do not edit.** `python3 scripts/gen-patch-series.py`",
         "",
+        "Why each patch exists: [RATIONALE.md](RATIONALE.md) (hand-maintained).",
+        "",
         "Apply order comes from `scripts/patches.sh` and is load-bearing: patches "
         "that touch the same file must stay in this order. Validate the stack "
         "**sequentially** on a version bump — isolated dry-runs give false failures.",

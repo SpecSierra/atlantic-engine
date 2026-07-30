@@ -95,6 +95,13 @@ updates ([DEVICE.md](DEVICE.md)).
   stack **sequentially** — isolated dry-runs give false failures. Triple-check
   sonames.
 
+## Open packaging questions
+
+- A fresh install should match the staged tree exactly, with no manual device-side
+  fixes. It does not yet.
+- Decide whether the older RPM specs beyond the WebKit pair get aligned with the
+  native packaging path or retired.
+
 ## Tests
 
 ```bash
