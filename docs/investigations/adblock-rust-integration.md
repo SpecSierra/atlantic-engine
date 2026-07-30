@@ -24,7 +24,34 @@ production-grade `adblock-rust` engine. This gives us:
 - Sub-100ms cold start via FlatBuffers binary cache
 - < 10 µs per-request matching
 
-**Engine:** [brave/adblock-rust](https://github.com/brave/adblock-rust) v0.12
+**Engine:** [brave/adblock-rust](https://github.com/brave/adblock-rust) v0.13
+
+> **0.12 → 0.13 (2026-07-30).** Breaking bump. The serialized cache format went
+> **v3 → v5**, so an `engine.dat` built by one engine version is rejected outright
+> by the other (`VersionMismatch`) — builder and runtime must always ship together.
+> The web extension's existing "corrupt updated copy falls back to the shipped
+> copy" path covers the transition for already-installed devices: they keep
+> adblocking with their shipped lists, but stop applying published list refreshes
+> until the RPM is updated.
+>
+> API changes ported: `Engine::from_filter_set(set, optimize)` split into
+> `new_with_filter_set` / `new_with_filter_set_no_optimize`; `FilterSet::add_filter_list`
+> takes an owned `String`; `FilterSet::add_filters` removed; `BlockerResult::matched`
+> replaced by `Option<FilterRuleDebugInfo>` fields (`matched` ≡
+> `exception.is_none() && filter.is_some()`, upstream's own definition);
+> `BlockerResult::exception` is now a struct rather than a `String`.
+>
+> New in 0.13: **`$method`**. A filter carrying it never matches unless the real
+> HTTP verb is supplied, so the verb is now plumbed from
+> `webkit_uri_request_get_http_method()` through the FFI. Passing `""` would have
+> left every `$method` rule permanently inert.
+>
+> Verified before landing: 607-URL corpus drawn from EasyList/EasyPrivacy hosts
+> plus benign controls — 587 blocked under both versions, **zero verdict
+> differences**; cosmetic output identical on three sites (hide-rule counts,
+> injected scriptlet bytes, procedural actions); assembled `adblock-resources.json`
+> identical (56 resources). `engine.dat` grew 15.28 → 16.82 MB (+10%) for the same
+> list set.
 **License:** MPL-2.0 (compatible — Atlantic Browser is also MPL-2.0)
 **Language:** Rust → native `libatlantic_adblock.so` (ARM64)
 **Filter lists:** EasyList + EasyPrivacy + Fanboy's Annoyance + uBO Annoyances

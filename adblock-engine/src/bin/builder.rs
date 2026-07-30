@@ -72,10 +72,11 @@ fn main() {
             format: fmt,
             ..ParseOptions::default()
         };
-        filter_set.add_filter_list(&text, opts);
+        filter_set.add_filter_list(text, opts);
     }
 
-    let engine = Engine::from_filter_set(filter_set, true);
+    // 0.13 split the old from_filter_set(set, optimize) in two.
+    let engine = Engine::new_with_filter_set(filter_set);
     let data = engine.serialize();
     fs::write(output, &data).unwrap_or_else(|e| {
         eprintln!("failed to write {}: {}", output, e);
