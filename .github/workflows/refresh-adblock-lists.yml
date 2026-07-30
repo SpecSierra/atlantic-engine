@@ -18,6 +18,15 @@ on:
     - cron: "17 3 * * 1"
   workflow_dispatch:
 
+# Required to push the payload to the gh-pages branch. Without it GITHUB_TOKEN
+# gets the repository default, which is read-only here, and the publish step
+# fails with "Permission to SpecSierra/atlantic-engine.git denied to
+# github-actions[bot]" / 403. build-atlantic-packages.yml declares the same
+# thing, which is why its Pages publish has always worked and this one never
+# did. contents:write is all actions-gh-pages needs — it pushes a branch.
+permissions:
+  contents: write
+
 concurrency:
   group: refresh-adblock-lists
   cancel-in-progress: false
