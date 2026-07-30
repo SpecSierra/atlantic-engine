@@ -1,3 +1,5 @@
+> **Status: STALE (2026-05-28)** — An incomplete audit from before most of the rendering work landed, kept only for the early device facts (Adreno 610, conservative GPU mode). Do not treat its open questions as current.
+
 # Rendering audit
 
 ## Status

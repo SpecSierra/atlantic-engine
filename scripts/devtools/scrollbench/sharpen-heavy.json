@@ -1,0 +1,9 @@
+{
+  "url": "file:///home/defaultuser/heavy.html",
+  "seconds": 12, "reps": 4, "profile": "fling", "speed": 3500, "settle": 4,
+  "arms": [
+    {"label": "sharpen-all", "env": {"WEBKIT_SCROLLTIER_LOG": "1"}},
+    {"label": "sharpen-viewport", "env": {"WEBKIT_SCROLLTIER_LOG": "1",
+      "WEBKIT_LOWRES_SHARPEN_VIEWPORT_ONLY": "1"}}
+  ]
+}

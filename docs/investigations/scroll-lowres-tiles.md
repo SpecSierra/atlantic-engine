@@ -1,3 +1,5 @@
+> **Status: SHIPPED — design record** — Written before the patch was built. The low-res tile ladder now ships; the current behaviour and its open metric defect are in `scroll-tier-velocity-metric.md`.
+
 # Handover — Low-resolution tiles during scroll
 
 Author: prior session (2026-06-20). Status: **Option A implemented (2026-06-20),

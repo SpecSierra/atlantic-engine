@@ -30,7 +30,12 @@ group — no real root needed).
 |--------|-------|
 | `tap.py X Y [hold_seconds]` | single tap at pixel (X, Y); default hold 0.08s |
 | `swipe.py X1 Y1 X2 Y2` | drag/flick over ~20 steps |
+| `pinch.py` | two-finger pinch — stagger the finger-downs, or Maps reads it as a two-finger tap |
+| `scrollgesture.py` | scripted scroll gesture profiles |
 | `evtouch.py` | shared module (constants + `Touch` class) |
+
+Scripted touch cannot reproduce a real finger's cadence; for anything that depends
+on gesture timing, ask the user to scroll by hand.
 
 > **Copy `evtouch.py` to the device alongside `tap.py`/`swipe.py`** — they
 > `import evtouch`, so all three must land in the same directory.
@@ -53,3 +58,16 @@ launched with `WEBKIT_INSPECTOR_HTTP_SERVER=0.0.0.0:9224`.
 `wkeval`/`wkinspect`/`wkconsole`/`wkdump` build on the `Inspector` class in
 `wkinspector.py`; `wkprobe.py` works with raw frames and only shares the
 connection constants.
+
+## Other helpers
+
+| Script | Purpose |
+|--------|---------|
+| `atl.sh restart\|open\|shot\|push` | thin ssh/D-Bus wrapper: relaunch, navigate, screenshot (poll-until-stable), push a QML file |
+| `ftrace.py` | frame-trace parser for `ATLANTIC_FRAME_TRACE` output |
+| `scrollbench/` | scroll A/B harness — bench-page generator, interleaved runner, velocity-estimate check |
+| `videobench/` | fullscreen video arms, frame-trace capture, RSS slope, decode-rank bake-off (`vidtest.sh`) |
+| `sandbox/bwrap_shim.py` | one-off device shim that intercepts WebKit's bwrap args (`BWRAP_TEST_*`) to bisect sandbox failures |
+
+Benchmark methodology and the traps these harnesses exist to avoid:
+[`docs/BENCHMARKING.md`](../../docs/BENCHMARKING.md).

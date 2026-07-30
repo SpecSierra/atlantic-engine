@@ -1,3 +1,5 @@
+> **Status: SHIPPED fix, decouple parked** — The production stall is fixed. The wider "decouple rendering from load" idea is abandoned as unfixable — see `load-perf-paint-storm.md`.
+
 # franceinfo scroll freeze — root cause, shipped fix, and the remaining decouple
 
 **Date:** 2026-07-14  **Repo:** `SpecSierra/atlantic-engine` (master)

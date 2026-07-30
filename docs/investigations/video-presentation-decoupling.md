@@ -1,3 +1,5 @@
+> **Status: SHIPPED — see also `video-fullscreen-choppiness.md`** — Handover for the same work; the harness it references now lives at `scripts/devtools/videobench/`.
+
 # Handover — decouple video presentation from the main thread
 
 **Date:** 2026-07-23

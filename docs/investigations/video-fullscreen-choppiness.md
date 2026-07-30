@@ -1,3 +1,5 @@
+> **Status: RESOLVED build 607** — The compositor was futex-blocked on `CoordinatedPlatformLayer::m_lock` held by the main thread. `WEBKIT_COMPOSITE_SKIP_LOCKED_LAYERS` took 33 stalls to 0 over a 5x5 A/B and is default-ON. Eight other theories are recorded as ruled out — check them before proposing a new one.
+
 # Fullscreen 1080p YouTube choppiness — investigation
 
 Device: Xperia 10 II, SFOS 5.1.0.11, build **605** (`atlantic-browser-1.0.0.beta7-605.1`,
