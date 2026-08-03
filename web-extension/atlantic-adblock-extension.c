@@ -37,8 +37,7 @@ extern bool atlantic_adblock_use_resources_json(AtlanticAdblockEngine *engine,
                                                 const uint8_t *data, size_t len);
 extern MatchResult atlantic_adblock_match_network(AtlanticAdblockEngine *engine,
                                                   const char *src, const char *req,
-                                                  const char *type, int third_party,
-                                                  const char *method);
+                                                  const char *type, int third_party);
 extern void atlantic_adblock_free_match_result(MatchResult result);
 
 #define ATL_SHIPPED_DIR "/usr/share/atlantic-browser"
@@ -182,14 +181,8 @@ static gboolean on_send_request(WebKitWebPage *page, WebKitURIRequest *request,
     const char *src = page_uri ? page_uri : "";
     const char *rtype = resource_type_for(request, req_uri);
     int third_party = is_third_party(page_uri, req_uri);
-    /* adblock 0.13 added $method. A filter carrying it never matches unless the
-     * real verb is supplied, so pass it through rather than defaulting. */
-    const char *method = webkit_uri_request_get_http_method(request);
-    if (!method)
-        method = "GET";
 
-    MatchResult r = atlantic_adblock_match_network(g_engine, src, req_uri, rtype,
-                                                   third_party, method);
+    MatchResult r = atlantic_adblock_match_network(g_engine, src, req_uri, rtype, third_party);
     gboolean block = FALSE;
     if (r.redirect) {
         webkit_uri_request_set_uri(request, r.redirect); /* surrogate/redirect, allow */

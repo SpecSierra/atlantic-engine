@@ -24,6 +24,20 @@ production-grade `adblock-rust` engine. This gives us:
 - Sub-100ms cold start via FlatBuffers binary cache
 - < 10 µs per-request matching
 
+**Engine:** [brave/adblock-rust](https://github.com/brave/adblock-rust) v0.12.5
+
+> **0.13 was tried and REVERTED (2026-07-30).** Shipped in build 633 and pulled
+> in build 635. With the v5 `engine.dat` loaded, the WebProcess's Wayland client
+> is reset by the compositor during startup and the browser never comes up.
+> Bisected 631 OK / 632 OK / 633 dead, and proved causally: moving
+> `/usr/share/atlantic-browser/engine.dat` aside on 633 makes it start, putting
+> it back kills it again. Root cause NOT yet found — see the section below and
+> memory `adblock-013-breaks-startup`. Do not re-land the bump without a fix
+> and a device start-up test.
+
+<details>
+<summary>What the 0.13 bump involved (for whoever re-attempts it)</summary>
+
 **Engine:** [brave/adblock-rust](https://github.com/brave/adblock-rust) v0.13
 
 > **0.12 → 0.13 (2026-07-30).** Breaking bump. The serialized cache format went
@@ -64,6 +78,8 @@ production-grade `adblock-rust` engine. This gives us:
 > alone — they stay on their shipped lists instead of re-downloading a v5 payload
 > they would reject on every refresh. Bump the path whenever
 > `ADBLOCK_RUST_DAT_VERSION` changes.
+
+</details>
 **License:** MPL-2.0 (compatible — Atlantic Browser is also MPL-2.0)
 **Language:** Rust → native `libatlantic_adblock.so` (ARM64)
 **Filter lists:** EasyList + EasyPrivacy + Fanboy's Annoyance + uBO Annoyances
@@ -762,3 +778,39 @@ Total adblock overhead: ~25–35 MB RSS, well within budget.
 - **adblock-rust:** MPL-2.0 — file-level weak copyleft. Modifications to Rust source files in `adblock-engine/` must remain MPL-2.0.
 - **Atlantic Browser:** MPL-2.0 — no conflict. The C++ adapter code (`AdBlockEngine.h/.cpp`) is new Atlantic Browser code under its own MPL-2.0.
 - **Filter lists:** EasyList/EasyPrivacy are CC BY-SA 3.0. Fanboy's Annoyance is CC BY 3.0. uBO Annoyances is GPL-3.0. Filter lists are data consumed at runtime; their licenses apply to redistribution of the .dat cache, which is permissible under the CC licenses (attribution in about page / documentation).
+
+## 0.13 startup regression (open)
+
+Build 633 (= 632 + the 0.13.2 bump) will not start. The browser gets all the way
+through startup — runtime loaded, adblock engine loaded, seccomp installed,
+WebProcess up, frames rendering — and then the **WebProcess's** Wayland client
+dies:
+
+```
+-> android_wlegl#12.get_server_buffer_handle(new id ...#5, 1080, 2331, 1, 268436224)
+Wayland display got fatal error 104: Connection reset by peer
+The display is now unusable, aborting.
+```
+
+It presents as "the browser doesn't start" because `main.cpp`'s SIGABRT handler
+catches the resulting abort and re-execs up to five times before giving up.
+
+What is known:
+
+- **Bisect:** 631 OK, 632 OK (so the 117 -> 39 patch consolidation is NOT
+  responsible), 633 dead, 634 dead.
+- **Causal:** with `engine.dat` moved aside, 633 starts normally
+  (`engine=FAILED`, zero Wayland fatals). Restore it and it dies again.
+- The same `1080x2331` size is allocated successfully three times immediately
+  before, with usage `0x300` (`HW_TEXTURE|HW_RENDER`). The fatal one adds the
+  vendor-private bit: `0x10000300`. The UI process allocates `0x10000300`
+  happily at full-screen `1080x2520`.
+- **Not** simple memory exhaustion: WebProcess RSS ~231 MB against the 2048 MB
+  browser cgroup.
+- Debug with `WAYLAND_DEBUG=1`; the log interleaves both clients
+  (`android_wlegl#26`/`wl_compositor#4` = UI process, `#12`/`#8` = WebProcess).
+
+Leading untested hypothesis: **fd exhaustion**. The buffer handle passes a file
+descriptor (`buffer_fd(fd 36)` in the trace), and 0.13 pulled in the `icu_*`,
+`idna` and `psl` crates. Check the WebProcess fd count against `RLIMIT_NOFILE`
+on a 633 build before anything else.

@@ -200,7 +200,7 @@ jobs:
           # (this publish is force_orphan, so it must re-add it).
           if [ -d "${ARTIFACT_ROOT}/adblock" ]; then
             mkdir -p "${repo_root}/adblock"
-            cp -a "${ARTIFACT_ROOT}/adblock" "${repo_root}/adblock/v5"
+            cp -a "${ARTIFACT_ROOT}/adblock" "${repo_root}/adblock/v3"
           fi
           createrepo_c --update "${repo_arch_dir}"
           if [ -z "${ATLANTIC_RPM_SIGNING_KEY_ID:-}" ]; then
