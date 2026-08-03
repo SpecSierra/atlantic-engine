@@ -11,7 +11,7 @@ crate-type = ["cdylib"]
 name = "builder"
 
 [dependencies]
-adblock = { version = "0.12", default-features = false, features = [
+adblock = { version = "0.13", default-features = false, features = [
     "full-regex-handling",
     "resource-assembler",
     "embedded-domain-resolver",

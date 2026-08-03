@@ -24,20 +24,6 @@ production-grade `adblock-rust` engine. This gives us:
 - Sub-100ms cold start via FlatBuffers binary cache
 - < 10 µs per-request matching
 
-**Engine:** [brave/adblock-rust](https://github.com/brave/adblock-rust) v0.12.5
-
-> **0.13 was tried and REVERTED (2026-07-30).** Shipped in build 633 and pulled
-> in build 635. With the v5 `engine.dat` loaded, the WebProcess's Wayland client
-> is reset by the compositor during startup and the browser never comes up.
-> Bisected 631 OK / 632 OK / 633 dead, and proved causally: moving
-> `/usr/share/atlantic-browser/engine.dat` aside on 633 makes it start, putting
-> it back kills it again. Root cause NOT yet found — see the section below and
-> memory `adblock-013-breaks-startup`. Do not re-land the bump without a fix
-> and a device start-up test.
-
-<details>
-<summary>What the 0.13 bump involved (for whoever re-attempts it)</summary>
-
 **Engine:** [brave/adblock-rust](https://github.com/brave/adblock-rust) v0.13
 
 > **0.12 → 0.13 (2026-07-30).** Breaking bump. The serialized cache format went
@@ -78,8 +64,6 @@ production-grade `adblock-rust` engine. This gives us:
 > alone — they stay on their shipped lists instead of re-downloading a v5 payload
 > they would reject on every refresh. Bump the path whenever
 > `ADBLOCK_RUST_DAT_VERSION` changes.
-
-</details>
 **License:** MPL-2.0 (compatible — Atlantic Browser is also MPL-2.0)
 **Language:** Rust → native `libatlantic_adblock.so` (ARM64)
 **Filter lists:** EasyList + EasyPrivacy + Fanboy's Annoyance + uBO Annoyances
@@ -779,38 +763,41 @@ Total adblock overhead: ~25–35 MB RSS, well within budget.
 - **Atlantic Browser:** MPL-2.0 — no conflict. The C++ adapter code (`AdBlockEngine.h/.cpp`) is new Atlantic Browser code under its own MPL-2.0.
 - **Filter lists:** EasyList/EasyPrivacy are CC BY-SA 3.0. Fanboy's Annoyance is CC BY 3.0. uBO Annoyances is GPL-3.0. Filter lists are data consumed at runtime; their licenses apply to redistribution of the .dat cache, which is permissible under the CC licenses (attribution in about page / documentation).
 
-## 0.13 startup regression (open)
+## The 0.13 startup regression (build 633/634) — root cause and fix
 
-Build 633 (= 632 + the 0.13.2 bump) will not start. The browser gets all the way
-through startup — runtime loaded, adblock engine loaded, seccomp installed,
-WebProcess up, frames rendering — and then the **WebProcess's** Wayland client
-dies:
+Builds 633 and 634 would not start. The browser reached the end of startup —
+runtime loaded, engine loaded, seccomp installed, WebProcess up, frames
+rendering — and then the UI process's Qt Wayland connection died with
+`Connection reset by peer` / "the display is now unusable, aborting". It looked
+like a graphics fault, and it was not.
 
-```
--> android_wlegl#12.get_server_buffer_handle(new id ...#5, 1080, 2331, 1, 268436224)
-Wayland display got fatal error 104: Connection reset by peer
-The display is now unusable, aborting.
-```
+**Cause: the FFI is declared in two repos and only one was updated.**
+`atlantic_adblock_match_network` is declared here in
+`web-extension/atlantic-adblock-extension.c` *and* independently in the browser
+repo's `apps/wpe/AdBlockEngine.h`, which links `-latlantic_adblock`. The 0.13
+bump added the `http_method` parameter and updated only the first. The browser
+went on calling the five-argument form, so on aarch64 the callee read
+`http_method` out of `x5` — a register the caller never set — and `str_from_c()`
+dereferenced whatever was in it, walking memory to the first NUL. That call sits
+on `AdBlockEngine::shouldBlockPopup()`, which despite the name runs from the
+decide-policy handler for *every* navigation, so it fired as soon as the
+restored tab loaded and corrupted the UI process out from under its Wayland
+connection.
 
-It presents as "the browser doesn't start" because `main.cpp`'s SIGABRT handler
-catches the resulting abort and re-execs up to five times before giving up.
+**How it was found.** Bisected on-device against the RPMs kept under
+`/opt/github-runner/builds/`: 631 OK, 632 OK, 633 dead — so the 117 -> 39 patch
+consolidation was not involved. Moving `engine.dat` aside on 633 made it start,
+which narrowed it to "the engine is loaded". Three hypotheses were then killed
+by measurement rather than argument: peak WebProcess RSS was 97 MB against a
+2048 MB cgroup (not memory), peak fds 77 against a 1024 limit (not fds), and
+`dmesg` was silent (not the kernel allocator). The decisive test was building a
+**973-byte** valid v5 `engine.dat` with the 0.13 builder: it still died, which
+ruled out payload size and pointed at the call path itself rather than the data.
 
-What is known:
-
-- **Bisect:** 631 OK, 632 OK (so the 117 -> 39 patch consolidation is NOT
-  responsible), 633 dead, 634 dead.
-- **Causal:** with `engine.dat` moved aside, 633 starts normally
-  (`engine=FAILED`, zero Wayland fatals). Restore it and it dies again.
-- The same `1080x2331` size is allocated successfully three times immediately
-  before, with usage `0x300` (`HW_TEXTURE|HW_RENDER`). The fatal one adds the
-  vendor-private bit: `0x10000300`. The UI process allocates `0x10000300`
-  happily at full-screen `1080x2520`.
-- **Not** simple memory exhaustion: WebProcess RSS ~231 MB against the 2048 MB
-  browser cgroup.
-- Debug with `WAYLAND_DEBUG=1`; the log interleaves both clients
-  (`android_wlegl#26`/`wl_compositor#4` = UI process, `#12`/`#8` = WebProcess).
-
-Leading untested hypothesis: **fd exhaustion**. The buffer handle passes a file
-descriptor (`buffer_fd(fd 36)` in the trace), and 0.13 pulled in the `icu_*`,
-`idna` and `psl` crates. Check the WebProcess fd count against `RLIMIT_NOFILE`
-on a 633 build before anything else.
+**Fix.** The browser passes the method, and the symbol is renamed
+`atlantic_adblock_match_network_v2`. The rename is the important half: with two
+hand-maintained copies of one ABI, a signature change that updates only one side
+is otherwise a silent out-of-bounds read. Now it is a link error — verified by
+compiling the old five-argument declaration against the new library, which fails
+with `undefined reference to 'atlantic_adblock_match_network'`. **Bump the
+suffix on every future signature change**, and update both repos together.

@@ -64,7 +64,7 @@ pub unsafe extern "C" fn atlantic_adblock_create_from_cache(
         return std::ptr::null_mut();
     }
     let bytes = slice::from_raw_parts(data, len);
-    let mut engine = AdblockEngine::from_filter_set(FilterSet::new(true), false);
+    let mut engine = AdblockEngine::new_with_filter_set_no_optimize(FilterSet::new(true));
     match engine.deserialize(bytes) {
         Ok(()) => Box::into_raw(Box::new(AtlanticAdblockEngine { engine })),
         Err(_) => std::ptr::null_mut(),
@@ -78,13 +78,24 @@ pub unsafe extern "C" fn atlantic_adblock_destroy(engine: *mut AtlanticAdblockEn
     }
 }
 
+// NOTE: the `_v2` suffix is load-bearing. This function is declared
+// independently in TWO repos — web-extension/atlantic-adblock-extension.c here,
+// and apps/wpe/AdBlockEngine.h in atlantic-browser, which links
+// -latlantic_adblock. When 0.13 added the `http_method` parameter only the
+// first was updated; the browser kept calling the 5-argument form, so on
+// aarch64 the callee read `http_method` out of x5, which the caller never set,
+// and str_from_c() dereferenced whatever was in it. That shipped as build 633
+// and made the browser unstartable. Renaming on every ABI change turns that
+// silent out-of-bounds read into a link error. Bump the suffix whenever the
+// signature changes again.
 #[no_mangle]
-pub unsafe extern "C" fn atlantic_adblock_match_network(
+pub unsafe extern "C" fn atlantic_adblock_match_network_v2(
     engine: *mut AtlanticAdblockEngine,
     src_url: *const c_char,
     req_url: *const c_char,
     resource_type: *const c_char,
     third_party_raw: i32,
+    http_method: *const c_char,
 ) -> MatchResult {
     if engine.is_null() || req_url.is_null() {
         return safe_match_result();
@@ -96,6 +107,11 @@ pub unsafe extern "C" fn atlantic_adblock_match_network(
         let req = str_from_c(req_url);
         let rtype = str_from_c(resource_type);
         let third_party = third_party_raw != 0;
+        // $method is new in adblock 0.13. An unparseable/empty method yields
+        // None, and a filter carrying $method then never matches — so passing
+        // the real verb is what makes those rules work at all. The caller
+        // reads it from WebKitURIRequest.
+        let method = str_from_c(http_method);
 
         if rtype.is_empty() {
             return safe_match_result();
@@ -108,21 +124,28 @@ pub unsafe extern "C" fn atlantic_adblock_match_network(
         // engine.dat matched via Request::new but the runtime never blocked.
         // Third-party is derived from the parsed hostnames; the caller's flag
         // is only a fallback when the source URL is unparseable.
-        let request = match Request::new(req, src, rtype) {
+        let request = match Request::new(req, src, rtype, method) {
             Ok(r) => r,
-            Err(_) => Request::preparsed(req, "", "", rtype, third_party),
+            Err(_) => Request::preparsed(req, "", "", rtype, third_party, method),
         };
 
         let result = eng.check_network_request(&request);
 
+        // 0.13 replaced the `matched` bool with Option<FilterRuleDebugInfo>
+        // fields. Upstream's own definition was
+        //   matched = exception.is_none() && (filter.is_some() || matched_rule)
+        // and `filter` now already folds in the matched_rule fallback, so this
+        // is the exact equivalent.
         MatchResult {
-            matched: result.matched,
+            matched: result.exception.is_none() && result.filter.is_some(),
             important: result.important,
             redirect: match &result.redirect {
                 Some(s) => to_c_string(s),
                 None => std::ptr::null_mut(),
             },
-            exception: match &result.exception {
+            // Was Option<String> (the filter's Display) in 0.12; now a struct
+            // whose Display prepends a source location. Keep the raw rule only.
+            exception: match result.exception.as_ref().and_then(|d| d.raw_line.as_deref()) {
                 Some(s) => to_c_string(s),
                 None => std::ptr::null_mut(),
             },
