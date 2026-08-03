@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CPU-render crash harness (bug 287572)</title>
+<style>
+  body { font: 14px/1.5 sans-serif; margin: 0; padding: 12px; background:#111; color:#eee; }
+  h1 { font-size: 16px; margin: 0 0 8px; }
+  #status { padding: 8px; background:#222; border-left: 4px solid #6a6; margin-bottom: 10px; }
+  ol { padding-left: 22px; margin: 0 0 12px; }
+  li { padding: 2px 0; }
+  li.done { color:#6c6; }
+  li.current { color:#fc0; font-weight: bold; }
+  li.pending { color:#888; }
+  iframe { width: 100%; height: 340px; border: 2px solid #444; background:#fff; }
+  button { font-size: 15px; padding: 8px 14px; margin-right: 8px; }
+</style>
+</head>
+<body>
+<h1>WEBKIT_SKIA_ENABLE_CPU_RENDERING crash harness — WebKit bug 287572</h1>
+<div id="status">idle</div>
+<div>
+  <button id="run">run / resume</button>
+  <button id="reset">reset</button>
+</div>
+<ol id="list"></ol>
+<iframe id="frame" src="about:blank"></iframe>
+
+<script>
+// The eight tests that crash upstream WPE test bots under
+// WEBKIT_SKIA_ENABLE_CPU_RENDERING=1 (bugs.webkit.org/show_bug.cgi?id=287572).
+var TESTS = [
+  ["canvas-bg (CSS -webkit-canvas)",            "fast_canvas_canvas-bg.html"],
+  ["box-shadow cascade order",                  "fast_css_cascade_box-shadow-and-webkit-box-shadow-cascade-order.html"],
+  ["large-image -webkit-canvas",                "fast_images_large-image-webkit-canvas.html"],
+  ["out-of-flow static position in IFC",        "fast_inline_out-of-flow-with-static-position-in-ifc.html"],
+  ["transferFromImageBitmap",                   "imported_w3c_web-platform-tests_html_canvas_element_manual_imagebitmap_imageBitmapRendering-transferFromImageBitmap.html"],
+  ["transferFromImageBitmap (flipped)",         "imported_w3c_web-platform-tests_html_canvas_element_manual_imagebitmap_imageBitmapRendering-transferFromImageBitmap-flipped.html"],
+  ["transferFromImageBitmap (webgl)",           "imported_w3c_web-platform-tests_html_canvas_element_manual_imagebitmap_imageBitmapRendering-transferFromImageBitmap-webgl.html"],
+  ["imagebitmap exif orientation",              "imported_w3c_web-platform-tests_html_canvas_element_manual_imagebitmap_imagebitmap-replication-exif-orientation.html"]
+];
+
+var DWELL_MS = 2500;          // time each test is left rendering
+var K_IDX = "cpurender.idx";  // survives a WebProcess crash
+
+function idx()      { return parseInt(localStorage.getItem(K_IDX) || "0", 10); }
+function setIdx(i)  { localStorage.setItem(K_IDX, String(i)); }
+
+function render() {
+  var i = idx(), ol = document.getElementById("list");
+  ol.innerHTML = "";
+  TESTS.forEach(function (t, n) {
+    var li = document.createElement("li");
+    li.textContent = t[0];
+    li.className = n < i ? "done" : (n === i ? "current" : "pending");
+    if (n < i) li.textContent += "  ✓ survived";
+    ol.appendChild(li);
+  });
+  var s = document.getElementById("status");
+  if (i >= TESTS.length) {
+    s.textContent = "ALL " + TESTS.length + " TESTS SURVIVED — no WebProcess crash";
+    s.style.borderColor = "#6a6";
+    console.log("[cpurender] RESULT: all " + TESTS.length + " tests survived");
+  } else {
+    s.textContent = "next up [" + i + "/" + TESTS.length + "]: " + TESTS[i][0] +
+      "  —  if the page dies here, test " + i + " is the crasher";
+    s.style.borderColor = "#fc0";
+    console.log("[cpurender] SUSPECT index=" + i + " file=" + TESTS[i][1]);
+  }
+}
+
+function step() {
+  var i = idx();
+  if (i >= TESTS.length) { render(); return; }
+  render();
+  document.getElementById("frame").src = TESTS[i][1];
+  // Advance only after the test has had time to paint. A crash during the
+  // dwell leaves the index unchanged, naming the culprit on next load.
+  setTimeout(function () {
+    console.log("[cpurender] SURVIVED index=" + i + " file=" + TESTS[i][1]);
+    setIdx(i + 1);
+    location.reload();
+  }, DWELL_MS);
+}
+
+document.getElementById("run").onclick = step;
+document.getElementById("reset").onclick = function () { setIdx(0); location.reload(); };
+
+render();
+// Auto-resume: keeps walking the list across reloads without touching the device.
+if (location.hash !== "#manual" && idx() < TESTS.length) setTimeout(step, 600);
+</script>
+</body>
+</html>
