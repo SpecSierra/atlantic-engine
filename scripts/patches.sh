@@ -58,6 +58,7 @@ readonly WEBKIT_SOURCE_PATCHES=(
     "patches/webkit/webkit-scrollbar.patch"
     "patches/webkit/webkit-gst-media.patch"
     "patches/webkit/webkit-wpe-dark-mode-runtime.patch"
+    "patches/webkit/webkit-wpe-page-scale-api.patch"
 
     # --- Sandboxing --------------------------------------------------------
     # Disjoint files, order between these two is irrelevant.

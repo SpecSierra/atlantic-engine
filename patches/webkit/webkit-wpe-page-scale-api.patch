@@ -1,0 +1,104 @@
+#  webkit-wpe-page-scale-api.patch: expose visual-viewport (page-scale) zoom.
+#  WPE's public API only has webkit_web_view_set_zoom_level(), which is page
+#  zoom: it relayouts, reflows text and changes what fits on a line. Pinch on a
+#  phone is expected to magnify the rendered page instead, leaving layout alone
+#  and letting the user pan around. That is WebCore's page scale factor, which
+#  every port has (WebPageProxy::scalePageInViewCoordinates) but no WPE API
+#  reaches. Exports wpe_sfos_set_page_scale()/wpe_sfos_get_page_scale() for the
+#  embedder's pinch gesture.
+#
+# ---
+Visual-viewport zoom for the WPE GLib API.
+
+`webkit_web_view_set_zoom_level()` maps to WebPageProxy::setPageZoomFactor():
+content zoom. The layout viewport is re-resolved at the new factor, so the page
+relayouts — text reflows, media queries can flip, and the page never becomes
+pannable, it just becomes a differently-laid-out page. That is the right
+behaviour for a desktop zoom menu and the wrong behaviour for a pinch gesture,
+which users expect to magnify what is already on screen (visual viewport), the
+way every other mobile browser behaves.
+
+WebCore already models this separately as the page scale factor
+(Page::setPageScaleFactor), reached from the UI process via
+WebPageProxy::scalePage()/scalePageInViewCoordinates(). It is cross-platform
+(not Cocoa-gated) and composes with page zoom rather than replacing it, which
+matters here: the browser uses page zoom 3.0 as its device-scale mechanism, so
+pinch must not touch that factor. GTK already keeps the two apart — see the
+PLATFORM(GTK) `pageScale` divisor in webkit_web_view_set_zoom_level() — but
+under PLATFORM(WPE) that scale is hardwired to 1.0 with no way to set it.
+
+Two exported entry points, mirroring the wpe_sfos_set_dark_mode() convention:
+
+1. wpe_sfos_set_page_scale(view, scale, centerX, centerY) - scale anchored on
+   a point in view coordinates, so the content under the fingers stays put.
+   scalePageInViewCoordinates() alone does NOT do that: it sets the new scroll
+   position to (scrollPosition - origin) * ratio, which anchors the view
+   origin, not the centroid. Pinning the centroid needs
+   (scrollPosition + center) * ratio - center, and the two agree exactly when
+   origin = center * (1/ratio - 1) - independent of the scroll position, so we
+   pass that and never have to mirror the scroll offset into the UI process.
+   (No in-tree caller to copy from: the only upstream user of this API is
+   GTK's GestureController, which the WPE tarball omits.)
+
+2. wpe_sfos_get_page_scale(view) — the UI process needs the committed factor to
+   accumulate the next pinch on top of it. Note WebPageProxy resets its cached
+   factor to 1 on every main-frame commit, so a new page starts at 1:1 without
+   the embedder tracking navigations.
+
+Browser side: apps/wpe/WPEWebPage.cpp drives these from the fallback pinch
+gesture (the one used when the page itself does not consume the touches).
+--- a/Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp
++++ b/Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp
+@@ -5997,3 +5997,52 @@
+         xrSystem->invalidate(PlatformXRSystem::InvalidationReason::Client);
+ #endif
+ }
++
++// SFOS: visual-viewport zoom. The public API only exposes page zoom
++// (webkit_web_view_set_zoom_level -> setPageZoomFactor), which relayouts the
++// page; a pinch gesture wants the page scale factor, which magnifies the
++// rendered result and leaves layout untouched. Both factors compose, so this
++// is independent of the embedder's device-scale page zoom.
++//
++// @scale is absolute (1.0 = unzoomed) and is anchored on (@centerX, @centerY)
++// in view coordinates — the pinch centroid — so the content under the fingers
++// stays under the fingers.
++extern "C" __attribute__((visibility("default")))
++void wpe_sfos_set_page_scale(WebKitWebView* webView, double scale, int centerX, int centerY)
++{
++    g_return_if_fail(WEBKIT_IS_WEB_VIEW(webView));
++
++    if (!(scale > 0))
++        return;
++
++    Ref page = getPage(webView);
++    double currentScale = page->pageScaleFactor();
++    if (!(currentScale > 0) || currentScale == scale)
++        return;
++
++    // scalePageInViewCoordinates() does not pin a view point across a scale
++    // change: it sets the new scroll position to (scrollPosition - origin) *
++    // ratio, which anchors the view origin, not @center. Pinning @center needs
++    // (scrollPosition + center) * ratio - center, and the two agree exactly
++    // when origin = center * (1 / ratio - 1) — for *any* scroll position, so
++    // the scroll offset stays where it is authoritative, in the web process,
++    // and never has to be mirrored up here.
++    //
++    // Exact for a zero scroll origin, i.e. everything except RTL and
++    // vertical-rl documents, where the anchor is off by the scroll origin.
++    double ratio = scale / currentScale;
++    double anchor = 1 / ratio - 1;
++    page->scalePageInViewCoordinates(scale, WebCore::IntPoint(static_cast<int>(centerX * anchor), static_cast<int>(centerY * anchor)));
++}
++
++// SFOS: the page scale factor currently committed for @web_view. The embedder
++// reads this to start a new pinch from the scale the last one left behind.
++// WebPageProxy resets it to 1 on every main-frame commit, so this reports 1.0
++// again after a navigation without the embedder tracking loads.
++extern "C" __attribute__((visibility("default")))
++double wpe_sfos_get_page_scale(WebKitWebView* webView)
++{
++    g_return_val_if_fail(WEBKIT_IS_WEB_VIEW(webView), 1.0);
++
++    return getPage(webView).pageScaleFactor();
++}
