@@ -533,6 +533,12 @@ cp -a "${CONTENT_BLOCKER_BUILD_DIR}/engine.version" \
 # user script to auto-reject CMP cookie banners
 cp -a "${CONTENT_BLOCKER_BUILD_DIR}/autoconsent.js" \
       "${S}/usr/share/atlantic-browser/autoconsent.js"
+# Performance intervention rules (defer third-party tags, lazy images/frames,
+# pause offscreen animations). Read at page setup by WPEWebPage, gated on
+# ATLANTIC_PERF_INTERVENTIONS. The browser's own qmake INSTALLS rule never runs
+# in this build, so the file is staged here.
+cp -a "${BROWSER_SRC}/data/perf-interventions.json" \
+      "${S}/usr/share/atlantic-browser/perf-interventions.json"
 
 # QML files
 mkdir -p "${S}/usr/share/atlantic-browser"

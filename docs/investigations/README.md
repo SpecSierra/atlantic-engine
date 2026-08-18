@@ -17,6 +17,13 @@ concludes, add a status header and move it here.
 | [load-perf-paint-storm.md](load-perf-paint-storm.md) | load-rendering throttle unfixable (compositor deadlock) — **do not retry**; repaint storm still open |
 | [rendering-audit.md](rendering-audit.md) | stale (2026-05-28), early device facts only |
 | [upstream-perf-roadmap.md](upstream-perf-roadmap.md) | **open roadmap** — what upstream already knows is slow in 2.52.5, ranked; the CPU-rendering crash check is done and negative |
+| [latency-levers.md](latency-levers.md) | **open** — the non-frame-production half: preconnect + page interventions implemented default-OFF; input boost, bfcache and JS bytecode caching root-caused only |
+
+## Load latency
+
+| Doc | Status |
+|---|---|
+| [latency-levers.md](latency-levers.md) | **open** — the finger-to-first-pixel interval. Preconnect + page interventions implemented behind default-OFF flags (unbuilt, un-A/B'd); input boost, bfcache and JS bytecode caching root-caused but unimplemented |
 
 ## Video
 

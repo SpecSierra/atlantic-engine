@@ -772,6 +772,52 @@ atlantic_export_browser_env() {
     # page load instead of being silently dropped. =0 disables for A/B.
     export WEBKIT_TOUCH_ACK_TIMEOUT_MS="${WEBKIT_TOUCH_ACK_TIMEOUT_MS:-100}"
 
+    # ── Speculative connections (DEFAULT OFF — pending A/B) ──────────────────
+    # Read by the browser (WPEWebPage); needs
+    # webkit-wpe-preconnect-api.patch for the engine entry point.
+    #
+    # Everything above this line is about producing frames faster. This is about
+    # the other half of a page load: on a phone radio a cold origin costs a DNS
+    # round trip plus a TCP and a TLS handshake — commonly 200-500 ms — and all
+    # of it currently runs AFTER the tap commits, because the navigation is the
+    # first thing that touches the network. WebKit implements speculative
+    # connections (ENABLE_SERVER_PRECONNECT is on for every glib port, and
+    # allowsServerPreconnect defaults true); no WPE API reached them.
+    #
+    # Two predictors: touch-DOWN on a link (kPreconnectBridge, buying the
+    # ~80-150 ms the user spends finishing the tap) and the URL bar's current
+    # completion, debounced 300 ms. Nothing is fetched — PreconnectTask stops
+    # after TLS — and only scheme/host/port leave the device, so a wrong guess
+    # costs one idle socket. Rate-limited to one preconnect per origin per 10 s.
+    #
+    # A/B: 5 runs off / 5 on, cold DNS each time (the second run to a host
+    # measures the resolver cache, not this). The metric is tap-to-first-byte,
+    # not fps.
+    export ATLANTIC_PRECONNECT="${ATLANTIC_PRECONNECT:-0}"
+
+    # ── Page performance interventions (DEFAULT OFF — pending A/B) ───────────
+    # Read by the browser (WPEWebPage); rules in
+    # /usr/share/atlantic-browser/perf-interventions.json.
+    #
+    # Reuses the adblock stack's shape (rule file + document-start user script)
+    # against work the page asks for and the user never sees: third-party tag
+    # managers deferred until the first gesture or 2.5 s after load, untagged
+    # images given loading=lazy/decoding=async past the first few, untagged
+    # iframes given loading=lazy, and infinite CSS animations paused while
+    # offscreen. Everything is delayed, nothing is dropped — dropping is the
+    # adblocker's job and it has a filter list behind it.
+    #
+    # This is the one lever left for the CNN/franceinfo class of page: the
+    # engine-side attempts there are documented dead (the load-rendering
+    # throttle deadlocks the compositor; WEBKIT_STYLE_SMART_RECONSTRUCT is
+    # byte-identical inert), and both profiles are main-thread bound in style
+    # and script rather than in raster.
+    #
+    # A/B on DCL and first-paint, and watch for breakage: a deferred script the
+    # page actually waits on shows up as a site that only finishes rendering
+    # when you touch it.
+    export ATLANTIC_PERF_INTERVENTIONS="${ATLANTIC_PERF_INTERVENTIONS:-0}"
+
     # ── Overlay scrollbar size ────────────────────────────────────────────────
     # Honoured by webkit-scrollbar.patch. Atlantic's 3x UI
     # scale is implemented as page zoom (webkit_web_view_set_zoom_level), which

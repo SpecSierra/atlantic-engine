@@ -1,0 +1,97 @@
+#  webkit-wpe-preconnect-api.patch: let the embedder warm a connection before
+#  the user commits to a navigation.
+#  WebKit already implements speculative connections end to end — WebPageProxy
+#  ::preconnectTo() -> NetworkProcess::preconnectTo() -> PreconnectTask, with
+#  ENABLE(SERVER_PRECONNECT) on for every glib port and allowsServerPreconnect
+#  defaulting true — but no WPE public API reaches it, so on this browser the
+#  whole DNS/TCP/TLS handshake runs serially AFTER the tap commits. Exports
+#  wpe_sfos_preconnect() so the UI can start it at intent time (touch-down on a
+#  link, URL-bar completion) instead. Nothing is fetched: only a socket is
+#  opened and the TLS handshake is performed.
+#
+# ---
+Speculative connection API for the WPE GLib API.
+
+The cost this targets is not rendering. On a phone radio, a cold origin costs a
+DNS round trip, a TCP handshake and a TLS handshake before the first request
+byte can leave — commonly 200-500 ms, and all of it currently sits after the
+user's finger lifts, because the navigation is the first thing that touches the
+network.
+
+Every piece of the machinery is already present and enabled in our build:
+
+  * `ENABLE_SERVER_PRECONNECT` is 1 for all glib ports
+    (Source/WTF/wtf/PlatformEnableGlib.h:58).
+  * `WebsiteDataStoreConfiguration::m_allowsServerPreconnect` defaults true
+    (WebsiteDataStoreConfiguration.h:343), which is the gate
+    `WebPageProxy::preconnectTo()` checks first.
+  * `WebPageProxy::preconnectTo()` is public (WebPageProxy.h:1905) and does the
+    right thing for a main-resource preconnect: it fills in the predicted user
+    agent, sets first-party-for-cookies to the target, raises the priority and
+    hands a `PreconnectTask` to the network process.
+
+What is missing is only the public entry point. Cocoa reaches this from
+WKWebView, GTK never exposed it either, so nothing in-tree could be copied —
+hence a `wpe_sfos_*` export in the same style as wpe_sfos_set_dark_mode() and
+wpe_sfos_set_page_scale().
+
+Two properties worth stating because they decide how safely the embedder can
+guess:
+
+  * A preconnect sends no request. `PreconnectTask` sets
+    `shouldPreconnectOnly = PreconnectOnly::Yes`, so soup opens the socket and
+    completes TLS and stops. The path, query and fragment of @uri never leave
+    the device; only scheme, host and port do (DNS, TCP, and the TLS SNI).
+    Guessing wrong therefore costs an idle socket, not a page view.
+  * The connection belongs to the view's own network session, so a preconnect
+    issued from a private tab uses the ephemeral session, exactly like the load
+    it is anticipating would.
+
+Browser side: WPEWebPage::preconnect() rate-limits per origin and is driven by
+the kPreconnectBridge user script (touch-down on a link) and the URL bar's
+completion, both behind ATLANTIC_PRECONNECT (default off pending the A/B).
+
+Ordering: appends to WebKitWebView.cpp after webkit-wpe-page-scale-api.patch.
+--- a/Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp
++++ b/Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp
+@@ -6046,3 +6046,40 @@
+ 
+     return getPage(webView).pageScaleFactor();
+ }
++
++// SFOS: open a connection to @uri's origin without loading anything, so that a
++// navigation the embedder expects (finger down on a link, top URL-bar
++// completion) finds DNS resolved, the socket connected and TLS negotiated
++// instead of paying for all three after the tap commits.
++//
++// This is WebKit's own speculative-connection path — the one Cocoa drives from
++// WKWebView — which has no WPE API. It is a no-op unless the network session
++// allows server preconnect (default) and @uri is an http(s) URL.
++//
++// Nothing is fetched: PreconnectTask runs with PreconnectOnly::Yes, so no
++// request line is ever written and the path/query/fragment of @uri stay on the
++// device. The session used is the view's own, so private tabs preconnect on
++// their ephemeral session.
++//
++// Safe to call repeatedly: the network layer coalesces onto an existing
++// connection to the same origin. The embedder still rate-limits (see
++// WPEWebPage::preconnect) so a scroll over a link list cannot spray sockets.
++extern "C" __attribute__((visibility("default")))
++void wpe_sfos_preconnect(WebKitWebView* webView, const char* uri)
++{
++    g_return_if_fail(WEBKIT_IS_WEB_VIEW(webView));
++    g_return_if_fail(uri);
++
++    URL url { String::fromUTF8(uri) };
++    if (!url.isValid() || url.isEmpty() || !url.protocolIsInHTTPFamily())
++        return;
++
++    // Strip everything the connection cannot use anyway. A preconnect is keyed
++    // by origin, and NetworkLoadScheduler remembers the URL it was started for
++    // (startedPreconnectForMainResource) — keeping a guessed path out of that
++    // bookkeeping keeps the speculation from influencing a later real load.
++    url.removeQueryAndFragmentIdentifier();
++    url.setPath("/"_s);
++
++    getPage(webView).preconnectTo(ResourceRequest { WTF::move(url) });
++}
