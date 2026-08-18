@@ -11,9 +11,8 @@ echo "--- [5] Building libwpe ---"
 if [ ! -f "${WPE_PREFIX}/lib/libwpe-1.0.so" ]; then
     cd "${WORK}"
     if [ ! -d libwpe ]; then
-        git clone --depth=1 --branch "${LIBWPE_VERSION}" \
-            https://github.com/WebPlatformForEmbedded/libwpe libwpe 2>/dev/null || \
-        git clone --depth=1 https://github.com/WebPlatformForEmbedded/libwpe libwpe
+        clone_pinned https://github.com/WebPlatformForEmbedded/libwpe \
+            libwpe "${LIBWPE_COMMIT}"
     fi
     cd libwpe
     rm -rf build
@@ -39,9 +38,8 @@ echo "--- [6] Building libepoxy ---"
 if [ ! -f "${WPE_PREFIX}/lib/libepoxy.so" ]; then
     cd "${WORK}"
     if [ ! -d libepoxy ]; then
-        git clone --depth=1 --branch "${LIBEPOXY_VERSION}" \
-            https://github.com/anholt/libepoxy libepoxy 2>/dev/null || \
-        git clone --depth=1 https://github.com/anholt/libepoxy libepoxy
+        clone_pinned https://github.com/anholt/libepoxy \
+            libepoxy "${LIBEPOXY_COMMIT}"
     fi
     cd libepoxy
     apply_repo_patches 1 "${PWD}" "${ENGINE_SOURCE_PATCHES[@]}"
@@ -64,9 +62,8 @@ echo "--- [7] Building WPEBackend-fdo ---"
 if [ ! -f "${WPE_PREFIX}/lib/libWPEBackend-fdo-1.0.so" ]; then
     cd "${WORK}"
     if [ ! -d WPEBackend-fdo ]; then
-        git clone --depth=1 --branch "${WPEBACKEND_FDO_VERSION}" \
-            https://github.com/igalia/WPEBackend-fdo WPEBackend-fdo 2>/dev/null || \
-        git clone --depth=1 https://github.com/igalia/WPEBackend-fdo WPEBackend-fdo
+        clone_pinned https://github.com/Igalia/WPEBackend-fdo \
+            WPEBackend-fdo "${WPEBACKEND_FDO_COMMIT}"
     fi
     cd WPEBackend-fdo
     rm -rf build
@@ -94,8 +91,7 @@ if [ ! -f "${WPE_PREFIX}/lib/libavif.so" ]; then
     cd "${WORK}"
     if [ ! -d libavif ]; then
         git clone --depth=1 --branch "${LIBAVIF_VERSION}" \
-            https://github.com/AOMediaCodec/libavif libavif 2>/dev/null || \
-        git clone --depth=1 https://github.com/AOMediaCodec/libavif libavif
+            https://github.com/AOMediaCodec/libavif libavif
     fi
     cd libavif
     rm -rf build

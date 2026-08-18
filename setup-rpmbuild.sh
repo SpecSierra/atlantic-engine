@@ -43,12 +43,8 @@ echo ""
 echo "--- libwpe ${LIBWPE_VERSION} ---"
 if [ ! -f "$SOURCES_DIR/libwpe-${LIBWPE_VERSION}.tar.xz" ]; then
   TMP=$(mktemp -d)
-  git clone --depth=1 --branch "${LIBWPE_VERSION}" \
-    https://github.com/WebPlatformForEmbedded/libwpe "$TMP/libwpe" \
-    2>/dev/null || {
-      echo "  Tag ${LIBWPE_VERSION} not found, cloning HEAD..."
-      git clone --depth=1 https://github.com/WebPlatformForEmbedded/libwpe "$TMP/libwpe"
-    }
+  clone_pinned https://github.com/WebPlatformForEmbedded/libwpe \
+    "$TMP/libwpe" "${LIBWPE_COMMIT}"
   git -C "$TMP/libwpe" archive --prefix="libwpe-${LIBWPE_VERSION}/" HEAD \
     | xz > "$SOURCES_DIR/libwpe-${LIBWPE_VERSION}.tar.xz"
   rm -rf "$TMP"
@@ -64,12 +60,8 @@ echo ""
 echo "--- libepoxy ${LIBEPOXY_VERSION} ---"
 if [ ! -f "$SOURCES_DIR/libepoxy-${LIBEPOXY_VERSION}.tar.xz" ]; then
   TMP=$(mktemp -d)
-  git clone --depth=1 --branch "${LIBEPOXY_VERSION}" \
-    https://github.com/anholt/libepoxy "$TMP/libepoxy" \
-    2>/dev/null || {
-      echo "  Tag ${LIBEPOXY_VERSION} not found, cloning HEAD..."
-      git clone --depth=1 https://github.com/anholt/libepoxy "$TMP/libepoxy"
-    }
+  clone_pinned https://github.com/anholt/libepoxy \
+    "$TMP/libepoxy" "${LIBEPOXY_COMMIT}"
   git -C "$TMP/libepoxy" archive --prefix="libepoxy-${LIBEPOXY_VERSION}/" HEAD \
     | xz > "$SOURCES_DIR/libepoxy-${LIBEPOXY_VERSION}.tar.xz"
   rm -rf "$TMP"
@@ -85,12 +77,8 @@ echo ""
 echo "--- wpebackend-fdo ${WPEBACKEND_FDO_VERSION} ---"
 if [ ! -f "$SOURCES_DIR/wpebackend-fdo-${WPEBACKEND_FDO_VERSION}.tar.xz" ]; then
   TMP=$(mktemp -d)
-  git clone --depth=1 --branch "${WPEBACKEND_FDO_VERSION}" \
-    https://github.com/igalia/WPEBackend-fdo "$TMP/wpebackend-fdo" \
-    2>/dev/null || {
-      echo "  Tag ${WPEBACKEND_FDO_VERSION} not found, cloning HEAD..."
-      git clone --depth=1 https://github.com/igalia/WPEBackend-fdo "$TMP/wpebackend-fdo"
-    }
+  clone_pinned https://github.com/Igalia/WPEBackend-fdo \
+    "$TMP/wpebackend-fdo" "${WPEBACKEND_FDO_COMMIT}"
   git -C "$TMP/wpebackend-fdo" archive --prefix="wpebackend-fdo-${WPEBACKEND_FDO_VERSION}/" HEAD \
     | xz > "$SOURCES_DIR/wpebackend-fdo-${WPEBACKEND_FDO_VERSION}.tar.xz"
   rm -rf "$TMP"
