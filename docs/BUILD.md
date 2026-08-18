@@ -17,7 +17,7 @@ All pins live in `versions.env`; nothing should hard-code a version.
 | libwpe | `1.17.0` |
 | WPEBackend-fdo | `1.17.0` |
 | libepoxy | `1.5.11` (patched) |
-| Atlantic Browser | `1.0.0.beta7` |
+| Atlantic Browser | `1.0.0.stable` |
 | Qt5 plugin source | in-repo `qt5-plugin/` (the `2.52.1` label survives only for RPM tarball naming) |
 
 `versions.env` also holds the compatibility flags ([COMPAT.md](COMPAT.md)) and the
