@@ -185,15 +185,17 @@ fpm_rpm wpebackend-fdo "$WPEBACKEND_FDO_VERSION" "WPE backend (freedesktop.org/W
 # Shipping our own libsqlcipher collided with it (identical libsqlcipher.so.0).
 
 # ===========================================================================
-# 3b. Sandbox runtime executables (bwrap, xdg-dbus-proxy)
+# 3b. Sandbox runtime executable (bwrap)
 # ===========================================================================
-# These are the device-side binaries libWPEWebKit exec's when the bubblewrap
-# sandbox is enabled (the compiled-in BWRAP_EXECUTABLE / DBUS_PROXY_EXECUTABLE
-# paths are /usr/bin/bwrap and /usr/bin/xdg-dbus-proxy).  Built by
-# scripts/build-sandbox-deps.sh into ${WPE_PREFIX}/bin.  Packaged under their
-# upstream names so atlantic-browser can Requires them; libcap (bwrap) and
-# glib2 (xdg-dbus-proxy) are core SFOS libs always present, so they are not
-# listed as explicit Requires here.
+# The device-side binary libWPEWebKit exec's when the bubblewrap sandbox is
+# enabled (the compiled-in BWRAP_EXECUTABLE path is /usr/bin/bwrap).  Built by
+# scripts/build-sandbox-deps.sh into ${WPE_PREFIX}/bin.  Packaged under its
+# upstream name so atlantic-browser can Requires it; libcap is a core SFOS lib
+# always present, so it is not listed as an explicit Requires here.
+#
+# The other half of the pair, xdg-dbus-proxy (DBUS_PROXY_EXECUTABLE =
+# /usr/bin/xdg-dbus-proxy), is a stock Jolla package and is no longer built or
+# packaged here — ours only shadowed theirs.  The Requires below still names it.
 if [ -x "${WPE_PREFIX}/bin/bwrap" ]; then
     echo "--- Staging bubblewrap ---"
     S="${STAGING}/bubblewrap"; rm -rf "$S"; mkdir -p "${S}/usr/bin"
@@ -202,16 +204,6 @@ if [ -x "${WPE_PREFIX}/bin/bwrap" ]; then
     fpm_rpm bubblewrap "$BUBBLEWRAP_VERSION" "Bubblewrap sandbox helper (for the WPE WebKit sandbox)" "$S"
 else
     echo "WARNING: ${WPE_PREFIX}/bin/bwrap missing — skipping bubblewrap package (run scripts/build-sandbox-deps.sh)" >&2
-fi
-
-if [ -x "${WPE_PREFIX}/bin/xdg-dbus-proxy" ]; then
-    echo "--- Staging xdg-dbus-proxy ---"
-    S="${STAGING}/xdg-dbus-proxy"; rm -rf "$S"; mkdir -p "${S}/usr/bin"
-    cp -a "${WPE_PREFIX}/bin/xdg-dbus-proxy" "${S}/usr/bin/xdg-dbus-proxy"
-    maybe_patch_glibc_versions "${S}/usr/bin/xdg-dbus-proxy"
-    fpm_rpm xdg-dbus-proxy "$XDG_DBUS_PROXY_VERSION" "D-Bus proxy for the WPE WebKit sandbox" "$S"
-else
-    echo "WARNING: ${WPE_PREFIX}/bin/xdg-dbus-proxy missing — skipping xdg-dbus-proxy package (run scripts/build-sandbox-deps.sh)" >&2
 fi
 
 # ===========================================================================
@@ -310,7 +302,7 @@ done
 # sandbox is compiled in (ENABLE_BUBBLEWRAP_SANDBOX=ON), so it is a hard runtime
 # dependency even when the sandbox is left disabled at runtime.  SFOS 5.1 ships
 # libseccomp.so.2 (2.5.2), so this resolves on-device.
-# NOTE: bwrap + xdg-dbus-proxy are NOT added as Requires here on purpose — they
+# NOTE: bwrap is NOT added as a Requires here on purpose — it
 # are only exec'd when the sandbox is actually enabled (ATLANTIC_ENABLE_SANDBOX=1),
 # and hard-depending on packages that may be absent from SFOS repos would break
 # the default (sandbox-off) install.  Provision them separately for the on-device
@@ -755,9 +747,9 @@ unset FPM_POST_EXTRA
 # ===========================================================================
 # Merges every Atlantic-built package into ONE rpm so OpenRepos users install
 # a single file (300 MB size limit there — we're well under). Deliberately
-# excludes bubblewrap and xdg-dbus-proxy: the bwrap sandbox is permanently
-# disabled at runtime (Sailjail/firejail confines instead), and xdg-dbus-proxy
-# exists as a stock Jolla package.
+# excludes bubblewrap: the bwrap sandbox is permanently disabled at runtime
+# (Sailjail/firejail confines instead).  xdg-dbus-proxy was excluded here for the
+# same reason it is no longer built at all — it is a stock Jolla package.
 #
 # The bundle goes to ${OUT}/bundle/ so CI signs/uploads it as an artifact but
 # does NOT index it into the zypper repo (the dev channel keeps the split

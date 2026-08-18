@@ -31,7 +31,7 @@ Logs: `journalctl -f`; `/tmp/wpe-debug.log` (subprocess debug); `/tmp/atl.log`
 echo root | devel-su zypper --non-interactive ref atlantic-ci-v2
 echo root | devel-su zypper --non-interactive up \
     wpewebkit2 wpewebkit2-qt5 atlantic-browser \
-    wpebackend-fdo libwpe libepoxy wpe-sfos-compat bubblewrap xdg-dbus-proxy firejail
+    wpebackend-fdo libwpe libepoxy wpe-sfos-compat bubblewrap firejail
 rpm -q atlantic-browser wpewebkit2      # confirm the iteration installed
 ```
 

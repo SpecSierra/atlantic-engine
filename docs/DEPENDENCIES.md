@@ -15,9 +15,8 @@ Most pins live in `versions.env`. The exceptions are called out explicitly.
 | libwpe | 1.17.0 | `versions.env` + `rpm/libwpe.spec` | <https://github.com/WebPlatformForEmbedded/libwpe> |
 | WPEBackend-fdo | 1.17.0 | `versions.env` + `rpm/wpebackend-fdo.spec` | <https://github.com/Igalia/WPEBackend-fdo> |
 | libepoxy | 1.5.11 | `versions.env` + `rpm/libepoxy.spec` | <https://github.com/anholt/libepoxy> |
-| libavif (decode-only, dav1d backend) | v1.0.4 | `versions.env` (`LIBAVIF_VERSION`) | <https://github.com/AOMediaCodec/libavif> |
-| bubblewrap | 0.11.0 | `versions.env` (`BUBBLEWRAP_VERSION`) | <https://github.com/containers/bubblewrap/releases> |
-| xdg-dbus-proxy | 0.1.6 | `versions.env` (`XDG_DBUS_PROXY_VERSION`) | <https://github.com/flatpak/xdg-dbus-proxy/releases> |
+| libavif (decode-only, dav1d backend) | v1.4.2 | `versions.env` (`LIBAVIF_VERSION`) | <https://github.com/AOMediaCodec/libavif> |
+| bubblewrap | 0.11.2 | `versions.env` (`BUBBLEWRAP_VERSION`) | <https://github.com/containers/bubblewrap/releases> |
 | Qt5 WPE plugin source snapshot | 2.52.1 | `versions.env` (`LEGACY_QT5_PLUGIN_SOURCE_VERSION`) **and** `%global qt5_snapshot_version` at the top of `rpm/wpewebkit2-qt5.spec` | vendored in `qt5-plugin/` |
 
 **Version bump gotcha:** a WebKit bump is not a one-line edit — follow
@@ -131,6 +130,10 @@ Plus two **stubs we compile ourselves** to avoid pulling in more:
 Linked from the sysroot, listed as `Requires` — track only when the SFOS target
 version moves.
 
+- **xdg-dbus-proxy** — 0.1.7+git1, already at the `/usr/bin/xdg-dbus-proxy` path
+  libWPEWebKit is compiled to exec. We used to build and package our own 0.1.6,
+  which only shadowed Jolla's; dropped 2026-08-18. `atlantic-browser` still
+  `Requires` it, now satisfied by the stock package.
 - **sqlcipher** — deliberately *not* built by us. Jolla ships it; building our
   own collided on soname and caused heap corruption at startup. See the password
   manager investigation.
@@ -155,9 +158,9 @@ Brave Search. Static, only needs touching if the endpoint changes.
 | libwpe | 1.17.0 @ `445a0b55` | main; latest tag 1.16.3 | ✅ pinned 2026-08-18 |
 | WPEBackend-fdo | 1.17.0 @ `84492327` | main; latest tag 1.16.1 | ✅ pinned 2026-08-18 |
 | libepoxy | 1.5.11 @ `1b6d7db1` | main; latest tag 1.5.10 | ✅ pinned 2026-08-18 |
-| libavif | v1.0.4 | **v1.4.2** (2026-05-26) | 🔼 4 minor versions behind |
-| bubblewrap | 0.11.0 | **0.11.2** (2026-04-23) | 🔼 patch |
-| xdg-dbus-proxy | 0.1.6 | **0.1.8** (2026-08-11) | 🔼 minor |
+| libavif | v1.4.2 | v1.4.2 | ✅ bumped 2026-08-18 |
+| bubblewrap | 0.11.2 | 0.11.2 | ✅ bumped 2026-08-18 |
+| xdg-dbus-proxy | — | Jolla 0.1.7+git1 | ✅ dropped, use stock |
 | adblock (Brave) | 0.13.2 | 0.13.2 | ✅ current |
 | @duckduckgo/autoconsent | 16.23.0 | 16.23.0 | ✅ bumped 2026-08-18 |
 | SFOS SDK target | 5.1.0.11 | 5.1.0.11 | ✅ newest published |
@@ -184,7 +187,7 @@ missing pin. Pins live in `versions.env` as `LIBWPE_COMMIT`, `LIBEPOXY_COMMIT`,
 device-verifying. The `*_VERSION` values stay — they name the RPMs and match what
 the built `.pc` files advertise.
 
-libavif keeps its tag clone (`v1.0.4` is a real tag) but lost its silent fallback.
+libavif keeps its tag clone (its `v*` tags are real releases) but lost its silent fallback.
 
 To move a pin: check out the new commit, rebuild, device-verify, then update
 `*_COMMIT` — and `*_VERSION` plus the `rpm/*.spec` `Version:` field only if
@@ -192,6 +195,39 @@ upstream's declared version actually changed.
 
 Note libepoxy has `patches/engine/libepoxy-rtld-default-fallback.patch` applied on
 top; it was verified to apply cleanly against the pinned commit.
+
+### bubblewrap 0.11.2 needs a -Werror relaxation
+
+0.11.2's overlay-mount error path passes possibly-NULL args to a `"%s"` format
+and GCC 13 on this host escalates upstream's `-Werror=format=2` over it, so the
+build fails. 0.11.0 compiled clean and `meson.build` is unchanged between them —
+it is the C code that moved. `scripts/build-sandbox-deps.sh` now appends
+`-Wno-error=format-overflow`; it still warns, it just does not fail.
+
+That append goes through `native_c_args()`, because meson's built-in `c_args`
+land *after* a project's own `add_project_arguments` (so a `-Wno-error` only
+wins from there), and `CFLAGS` is ignored once a native file defines `c_args`.
+The helper reads the tuning flags back out of `native-meson.ini` instead of
+restating them, so the two cannot drift.
+
+0.11.2 is the CVE-2026-41163 fix. It only affects setuid installs, which we are
+not, and upstream now defaults `support_setuid=false` — the built binary reports
+*"setuid use of bubblewrap is not supported in this build"*, so the affected code
+is compiled out.
+
+### libavif v1.0.4 -> v1.4.2 is soname-compatible
+
+`LIBRARY_VERSION_MAJOR` is still 16, so the soname stays `libavif.so.16` and
+WebKit's `USE_AVIF` link is unaffected. The lean decode-only build survives the
+bump unchanged: same cmake flags, and `NEEDED` is still just libdav1d, libm and
+libc — the whole point of building our own instead of using Ubuntu's. The
+packaging symlink is derived from the real filename, so `libavif.so.16.4.2` ->
+`libavif.so.16` needs no edit.
+
+Verified by compiling and linking WebKit 2.52.5's exact libavif API surface
+(`AVIFImageReader.cpp`: decoder create/parse/NthImage, `strictFlags`,
+`avifRGBImage` fields, `imageTiming.duration`) against the 1.4.2 headers and the
+built library.
 
 ---
 
@@ -211,7 +247,8 @@ Then compare against upstream:
 | libwpe / WPEBackend-fdo | GitHub releases (both under 1.17.0 now) |
 | adblock-rust | <https://crates.io/crates/adblock> — `cargo update -p adblock --dry-run` |
 | autoconsent | <https://github.com/duckduckgo/autoconsent/releases> |
-| bubblewrap / xdg-dbus-proxy | GitHub releases |
+| bubblewrap | <https://github.com/containers/bubblewrap/releases> |
+| libavif | <https://github.com/AOMediaCodec/libavif/releases> |
 | Filter lists | auto-latest; nothing to do unless locking builds |
 | Ubuntu-bundled libs | `apt list --upgradable` on this host |
 
