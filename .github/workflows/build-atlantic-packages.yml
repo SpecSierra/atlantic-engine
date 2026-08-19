@@ -107,6 +107,29 @@ jobs:
           sudo --preserve-env=CI_ROOT,CI_CACHE_ROOT,WORK,BUILD_TOOLS,BROWSER_SRC,PUBLIC_SFOS_BASE_VERSION,LOCAL_SFOS_SOURCE_SYSROOT,WPE_PREFIX,SYSROOT,OUT,STAGING,ARTIFACT_ROOT,NPROC,CCACHE_DIR,CCACHE_MAXSIZE,CCACHE_BASEDIR,CCACHE_NOHASHDIR,RPM_ITERATION,WEBKIT_COMPILER \
             bash "${GITHUB_WORKSPACE}/scripts/ci-build.sh"
 
+      - name: Mirror sfos-qcom-boost into the repo
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # atlantic-browser Requires sfos-qcom-boost (the device tuning that
+          # used to be carried here). OpenRepos users get it alongside the .aio
+          # bundle, but this zypper channel has to carry it too or the split
+          # package cannot resolve. Mirrored BEFORE the signing step so it is
+          # signed with the same key as everything else — the channel sets
+          # gpgcheck=1, so an unsigned package here would be rejected on device.
+          #
+          # Deliberately fatal on failure: shipping a repo whose atlantic-browser
+          # has an unsatisfiable dependency is worse than failing the build.
+          dest="${ARTIFACT_ROOT}/rpms"
+          mkdir -p "${dest}"
+          gh release download \
+            --repo SpecSierra/sfos-qcom-boost \
+            --pattern '*.noarch.rpm' \
+            --dir "${dest}" \
+            --clobber
+          ls -l "${dest}"/sfos-qcom-boost-*.noarch.rpm
+
       - name: Configure RPM signing key
         env:
           ATLANTIC_RPM_SIGNING_KEY: ${{ secrets.ATLANTIC_RPM_SIGNING_KEY }}
