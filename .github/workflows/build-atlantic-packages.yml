@@ -121,13 +121,23 @@ jobs:
           #
           # Deliberately fatal on failure: shipping a repo whose atlantic-browser
           # has an unsatisfiable dependency is worse than failing the build.
+          # The package build runs under sudo, so ARTIFACT_ROOT/rpms is
+          # root-owned by the time we get here — which is why the signing step
+          # below has to chown the rpms back. Download somewhere this step can
+          # actually write, then install with sudo and fix ownership here rather
+          # than relying on a later step to do it.
           dest="${ARTIFACT_ROOT}/rpms"
-          mkdir -p "${dest}"
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "${tmp}"' EXIT
           gh release download \
             --repo SpecSierra/sfos-qcom-boost \
             --pattern '*.noarch.rpm' \
-            --dir "${dest}" \
+            --dir "${tmp}" \
             --clobber
+          sudo mkdir -p "${dest}"
+          sudo cp "${tmp}"/*.noarch.rpm "${dest}/"
+          sudo chown "$(id -u)":"$(id -g)" "${dest}"/sfos-qcom-boost-*.noarch.rpm
+          sudo chmod 644 "${dest}"/sfos-qcom-boost-*.noarch.rpm
           ls -l "${dest}"/sfos-qcom-boost-*.noarch.rpm
 
       - name: Configure RPM signing key
