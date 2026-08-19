@@ -261,7 +261,18 @@ medians ~3890 — because repeated flicks drove the page to the bottom where
 `scrollY` stops changing and the probe ran to its 90-frame cap. Discard it;
 only `toFrame` is meaningful here.)
 
-**Conclusion: keep it off.** The driver works and is reachable in 4-5 ms, the
+**Shipped ON anyway (2026-08-19), as a product decision.** The measurement above
+did not change: there is no demonstrated touch-to-frame benefit, and the effect
+shrank as the boost gained leverage. It ships enabled via
+`/etc/atlantic/input-boost.conf` (`ATLANTIC_INPUT_BOOST=1`, floor 2016000, 80 ms)
+at the maintainer's direction. Recorded here so the next person reading a
+frequency trace knows why the cluster jumps on touch, and so nobody mistakes the
+default for evidence. The file is an rpm config file, so setting
+`ATLANTIC_INPUT_BOOST=0` on a device survives upgrades. End-to-end verified with
+the shipped config on 646.2: touch → 2 016 000 at +8 ms, held ~96 ms, back to
+floor.
+
+**What the measurement said: keep it off.** The driver works and is reachable in 4-5 ms, the
 packaging is safe and self-gating, and there is now positive evidence that
 arming it does *not* improve touch-to-frame on a heavy page. What has not been
 tested is `sched_boost_on_input` (task placement), which is a different
