@@ -790,33 +790,20 @@ atlantic_export_browser_env() {
     # after TLS — and only scheme/host/port leave the device, so a wrong guess
     # costs one idle socket. Rate-limited to one preconnect per origin per 10 s.
     #
-    # A/B: 5 runs off / 5 on, cold DNS each time (the second run to a host
-    # measures the resolver cache, not this). The metric is tap-to-first-byte,
-    # not fps.
+    # MECHANISM DEVICE-VERIFIED on build 646.2 (2026-08-18): touch-down on a
+    # link, hold, then drag away so the link is never activated. With =1, three
+    # probes on three links each opened exactly one new socket, to that link's
+    # own host (141.95.41.139 reverse-resolves to pixelcluster.dev, and a real
+    # navigation later landed on the same peer the probe had opened). With =0,
+    # the identical three probes opened nothing. So the chain touchstart ->
+    # bridge -> preconnect() -> socket works.
+    #
+    # STILL DEFAULT OFF because the mechanism working is not the same as the
+    # mechanism paying: tap-to-first-byte has no instrument yet (render --scroll
+    # measures the fling path and cannot see this). Build that first, then A/B
+    # 5 off / 5 on with COLD DNS each run — a second run to the same host
+    # measures the resolver cache, not this lever.
     export ATLANTIC_PRECONNECT="${ATLANTIC_PRECONNECT:-0}"
-
-    # ── Page performance interventions (DEFAULT OFF — pending A/B) ───────────
-    # Read by the browser (WPEWebPage); rules in
-    # /usr/share/atlantic-browser/perf-interventions.json.
-    #
-    # Reuses the adblock stack's shape (rule file + document-start user script)
-    # against work the page asks for and the user never sees: third-party tag
-    # managers deferred until the first gesture or 2.5 s after load, untagged
-    # images given loading=lazy/decoding=async past the first few, untagged
-    # iframes given loading=lazy, and infinite CSS animations paused while
-    # offscreen. Everything is delayed, nothing is dropped — dropping is the
-    # adblocker's job and it has a filter list behind it.
-    #
-    # This is the one lever left for the CNN/franceinfo class of page: the
-    # engine-side attempts there are documented dead (the load-rendering
-    # throttle deadlocks the compositor; WEBKIT_STYLE_SMART_RECONSTRUCT is
-    # byte-identical inert), and both profiles are main-thread bound in style
-    # and script rather than in raster.
-    #
-    # A/B on DCL and first-paint, and watch for breakage: a deferred script the
-    # page actually waits on shows up as a site that only finishes rendering
-    # when you touch it.
-    export ATLANTIC_PERF_INTERVENTIONS="${ATLANTIC_PERF_INTERVENTIONS:-0}"
 
     # ── Overlay scrollbar size ────────────────────────────────────────────────
     # Honoured by webkit-scrollbar.patch. Atlantic's 3x UI

@@ -1,8 +1,9 @@
-> **Status: OPEN (2026-08-18)** — Two levers implemented and unbuilt, both
-> default OFF pending the on-device A/B. Three more are root-caused here but
-> unimplemented. Nothing in this file has been measured on the device yet;
-> treat every number below as a cost model, not a result.
-
+> **Status: PARTLY RESOLVED (2026-08-18)** — Lever 1 (preconnect) is implemented
+> and its mechanism is **device-verified on build 646.2**; it stays default OFF
+> because the benefit still has no instrument. Lever 5 (page interventions) was
+> implemented, measured, found **inert**, and has been **removed** — the reasons
+> are recorded below so it is not rebuilt the same way. Three further levers are
+> root-caused but unimplemented.
 # Latency levers: the half of performance that is not frame production
 
 ## Why this file exists
@@ -25,7 +26,7 @@ first pixel of new content**. A survey of both repos' history found:
 | Second visit to a heavy site | Every byte of JS re-parsed and re-compiled |
 | CNN / franceinfo class | Main-thread bound in style + script; every engine-side lever tried is inert or documented-dead |
 
-## Implemented (default OFF, unbuilt, un-A/B'd)
+## Implemented and measured
 
 ### Lever 1 — speculative connections
 
@@ -61,59 +62,93 @@ tracked per page — the callers are cheap to fire (dragging a finger down a lin
 list, every keystroke in the URL bar), and without the limit the browser would
 open sockets fastest on exactly the pages already struggling.
 
-**A/B**: 5 off / 5 on, **cold DNS each run** — a second run to the same host
-measures the resolver cache, not this. The metric is tap-to-first-byte, not fps.
-Rule 0 applies: state the noise floor of the tap-to-first-byte measurement
-before trusting a delta.
+**Device result (build 646.2, 2026-08-18): the mechanism works.** The probe
+touches down on a link, holds, then drags away and releases, so the link is
+never activated and no navigation can occur — any connection that appears is the
+preconnect and nothing else.
 
-### Lever 5 — page performance interventions
+| Arm | Link touched | New peer during touch-down |
+|---|---|---|
+| `=1` | pixelcluster.dev | `141.95.41.139:443` |
+| `=1` | opensource.posit.co | `2a05:d01c:9e6:f102::443` |
+| `=1` | pleated-jeans.com | `2606:4700:3030::681:443` |
+| `=0` | the same three | **none** |
 
-`ATLANTIC_PERF_INTERVENTIONS`, rules in
-`/usr/share/atlantic-browser/perf-interventions.json`, applied by
-`kPerfInterventions`.
+`141.95.41.139` reverse-resolves to `pixelcluster.dev`, and a real navigation to
+another probed host later landed on exactly the peer its probe had opened.
 
-The adblock stack is a large, weekly-refreshed rule pipeline with a pre-paint
-user stylesheet and document-start scriptlets — and it is aimed almost entirely
-at *ads*, with `kRedditPerf` as the lone one-off performance script. This reuses
-its shape against the other half of what makes a heavy page slow here: work the
-page legitimately asks for and the user never sees.
+Two harness traps, both worth knowing before re-running this:
 
-Everything is **delayed, never dropped** — dropping is the adblocker's job and
-it has a filter list behind it.
+- Sampling `netstat` a fixed delay after *starting* the touch script samples
+  before the touch lands — `python3` + `devel-su` startup on device is hundreds
+  of ms. Correlate against the down event, don't assume it.
+- Picking a link point from `getBoundingClientRect()` centre is wrong for
+  wrapped text: the union rect of a multi-line inline anchor has its centre in
+  the whitespace between line boxes, and the touch lands on the enclosing `TD`.
+  Use `getClientRects()[0]` and confirm with `elementFromPoint` before touching.
+  (The device→CSS mapping itself is exact ×3, no chrome offset.)
 
-| Intervention | What it does |
-|---|---|
-| `deferScripts` | Holds JS-inserted third-party tags (40 curated patterns: tag managers, analytics, recommendation widgets) until the first user gesture or 2.5 s after load, whichever comes first |
-| `lazyImages` | `loading=lazy` + `decoding=async` on `<img>` that declares neither, past the first `eagerImages` in document order |
-| `lazyFrames` | `loading=lazy` on `<iframe>` that declares nothing |
-| `pauseAnims` | Pauses infinite CSS animations while offscreen, via `document.getAnimations()` + an `IntersectionObserver` |
+**Still default OFF.** The mechanism working is not the mechanism paying:
+tap-to-first-byte has no instrument (`render --scroll` measures the fling path).
+Build that first, then A/B 5 off / 5 on with **cold DNS each run** — a second run
+to the same host measures the resolver cache, not this lever.
 
-**The load-bearing constraint on `deferScripts`**: deferral is limited to
-scripts the page creates from JS. By the time a `MutationObserver` sees a
-**parser-inserted** `<script src>`, "prepare a script" has already run —
-removing the node or rewriting its `type` cannot stop it, and WebKit has no
-`beforescriptexecute`. The dynamic path is both reliably interceptable
-(`document.createElement` + the `src` setter and `setAttribute`) and where the
-loaders that matter actually live: GTM, and every analytics snippet that
-injects its own tag. The `createElement` wrapper is un-hooked at release so it
-is not on the hot path for the rest of the page's life.
+### Lever 5 — page performance interventions — REMOVED, measured inert
 
-This is the one untried direction for the CNN/franceinfo class. The engine-side
-attempts there are documented dead: the load-rendering throttle deadlocks the
-compositor handshake ([load-perf-paint-storm.md](load-perf-paint-storm.md), do
-not retry) and `WEBKIT_STYLE_SMART_RECONSTRUCT` is byte-identical inert
-(smart-reconstruct memory). Both profiles are main-thread bound in style and
-script, not in raster.
+Implemented as a rule file plus a document-start user script applying four
+interventions (defer JS-inserted third-party tags, `loading=lazy` +
+`decoding=async` on untagged images, `loading=lazy` on untagged iframes, pause
+infinite offscreen CSS animations), then measured on `edition.cnn.com` on build
+646.2 and **removed**. Every intervention was inert. Keeping the reasons because
+each one is a trap that would be walked into again.
 
-Verified off-device with a DOM stub harness: tag-manager script held then
-replayed on gesture; first-party script never held; author-set `loading`
-preserved; per-site `eagerImages` resolution correct (`edition.cnn.com` matches
-the `cnn.com` rule). **Not yet run in the engine.**
+**DCL, interleaved, warm cache:**
 
-**A/B**: DCL and first paint, and watch for breakage — a deferred script the
-page actually waits on shows up as a site that only finishes rendering when you
-touch it. Per-site `disable` is the escape hatch; validate any new rule through
-`wkinspect` before CI, as with the other user scripts.
+| | n | mean | sd |
+|---|---|---|---|
+| OFF | 10 | 12701 ms | 2043 |
+| ON | 10 | 12165 ms | 2411 |
+
+536 ms (4.2%), Welch t = 0.54 against a pooled noise floor of ~2235 ms — no
+effect. **The first 5 pairs showed −17% and looked like a clear win**; it
+evaporated when n reached 10. Rule 0 earned its keep here: stopping at the
+project's nominal 5-run A/B would have shipped a false positive.
+
+Why each intervention did nothing:
+
+1. **`deferScripts` had nothing to defer.** CNN loads 194 resources across 9
+   hosts, all first-party plus stripe/piano.io. **Zero** matched the 40 curated
+   defer patterns, because our own adblocker had already removed every tag
+   manager and analytics host. On ad-heavy sites this intervention is redundant
+   with a subsystem we already ship; it could only matter where trackers are
+   first-party-proxied or the site is allowlisted.
+
+2. **`lazyImages` / `lazyFrames` are a no-op, and the premise was wrong.** CNN
+   sets no `loading` attribute itself (0 of 74 images); the script tagged all
+   74 — and **74/74 were fetched anyway, including all 58 more than two
+   viewports below the fold.** Resource counts were byte-identical across arms
+   in 3/3 runs.
+
+   The root cause is the one already documented for scripts, which was not
+   carried over to images when this was written: **the load starts when the
+   parser inserts the element**, so an attribute applied from a
+   `MutationObserver` callback — even at document-start — arrives after the
+   decision has been made. `loading=lazy` set after insertion is decorative.
+   The engine is not at fault: `LazyImageLoadingEnabled` defaults true and
+   `"loading" in HTMLImageElement.prototype` is true on device.
+
+3. **`pauseAnims` did not pause.** Six infinite animations, all offscreen at
+   y≈2600 against an 840 px viewport, all still `running` after 25 s. Not
+   root-caused before removal; suspects are the bounded rescan window and
+   `IntersectionObserver.observe()` on SVG `<g>` targets.
+
+**If this is ever retried**, the lazy half belongs in the engine, not in JS:
+a small patch making an absent `loading` attribute mean lazy behind a flag, in
+`HTMLImageElement`, where the decision is actually taken at parser insertion.
+The defer half needs a site corpus where the patterns actually match — measure
+that before writing any more rules. And DCL is the wrong metric for lazy
+loading in any case: it fires at DOM parse, while image loading is mostly
+post-DCL. Measure bytes, decoded-image memory or post-load main-thread time.
 
 ## Root-caused, not implemented
 
@@ -170,7 +205,13 @@ starting, and drop it if it is under ~300 ms.
 
 ## What this file does not claim
 
-No device measurement has been taken for either implemented lever. The cost
-model for lever 1 (200-500 ms of handshake on a cold origin) is a general
-mobile-radio figure, not one measured on this device or this network; the first
-A/B should produce the real number before the flag is flipped.
+Lever 1's *benefit* is still unmeasured. The mechanism is verified; the
+200-500 ms handshake figure it is meant to recover is a general mobile-radio
+number, not one measured on this device or network. Until `atldbg` can report
+tap-to-first-byte, the flag stays off.
+
+The lever 5 numbers are one site (`edition.cnn.com`), warm cache, one network.
+The conclusion drawn from them is deliberately narrow — that the interventions
+as implemented did nothing measurable there, and that two of the three have a
+mechanical reason they could not have worked anywhere. It is not a claim that
+deferring third-party script can never help a site that actually loads some.
