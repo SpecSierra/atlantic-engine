@@ -153,7 +153,7 @@ post-DCL. Measure bytes, decoded-image memory or post-load main-thread time.
 
 ## Root-caused; one implemented, two not
 
-### The SoC's input boost — IMPLEMENTED, mechanism proven, benefit NOT shown
+### The SoC's input boost — IMPLEMENTED, mechanism proven, benefit DISPROVEN
 
 Probed on device (kernel 4.14.264, Xperia 10 II): Qualcomm's `cpu_boost` driver
 is loaded and configured to do nothing — `input_boost_freq` 0 on all eight
@@ -222,6 +222,50 @@ retrying rather than after:
 So: the driver works and is reachable, the packaging is done and safe (default
 OFF, self-gating, auto-detects the big cluster), and there is **no evidence yet
 that arming it makes anything faster**. It should not be enabled on that basis.
+
+**Second A/B (n=30/arm) closes it: the boost does not buy latency here.**
+The first attempt was invalid, and the way it was invalid is the useful part.
+Two observer effects had to be removed before the experiment measured anything:
+
+1. **The apparatus woke the CPU it was measuring.** Shelling out over ssh to
+   start `python3` for each touch is real work on the device, and it lifted the
+   big cluster off its floor immediately before the touch being timed — the
+   exact state the boost exists to fix. Fixed by moving the whole A/B into one
+   resident on-device process: no ssh, no interpreter startup, no `devel-su` in
+   the critical window.
+2. **Waiting for the idle state prevented it.** Polling `scaling_cur_freq` every
+   100 ms until it read 1056 kept the cluster awake polling. Only 2 of 8 trials
+   reached the floor. Exiting the wait early and letting a fixed settle elapse
+   instead took it to **41 of 60**.
+
+With the precondition actually met and the boost raised to the cluster's full
+2 016 000 (so it can act from 1401 too, not only from the floor):
+
+| subset | n/arm | OFF | ON | diff | t |
+|---|---|---|---|---|---|
+| all trials | 30 | 28.5 ms | 21.2 ms | 7.3 | 1.57 |
+| boost could act (`f0` < 2016) | 29 | 24.3 ms | 21.2 ms | 3.1 | 1.46 |
+| started at the floor (`f0` = 1056) | ~20 | 24.6 ms | 22.6 ms | 2.0 | 0.80 |
+
+Nothing is significant, but the decisive point is not the p-values — it is the
+**direction of the conditioning**. The at-floor subset is where the boost has
+the most leverage (1056 → 2016 MHz, a 1.91× clock increase). If the effect were
+real it would be *largest* there. It is the smallest. And a CPU-bound wake path
+at the floor predicts 24.6 × 1056/2016 = **12.9 ms**, against 22.6 ms observed —
+missing by ~10 ms. So touch-to-frame on this device is not bound by big-cluster
+clock at that moment; the 2-3 ms is noise, and the earlier corroboration from
+the 1401 MHz clock ratio was a coincidence of a small sample.
+
+(The scroll-onset metric degenerated in this run — means ~2800 ms, sd ~1700,
+medians ~3890 — because repeated flicks drove the page to the bottom where
+`scrollY` stops changing and the probe ran to its 90-frame cap. Discard it;
+only `toFrame` is meaningful here.)
+
+**Conclusion: keep it off.** The driver works and is reachable in 4-5 ms, the
+packaging is safe and self-gating, and there is now positive evidence that
+arming it does *not* improve touch-to-frame on a heavy page. What has not been
+tested is `sched_boost_on_input` (task placement), which is a different
+mechanism and the only remaining reason to revisit this.
 
 **One implementation detail worth not rediscovering:** the kernel param parser
 rejects a trailing separator with `EINVAL`. A generated `"0:0 1:0 … 7:1401600 "`
