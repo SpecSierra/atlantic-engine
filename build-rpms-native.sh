@@ -401,6 +401,15 @@ install -m 644 "${SCRIPT_DIR}/deploy/atlantic-cpu-governor.service" \
 # memory-contained cgroup for the browser so a heavy page (reddit) can't
 # OOM-crash the phone. Device profiling proved reddit is memory-bound, not
 # paint-bound (system MemAvailable cratered to ~344 MB on scroll).
+# Per-touch CPU boost (default OFF; needs /etc/atlantic/input-boost.conf with
+# ATLANTIC_INPUT_BOOST=1). Distinct from the governor repair above: that restores
+# sugov so the cluster CAN ramp, this delivers frequency on the touch EVENT,
+# before any load exists for a reactive governor to see.
+install -m 755 "${SCRIPT_DIR}/deploy/atlantic-input-boost.sh" \
+    "${S}/usr/libexec/atlantic/atlantic-input-boost.sh"
+install -m 644 "${SCRIPT_DIR}/deploy/atlantic-input-boost.service" \
+    "${S}/usr/lib/systemd/system/atlantic-input-boost.service"
+
 install -m 755 "${SCRIPT_DIR}/deploy/atlantic-browser-memory.sh" \
     "${S}/usr/libexec/atlantic/atlantic-browser-memory.sh"
 install -m 644 "${SCRIPT_DIR}/deploy/atlantic-browser-memory.service" \
@@ -424,6 +433,8 @@ install -m 644 "${SCRIPT_DIR}/deploy/atlantic-memory-reclaim.timer" \
 FPM_POST_EXTRA="systemctl daemon-reload >/dev/null 2>&1 || :
 systemctl enable atlantic-cpu-governor.service >/dev/null 2>&1 || :
 systemctl start atlantic-cpu-governor.service >/dev/null 2>&1 || :
+systemctl enable atlantic-input-boost.service >/dev/null 2>&1 || :
+systemctl start atlantic-input-boost.service >/dev/null 2>&1 || :
 systemctl enable atlantic-browser-memory.service >/dev/null 2>&1 || :
 systemctl start atlantic-browser-memory.service >/dev/null 2>&1 || :
 systemctl enable atlantic-memory-reclaim.timer >/dev/null 2>&1 || :
@@ -785,6 +796,8 @@ FPM_POST_EXTRA="[ -w /sys/class/kgsl/kgsl-3d0/min_pwrlevel ] && echo 2 > /sys/cl
 systemctl daemon-reload >/dev/null 2>&1 || :
 systemctl enable atlantic-cpu-governor.service >/dev/null 2>&1 || :
 systemctl start atlantic-cpu-governor.service >/dev/null 2>&1 || :
+systemctl enable atlantic-input-boost.service >/dev/null 2>&1 || :
+systemctl start atlantic-input-boost.service >/dev/null 2>&1 || :
 systemctl enable atlantic-browser-memory.service >/dev/null 2>&1 || :
 systemctl start atlantic-browser-memory.service >/dev/null 2>&1 || :
 systemctl enable atlantic-memory-reclaim.timer >/dev/null 2>&1 || :

@@ -1,0 +1,16 @@
+[Unit]
+Description=Atlantic: arm the SoC per-touch CPU boost (SFOS leaves cpu_boost zeroed)
+Documentation=https://github.com/SpecSierra/atlantic-engine
+# After the vendor power init, and after the governor repair — cpu_boost imposes
+# a floor through cpufreq, so the policy it acts on should already be sane.
+After=multi-user.target atlantic-cpu-governor.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/atlantic/atlantic-input-boost.sh
+RemainAfterExit=yes
+# Don't fail the boot transaction if this kernel has no cpu_boost module.
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=multi-user.target

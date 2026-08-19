@@ -2,8 +2,9 @@
 > and its mechanism is **device-verified on build 646.2**; it stays default OFF
 > because the benefit still has no instrument. Lever 5 (page interventions) was
 > implemented, measured, found **inert**, and has been **removed** — the reasons
-> are recorded below so it is not rebuilt the same way. Three further levers are
-> root-caused but unimplemented.
+> are recorded below so it is not rebuilt the same way. The SoC input boost is
+> now implemented too — its mechanism is proven but its benefit is not, so it
+> ships default OFF. Two further levers are root-caused but unimplemented.
 # Latency levers: the half of performance that is not frame production
 
 ## Why this file exists
@@ -150,28 +151,88 @@ that before writing any more rules. And DCL is the wrong metric for lazy
 loading in any case: it fires at DOM parse, while image loading is mostly
 post-DCL. Measure bytes, decoded-image memory or post-load main-thread time.
 
-## Root-caused, not implemented
+## Root-caused; one implemented, two not
 
-### The SoC's input boost is present and switched off
+### The SoC's input boost — IMPLEMENTED, mechanism proven, benefit NOT shown
 
-Probed on device (kernel 4.14.264, Xperia 10 II):
+Probed on device (kernel 4.14.264, Xperia 10 II): Qualcomm's `cpu_boost` driver
+is loaded and configured to do nothing — `input_boost_freq` 0 on all eight
+cores, `sched_boost_on_input` 0. SFOS never populates it. `2fa56eb` rewrote
+schedutil's *frequency* policy; this is a different, event-driven mechanism, and
+no thread in the stack has ever had its scheduling class touched.
 
-```
-/sys/module/cpu_boost/parameters/input_boost_freq     = 0:0 1:0 … 7:0
-/sys/module/cpu_boost/parameters/sched_boost_on_input = 0
-/sys/module/cpu_boost/parameters/input_boost_ms       = 40
-```
+**Why the governor cannot substitute.** `atlantic-cpu-governor.sh` is a repair:
+it rewrites a dead sugov instance so the cluster can ramp at all, then exits. On
+device the repair holds — `policy4` reads `schedutil`, idles at 1 056 000, tops
+at 2 016 000, `up_rate_limit_us=1000`. Once repaired schedutil is purely
+reactive, so the order after a touch is always: finger down → browser wakes →
+threads run *at the idle floor* → utilization accumulates (PELT, ~32 ms
+half-life) → frequency rises. The governor's input is load that has not happened
+yet. `cpu_boost` hooks the input event itself.
 
-Qualcomm's per-touch boost driver is loaded and configured to do nothing —
-Sailfish never populates it. `2fa56eb` rewrote schedutil's *frequency* policy;
-this is a different mechanism (event-driven boost off the input device), and no
-thread in the stack has ever had its scheduling class or priority touched
-(repo grep: no `input_boost`, `SCHED_FIFO`, `chrt`, `renice`). Kernel 4.14 has
-no uclamp, so this driver *is* the lever.
+**Mechanism: proven.** Idle system, touch injected and frequency sampled from
+one process so they share a clock:
 
-Cheapest experiment in the whole file: it is runtime-tunable from the existing
-boot oneshot, needs no rebuild, and attacks the "takes a moment to start moving"
-feel that steady-state fps cannot.
+| `input_boost_freq` | result |
+|---|---|
+| all zero (shipped) | 3/3 taps — `policy4` never left 1 056 000 within 350 ms |
+| cpu4-7 = 1401600 | 3/3 taps — 1 401 600 reached **4-5 ms** after touch-down |
+
+**Benefit: not demonstrated.** Shipped as `deploy/atlantic-input-boost.sh` +
+`.service` (default OFF, opt-in via `/etc/atlantic/input-boost.conf`), then A/B'd
+on `edition.cnn.com` by toggling the sysfs arm between trials — no relaunch, so
+the arms alternate inside one browser session with no drift.
+
+| metric | OFF (n=10) | ON (n=10) | diff | t |
+|---|---|---|---|---|
+| touch → next frame | 17.6 ms (median 14.0, sd 10.5) | 12.3 ms (median 11.5, sd 2.4) | 5.3 ms | 1.55 |
+| touch → first scroll movement | 149.7 ms (sd 26.1) | 158.3 ms (sd 37.8) | −8.6 ms | −0.59 |
+
+Neither clears the bar. The 5.3 ms on touch-to-frame rests almost entirely on a
+single 46 ms OFF sample; drop it and OFF's mean falls to ~14.4 ms and the
+difference is ~2 ms. Scroll onset shows nothing.
+
+Two things stop this being written off as a flat negative — both say
+"underpowered", not "absent":
+
+- **The point estimate matches the a-priori physical prediction.** The boost
+  raises the clock 1056 → 1401 MHz, so a CPU-bound wake path should scale by
+  1056/1401 = 0.754 — predicting the 14.0 ms median becomes **10.6 ms**, against
+  an observed ON median of 11.5 ms. Corroboration, not proof: it says the effect
+  has the right size and sign *if* it exists.
+- **n=10 could not have resolved it.** With the outlier-robust effect (2.1 ms)
+  against a pooled sd of 3.1, 80% power at α=.05 needs **n ≈ 33 per arm**. The
+  experiment was three times too small to conclude in either direction.
+
+**Two reasons the experiment may not have been decisive**, both to fix before
+retrying rather than after:
+
+1. **No headroom in the metric.** Touch-to-next-frame is already 11-14 ms — under
+   one 16 ms vsync interval. A lever that delivers frequency 4-5 ms after touch
+   cannot show up in a number already sitting at the frame floor. Measure
+   something with room: p95 rather than the mean, or time to first *painted*
+   frame under real load.
+2. **The precondition was never confirmed.** The boost only does anything if the
+   cluster is actually at its floor when the finger lands. With CNN loaded and
+   still working in the background it may well have been at 2 016 000 already,
+   in which case the experiment measured a no-op by construction. Sampling
+   `scaling_cur_freq` at touch time is the missing control — the tunnel dropped
+   before it could be taken.
+
+So: the driver works and is reachable, the packaging is done and safe (default
+OFF, self-gating, auto-detects the big cluster), and there is **no evidence yet
+that arming it makes anything faster**. It should not be enabled on that basis.
+
+**One implementation detail worth not rediscovering:** the kernel param parser
+rejects a trailing separator with `EINVAL`. A generated `"0:0 1:0 … 7:1401600 "`
+spec fails the write while the identical string without the trailing space
+succeeds — and since the write is a shell redirect, that failure is silent
+unless checked. The script trims it and reports instead of no-opping.
+
+**Scope caveat, unlike every other lever here**: `cpu_boost` is system-wide. It
+fires on any touch anywhere in the OS, so arming it from a browser package
+changes the whole phone — and would flatter a browser benchmark by speeding up
+everything else too. Hence the opt-in file rather than a default.
 
 ### The back/forward cache is capacity 0 by our own configuration
 
