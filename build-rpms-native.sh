@@ -273,8 +273,8 @@ install -m 644 "${SCRIPT_DIR}/deploy/pulse-client.conf" \
 # WebProcess main thread — to 4 of 8 cores while the little cluster idled.
 # EAS up-migrates the hot threads to the big cores by itself (device A/B
 # 2026-07-06: theverge DOMContentLoaded 8.7 s pinned + floor-stuck governor
-# -> 2.0 s unpinned at full clock; see deploy/atlantic-cpu-governor.sh for
-# the governor half of that fix).
+# -> 2.0 s unpinned at full clock; the governor half of that fix now lives in
+# sfos-qcom-boost).
 mkdir -p "${S}${PACKAGE_RUNTIME_PREFIX}/libexec/wpe-webkit-2.0"
 for helper in WPEWebProcess WPENetworkProcess WPEGPUProcess; do
     [ -e "${S}/usr/libexec/wpe-webkit-2.0/${helper}" ] || continue
@@ -387,15 +387,14 @@ install -m 644 "${COMPAT_BUILD}/hunspell/en_US.aff" "${COMPAT_BUILD}/hunspell/en
 # Keep shim preload/library-path scoped to Atlantic launcher/helper wrappers only.
 # Global nemo session injection breaks unrelated services (e.g. PulseAudio).
 
-# CPU governor repair: the Xperia 10 II vendor init leaves the big cluster
-# (cpu4-7) stuck in "powersave" at 300 MHz, and Atlantic pins the browser +
-# WPE helpers to that cluster. Ship a boot-time oneshot that revs it back up.
+# CPU governor repair, per-touch CPU boost and the GPU power floor all live in
+# sfos-qcom-boost now (Requires, below). None of it is browser-specific, and
+# shipping a second copy here would mean two units rewriting the same governor
+# at boot with no ordering between them — each runs a load probe, so one can
+# read a floor-stuck frequency caused by the other's rewrite and escalate the
+# cluster to "performance" permanently.
 install -d -m 755 "${S}/usr/libexec/atlantic"
-install -m 755 "${SCRIPT_DIR}/deploy/atlantic-cpu-governor.sh" \
-    "${S}/usr/libexec/atlantic/atlantic-cpu-governor.sh"
 install -d -m 755 "${S}/usr/lib/systemd/system"
-install -m 644 "${SCRIPT_DIR}/deploy/atlantic-cpu-governor.service" \
-    "${S}/usr/lib/systemd/system/atlantic-cpu-governor.service"
 
 # Boot-time oneshot: enlarge compressed swap (extra zram) + create a
 # memory-contained cgroup for the browser so a heavy page (reddit) can't
@@ -422,13 +421,12 @@ install -m 644 "${SCRIPT_DIR}/deploy/atlantic-memory-reclaim.timer" \
 # (idempotent; tolerant on a host without the unit running, e.g. during
 # image builds).
 FPM_POST_EXTRA="systemctl daemon-reload >/dev/null 2>&1 || :
-systemctl enable atlantic-cpu-governor.service >/dev/null 2>&1 || :
-systemctl start atlantic-cpu-governor.service >/dev/null 2>&1 || :
 systemctl enable atlantic-browser-memory.service >/dev/null 2>&1 || :
 systemctl start atlantic-browser-memory.service >/dev/null 2>&1 || :
 systemctl enable atlantic-memory-reclaim.timer >/dev/null 2>&1 || :
 systemctl start atlantic-memory-reclaim.timer >/dev/null 2>&1 || :" \
-fpm_rpm wpe-sfos-compat "$WPE_SFOS_COMPAT_VERSION" "SFOS compatibility shims for WPE WebKit" "$S"
+fpm_rpm wpe-sfos-compat "$WPE_SFOS_COMPAT_VERSION" "SFOS compatibility shims for WPE WebKit" "$S" \
+    --depends sfos-qcom-boost
 
 # ===========================================================================
 # 7. atlantic-browser
@@ -719,19 +717,9 @@ mkdir -p "${S}/etc/pulse/xpolicy.conf.d"
 install -m 644 "${SCRIPT_DIR}/deploy/atlantic-audio-policy.conf" \
     "${S}/etc/pulse/xpolicy.conf.d/atlantic-audio.conf"
 
-# GPU performance udev rule — Snapdragon 665 Adreno 610
-# Power levels: 0=950 1=900 2=820 3=745 4=600 5=465 6=320 MHz
-# Without a floor the GPU idles at 320 MHz; Skia tile rendering stalls on
-# every scroll/repaint waiting for the clock to ramp back up.
-mkdir -p "${S}/lib/udev/rules.d"
-cat > "${S}/lib/udev/rules.d/99-atlantic-gpu.rules" << 'UDEV'
-# Atlantic Browser: keep Adreno 610 GPU above 820 MHz for responsive rendering.
-# Level 2=820MHz is a good perf/battery balance; level 0 would be 950MHz max.
-SUBSYSTEM=="kgsl", KERNEL=="kgsl-3d0", ATTR{min_pwrlevel}="2"
-UDEV
-
-# Post-install: apply GPU boost immediately (udev rule handles reboots)
-FPM_POST_EXTRA='[ -w /sys/class/kgsl/kgsl-3d0/min_pwrlevel ] && echo 2 > /sys/class/kgsl/kgsl-3d0/min_pwrlevel || :'
+# The GPU power floor moved to sfos-qcom-boost with the rest of the tuning. Its
+# udev rule derives the power level from the device's own frequency table
+# instead of hardcoding 2, which only meant 820 MHz on an Adreno 610.
 fpm_rpm atlantic-browser "$ATLANTIC_BROWSER_VERSION" "Atlantic Browser (WPE WebKit engine)" "$S" \
     --depends wpewebkit2 \
     --depends wpewebkit2-qt5 \
@@ -768,17 +756,16 @@ for pkg in libwpe libepoxy wpebackend-fdo wpewebkit2 wpewebkit2-qt5 \
     cp -a "${STAGING}/${pkg}/." "$B/"
 done
 
-# The boot oneshots now SHIP in the bundle too. Public-beta safety is provided
-# by self-gates inside the scripts instead of dropping them:
-#   - atlantic-cpu-governor only touches a big-cluster governor that reads
-#     powersave/schedutil (the two vendor-init-broken states), rewrites it and
-#     load-probes before ever escalating to performance — a deliberate config
-#     on an unknown device is left alone.
-#   - atlantic-browser-memory exits untouched on >= 6 GB RAM devices.
-# Dropping them from the bundle was costing every Xperia 10 II .aio user the
-# governor repair: the vendor sugov breakage leaves CPU-bound page loads at
-# 52% of achievable clock (device-proven 2026-07-06 on this exact
-# aio-without-oneshots install: theverge DCL 8.7 s -> 2.0 s repaired).
+# The memory oneshot SHIPS in the bundle; its safety comes from a self-gate
+# (atlantic-browser-memory exits untouched on >= 6 GB RAM devices) rather than
+# from dropping it.
+#
+# The CPU governor repair used to ship here too, and dropping it once cost every
+# Xperia 10 II .aio user 48% of their achievable clock (device-proven
+# 2026-07-06: theverge DCL 8.7 s floor-stuck -> 2.0 s repaired). It is still
+# applied — sfos-qcom-boost carries it now, and the bundle Requires that
+# package, so the repair reaches the same devices through a dependency instead
+# of a second copy.
 
 mkdir -p "${OUT}/bundle"
 # Merged post-install: immediate GPU boost only (udev rule handles reboots;
@@ -787,10 +774,7 @@ mkdir -p "${OUT}/bundle"
 (
 OUT="${OUT}/bundle"
 RPM_ITERATION="${RPM_ITERATION:-1}.aio"
-FPM_POST_EXTRA="[ -w /sys/class/kgsl/kgsl-3d0/min_pwrlevel ] && echo 2 > /sys/class/kgsl/kgsl-3d0/min_pwrlevel || :
-systemctl daemon-reload >/dev/null 2>&1 || :
-systemctl enable atlantic-cpu-governor.service >/dev/null 2>&1 || :
-systemctl start atlantic-cpu-governor.service >/dev/null 2>&1 || :
+FPM_POST_EXTRA="systemctl daemon-reload >/dev/null 2>&1 || :
 systemctl enable atlantic-browser-memory.service >/dev/null 2>&1 || :
 systemctl start atlantic-browser-memory.service >/dev/null 2>&1 || :
 systemctl enable atlantic-memory-reclaim.timer >/dev/null 2>&1 || :

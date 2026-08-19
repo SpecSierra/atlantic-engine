@@ -169,7 +169,7 @@ cores, `sched_boost_on_input` 0. SFOS never populates it. `2fa56eb` rewrote
 schedutil's *frequency* policy; this is a different, event-driven mechanism, and
 no thread in the stack has ever had its scheduling class touched.
 
-**Why the governor cannot substitute.** `atlantic-cpu-governor.sh` is a repair:
+**Why the governor cannot substitute.** The governor repair (now `sfos-qcom-boost`, formerly `atlantic-cpu-governor.sh`) is a repair:
 it rewrites a dead sugov instance so the cluster can ramp at all, then exits. On
 device the repair holds — `policy4` reads `schedutil`, idles at 1 056 000, tops
 at 2 016 000, `up_rate_limit_us=1000`. Once repaired schedutil is purely
