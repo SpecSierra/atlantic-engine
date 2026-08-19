@@ -153,7 +153,15 @@ post-DCL. Measure bytes, decoded-image memory or post-load main-thread time.
 
 ## Root-caused; one implemented, two not
 
-### The SoC's input boost — IMPLEMENTED, mechanism proven, benefit DISPROVEN
+### The SoC's input boost — MOVED OUT to sfos-qcom-boost
+
+**This no longer lives in Atlantic.** The implementation moved to a standalone
+package, [sfos-qcom-boost](https://github.com/SpecSierra/sfos-qcom-boost), which
+also carries the cpufreq governor repair and the GPU power floor — none of the
+three is browser-specific, and two copies of the same sysfs writes would drift.
+Atlantic now `Requires: sfos-qcom-boost`; both are published on OpenRepos. The
+investigation below is kept because it is why the lever exists and what is known
+about its value.
 
 Probed on device (kernel 4.14.264, Xperia 10 II): Qualcomm's `cpu_boost` driver
 is loaded and configured to do nothing — `input_boost_freq` 0 on all eight

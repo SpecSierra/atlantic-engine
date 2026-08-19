@@ -17,13 +17,7 @@ concludes, add a status header and move it here.
 | [load-perf-paint-storm.md](load-perf-paint-storm.md) | load-rendering throttle unfixable (compositor deadlock) — **do not retry**; repaint storm still open |
 | [rendering-audit.md](rendering-audit.md) | stale (2026-05-28), early device facts only |
 | [upstream-perf-roadmap.md](upstream-perf-roadmap.md) | **open roadmap** — what upstream already knows is slow in 2.52.5, ranked; the CPU-rendering crash check is done and negative |
-| [latency-levers.md](latency-levers.md) | **partly resolved** — preconnect mechanism device-verified (646.2), still default OFF pending an instrument; page interventions measured inert and REMOVED (attributes set from JS arrive after the parser has already started the load); input boost implemented default-OFF (fires 4-5 ms after touch, but no benefit shown yet); bfcache and JS bytecode caching root-caused only |
-
-## Load latency
-
-| Doc | Status |
-|---|---|
-| [latency-levers.md](latency-levers.md) | **open** — the finger-to-first-pixel interval. Preconnect + page interventions implemented behind default-OFF flags (unbuilt, un-A/B'd); input boost, bfcache and JS bytecode caching root-caused but unimplemented |
+| [latency-levers.md](latency-levers.md) | **partly resolved** — preconnect mechanism device-verified (646.2), still default OFF pending an instrument; page interventions measured inert and REMOVED (attributes set from JS arrive after the parser has already started the load); input boost proven but unquantified and MOVED OUT to [sfos-qcom-boost](https://github.com/SpecSierra/sfos-qcom-boost); bfcache and JS bytecode caching root-caused only |
 
 ## Video
 

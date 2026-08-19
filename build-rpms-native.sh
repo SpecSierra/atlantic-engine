@@ -401,21 +401,6 @@ install -m 644 "${SCRIPT_DIR}/deploy/atlantic-cpu-governor.service" \
 # memory-contained cgroup for the browser so a heavy page (reddit) can't
 # OOM-crash the phone. Device profiling proved reddit is memory-bound, not
 # paint-bound (system MemAvailable cratered to ~344 MB on scroll).
-# Per-touch CPU boost. Distinct from the governor repair above: that restores
-# sugov so the cluster CAN ramp, this delivers frequency on the touch EVENT,
-# before any load exists for a reactive governor to see. The script itself still
-# defaults to OFF when the config is absent; the shipped config turns it on.
-install -m 755 "${SCRIPT_DIR}/deploy/atlantic-input-boost.sh" \
-    "${S}/usr/libexec/atlantic/atlantic-input-boost.sh"
-install -m 644 "${SCRIPT_DIR}/deploy/atlantic-input-boost.service" \
-    "${S}/usr/lib/systemd/system/atlantic-input-boost.service"
-# Shipped ENABLED (product decision — the A/B found no touch-to-frame benefit;
-# see docs/investigations/latency-levers.md). Marked as an rpm config file at the
-# fpm call below so a device-side edit survives an upgrade.
-install -d "${S}/etc/atlantic"
-install -m 644 "${SCRIPT_DIR}/deploy/atlantic-input-boost.conf" \
-    "${S}/etc/atlantic/input-boost.conf"
-
 install -m 755 "${SCRIPT_DIR}/deploy/atlantic-browser-memory.sh" \
     "${S}/usr/libexec/atlantic/atlantic-browser-memory.sh"
 install -m 644 "${SCRIPT_DIR}/deploy/atlantic-browser-memory.service" \
@@ -439,14 +424,11 @@ install -m 644 "${SCRIPT_DIR}/deploy/atlantic-memory-reclaim.timer" \
 FPM_POST_EXTRA="systemctl daemon-reload >/dev/null 2>&1 || :
 systemctl enable atlantic-cpu-governor.service >/dev/null 2>&1 || :
 systemctl start atlantic-cpu-governor.service >/dev/null 2>&1 || :
-systemctl enable atlantic-input-boost.service >/dev/null 2>&1 || :
-systemctl start atlantic-input-boost.service >/dev/null 2>&1 || :
 systemctl enable atlantic-browser-memory.service >/dev/null 2>&1 || :
 systemctl start atlantic-browser-memory.service >/dev/null 2>&1 || :
 systemctl enable atlantic-memory-reclaim.timer >/dev/null 2>&1 || :
 systemctl start atlantic-memory-reclaim.timer >/dev/null 2>&1 || :" \
-fpm_rpm wpe-sfos-compat "$WPE_SFOS_COMPAT_VERSION" "SFOS compatibility shims for WPE WebKit" "$S" \
-    --config-files /etc/atlantic/input-boost.conf
+fpm_rpm wpe-sfos-compat "$WPE_SFOS_COMPAT_VERSION" "SFOS compatibility shims for WPE WebKit" "$S"
 
 # ===========================================================================
 # 7. atlantic-browser
@@ -757,7 +739,8 @@ fpm_rpm atlantic-browser "$ATLANTIC_BROWSER_VERSION" "Atlantic Browser (WPE WebK
     --depends sqlcipher \
     --depends sailjail \
     --depends xdg-dbus-proxy \
-    --depends firejail
+    --depends firejail \
+    --depends sfos-qcom-boost
 unset FPM_POST_EXTRA
 
 # ===========================================================================
@@ -773,6 +756,11 @@ unset FPM_POST_EXTRA
 # does NOT index it into the zypper repo (the dev channel keeps the split
 # packages). Release gets a ".aio" suffix so its NEVRA differs from the split
 # atlantic-browser rpm and rpm can tell the two apart.
+# Device tuning (cpufreq governor repair, per-touch CPU boost, GPU power floor)
+# lives in sfos-qcom-boost, not here: none of it is browser-specific, and two
+# copies of the same sysfs writes would drift. Both this bundle and the split
+# atlantic-browser rpm Require it; it is published alongside them on OpenRepos.
+#   https://github.com/SpecSierra/sfos-qcom-boost
 echo "--- Staging atlantic-browser bundle (single-RPM, OpenRepos) ---"
 B="${STAGING}/atlantic-bundle"; rm -rf "$B"; mkdir -p "$B"
 for pkg in libwpe libepoxy wpebackend-fdo wpewebkit2 wpewebkit2-qt5 \
@@ -803,14 +791,11 @@ FPM_POST_EXTRA="[ -w /sys/class/kgsl/kgsl-3d0/min_pwrlevel ] && echo 2 > /sys/cl
 systemctl daemon-reload >/dev/null 2>&1 || :
 systemctl enable atlantic-cpu-governor.service >/dev/null 2>&1 || :
 systemctl start atlantic-cpu-governor.service >/dev/null 2>&1 || :
-systemctl enable atlantic-input-boost.service >/dev/null 2>&1 || :
-systemctl start atlantic-input-boost.service >/dev/null 2>&1 || :
 systemctl enable atlantic-browser-memory.service >/dev/null 2>&1 || :
 systemctl start atlantic-browser-memory.service >/dev/null 2>&1 || :
 systemctl enable atlantic-memory-reclaim.timer >/dev/null 2>&1 || :
 systemctl start atlantic-memory-reclaim.timer >/dev/null 2>&1 || :"
 fpm_rpm atlantic-browser "$ATLANTIC_BROWSER_VERSION" "Atlantic Browser (WPE WebKit engine, all-in-one)" "$B" \
-    --config-files /etc/atlantic/input-boost.conf \
     --depends sailjail \
     --depends firejail \
     --depends libseccomp \
@@ -820,7 +805,8 @@ fpm_rpm atlantic-browser "$ATLANTIC_BROWSER_VERSION" "Atlantic Browser (WPE WebK
     --provides wpe-sfos-compat --replaces wpe-sfos-compat \
     --provides libwpe --replaces libwpe \
     --provides libepoxy --replaces libepoxy \
-    --provides wpebackend-fdo --replaces wpebackend-fdo
+    --provides wpebackend-fdo --replaces wpebackend-fdo \
+    --depends sfos-qcom-boost
 )
 
 # ===========================================================================
