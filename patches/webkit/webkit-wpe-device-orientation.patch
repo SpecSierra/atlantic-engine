@@ -79,6 +79,12 @@ LocalDOMWindow::isAllowedToUseDeviceMotionOrOrientation() requires a SECURE
 CONTEXT, so sensors are https-only; and it requires the DeviceOrientationEvent
 preference, which already defaults true for the WebKit port.
 
+Concrete DeviceClient subclasses need CanMakeCheckedPtr<T> and
+WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR: the base derives from
+AbstractCanMakeCheckedPtr, which leaves five pure virtuals (checkedPtrCount and
+friends) for the concrete class, and the CRTP mixin is what supplies them.
+DeviceOrientationClientMock is built the same way and is the reference.
+
 Headers.cmake is not optional here: WebCore headers are only visible to WebKit as
 <WebCore/Foo.h> if they are listed there, and dom/DeviceMotion*.h /
 dom/DeviceOrientationController.h never were, because nothing outside WebCore had
@@ -195,7 +201,21 @@ See docs/investigations/device-orientation.md.
  class CallbackID;
  class ContextMenuContextData;
  class DrawingArea;
-@@ -2450,6 +2455,15 @@
+@@ -580,6 +585,13 @@
+ public:
+     static Ref<WebPage> create(WebCore::PageIdentifier, WebPageCreationParameters&&);
+ 
++#if ENABLE(DEVICE_ORIENTATION)
++    // Called by the sensor clients (defined in WebPage.cpp) when WebCore starts
++    // or stops wanting updates, so the UI process can power the sensors down
++    // when nothing is listening. Public because the clients are not members.
++    void updateDeviceSensorsNeeded();
++#endif
++
+     virtual ~WebPage();
+ 
+     void ref() const final;
+@@ -2450,6 +2462,12 @@
  
      void didReceiveGeolocationPermissionDecision(GeolocationIdentifier, const String& authorizationToken);
  
@@ -203,15 +223,12 @@ See docs/investigations/device-orientation.md.
 +    // SFOS: sensor samples arriving from the UI process.
 +    void deviceOrientationChanged(std::optional<double> alpha, std::optional<double> beta, std::optional<double> gamma, bool absolute);
 +    void deviceMotionChanged(std::optional<double> x, std::optional<double> y, std::optional<double> z, std::optional<double> xIncludingGravity, std::optional<double> yIncludingGravity, std::optional<double> zIncludingGravity, std::optional<double> alphaRotationRate, std::optional<double> betaRotationRate, std::optional<double> gammaRotationRate, std::optional<double> interval);
-+    // Called by the clients when WebCore starts or stops wanting updates, so the
-+    // UI process can power the sensors down when nothing is listening.
-+    void updateDeviceSensorsNeeded();
 +#endif
 +
  #if ENABLE(MEDIA_STREAM)
      void userMediaAccessWasGranted(WebCore::UserMediaRequestIdentifier, WebCore::CaptureDevice&& audioDeviceUID, WebCore::CaptureDevice&& videoDeviceUID, WebCore::MediaDeviceHashSalts&& mediaDeviceIdentifierHashSalt, Vector<SandboxExtensionHandle>&&, CompletionHandler<void()>&&);
      void userMediaAccessWasDenied(WebCore::UserMediaRequestIdentifier, uint64_t reason, String&& message, WebCore::MediaConstraintType);
-@@ -2690,6 +2704,17 @@
+@@ -2690,6 +2708,17 @@
  
      RefPtr<WebCore::Page> m_page;
  
@@ -231,11 +248,12 @@ See docs/investigations/device-orientation.md.
  
 --- a/Source/WebKit/WebProcess/WebPage/WebPage.cpp
 +++ b/Source/WebKit/WebProcess/WebPage/WebPage.cpp
-@@ -200,6 +200,14 @@
+@@ -200,6 +200,15 @@
  #include <WebCore/DataTransfer.h>
  #include <WebCore/DatabaseManager.h>
  #include <WebCore/DeprecatedGlobalSettings.h>
 +#if ENABLE(DEVICE_ORIENTATION)
++#include <wtf/CheckedRef.h>
 +#include <WebCore/DeviceMotionClient.h>
 +#include <WebCore/DeviceMotionController.h>
 +#include <WebCore/DeviceMotionData.h>
@@ -246,7 +264,7 @@ See docs/investigations/device-orientation.md.
  #include <WebCore/DisplayListRecorderImpl.h>
  #include <WebCore/Document.h>
  #include <WebCore/DocumentFragment.h>
-@@ -507,6 +515,90 @@
+@@ -507,6 +516,99 @@
  #endif
  
  namespace WebKit {
@@ -271,7 +289,14 @@ See docs/investigations/device-orientation.md.
 +// off. Until the UI-process notification lands they only record the state, so a
 +// page that never listens still costs nothing here, but the embedder has no way
 +// to know it can stop sampling. That message is the next step.
-+class WebDeviceOrientationClient final : public WebCore::DeviceOrientationClient {
++// CanMakeCheckedPtr + WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR are not optional: the
++// DeviceClient base derives from AbstractCanMakeCheckedPtr, which leaves five
++// pure virtuals (checkedPtrCount and friends) for the concrete class to supply.
++// The CRTP mixin is what supplies them — see DeviceOrientationClientMock, which
++// is built the same way.
++class WebDeviceOrientationClient final : public WebCore::DeviceOrientationClient, public CanMakeCheckedPtr<WebDeviceOrientationClient> {
++    WTF_MAKE_TZONE_ALLOCATED_INLINE(WebDeviceOrientationClient);
++    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(WebDeviceOrientationClient);
 +public:
 +    explicit WebDeviceOrientationClient(WebPage& page)
 +        : m_page(page)
@@ -305,7 +330,9 @@ See docs/investigations/device-orientation.md.
 +    bool m_updating { false };
 +};
 +
-+class WebDeviceMotionClient final : public WebCore::DeviceMotionClient {
++class WebDeviceMotionClient final : public WebCore::DeviceMotionClient, public CanMakeCheckedPtr<WebDeviceMotionClient> {
++    WTF_MAKE_TZONE_ALLOCATED_INLINE(WebDeviceMotionClient);
++    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(WebDeviceMotionClient);
 +public:
 +    explicit WebDeviceMotionClient(WebPage& page)
 +        : m_page(page)
@@ -337,7 +364,7 @@ See docs/investigations/device-orientation.md.
  using namespace JSC;
  using namespace WebCore;
  
-@@ -1023,6 +1115,22 @@
+@@ -1023,6 +1125,22 @@
  #if ENABLE(GEOLOCATION)
      WebCore::provideGeolocationTo(page.ptr(), WebGeolocationClient::create(*this));
  #endif
@@ -360,7 +387,7 @@ See docs/investigations/device-orientation.md.
      // FIXME: These should use makeUnique and makeUniqueRef instead of new.
  #if ENABLE(NOTIFICATIONS)
      WebCore::provideNotification(page.ptr(), new WebNotificationClient(this));
-@@ -5900,6 +6008,44 @@
+@@ -5900,6 +6018,44 @@
  #endif
  
  #if ENABLE(GEOLOCATION)
