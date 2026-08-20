@@ -31,7 +31,18 @@ set(USE_GSTREAMER_WEBRTC ON CACHE BOOL "" FORCE)
 # talks to org.freedesktop.GeoClue2 — SFOS only ships geoclue-0.x, so positions
 # won't resolve until a GeoClue2 bridge exists. API surface is still worth having.
 set(ENABLE_GEOLOCATION ON CACHE BOOL "" FORCE)
-set(ENABLE_GAMEPAD OFF CACHE BOOL "" FORCE)
+# Gamepad: ON. WPE defaults this ON (OptionsWPE.cmake) and we were forcing it
+# off for no recorded reason. The port has complete plumbing on both paths —
+# WebCore platform/gamepad/libwpe/* and WebKit UIProcess/Gamepad/{libwpe,wpe}/*
+# are all in SourcesWPE.txt — and libwpe ships gamepad.h, so the legacy API path
+# we use has a provider. libmanette is only consulted under ENABLE_WPE_PLATFORM,
+# which we do not build, so it is not a dependency here.
+#
+# No pad is expected to be connected to a phone most of the time; the honest
+# result is navigator.getGamepads() returning an empty list rather than the
+# method being absent, which is what a page feature-detecting it should see.
+# A Bluetooth controller is a real use case on this device.
+set(ENABLE_GAMEPAD ON CACHE BOOL "" FORCE)
 # DeviceOrientation / DeviceMotion. Defined PRIVATE OFF in WebKitFeatures.cmake
 # and turned on by no port, so window.DeviceOrientationEvent does not exist and
 # every sensor-aware page takes its no-sensor path. Everything behind the flag in
