@@ -1,6 +1,6 @@
 # DeviceOrientation / DeviceMotion on WPE
 
-Status: **in progress** — engine foundation landing, sensor data path next.
+Status: **in progress** — engine + bridge written, unverified on device.
 
 `window.DeviceOrientationEvent` and `window.DeviceMotionEvent` do not exist in our
 build. Sites that feature-detect them (map compasses, 360° photo viewers, casual
@@ -87,13 +87,64 @@ The bridge belongs in `qt5-plugin/` next to `WPEGeolocationBridge`, converting
 QtSensors readings to the W3C alpha/beta/gamma convention and only running while
 WebKit has asked for updates.
 
+## Shape of the implementation
+
+    QtSensors (sensorfw)          WPEDeviceOrientationBridge      qt5-plugin, UI process
+      |                                    |
+      | readingChanged                     | wpe_sfos_device_orientation_changed()
+      v                                    v
+    WebPageProxy ---- DeviceOrientationChanged ----> WebPage        IPC
+      ^                                                |
+      |                                                v
+      +---- SetDeviceSensorsNeeded ---- WebDeviceOrientationClient
+                                                       |
+                                        DeviceOrientationController (Page supplement)
+
+`SetDeviceSensorsNeeded` is the half that matters for battery: `startUpdating()` /
+`stopUpdating()` are called by `DeviceController` as listeners come and go, and
+the state is forwarded up only when it changes, so a page that never touches the
+API never spins a sensor.
+
+Unavailable axes travel as NaN across the C boundary and become `std::nullopt`,
+so the events report `null`. A page reading `accelerationIncludingGravity.z == 0`
+as "lying flat" would otherwise be lied to by a device that cannot measure it.
+
+## Two gates a caller has to satisfy
+
+Neither is ours, both are easy to lose an afternoon to:
+
+- `LocalDOMWindow::isAllowedToUseDeviceMotionOrOrientation()` requires a **secure
+  context** — sensors are https-only, silently dead on http.
+- It also requires the `DeviceOrientationEvent` preference, which already
+  defaults true for the WebKit port, so no embedder change is needed.
+
+Permission is not a third gate: `hasPermissionToReceiveDeviceMotionOrOrientationEvents()`
+only consults the access controller when `deviceOrientationPermissionAPIEnabled`
+is set, which is the iOS-style `requestPermission()` API and off here.
+
 ## Order of work
 
-1. `ENABLE_DEVICE_ORIENTATION ON` + the `DeviceOrientationEvent` runtime pref.
+1. `ENABLE_DEVICE_ORIENTATION ON`. **Done.**
 2. WebProcess clients + `provideDeviceOrientationTo` / `provideDeviceMotionTo`,
-   supplements installed from `WebPage.cpp`.
-3. IPC both ways + `wpe_sfos_*` exported entry points (the convention used by
-   `webkit-wpe-page-scale-api.patch`).
-4. `WPEDeviceOrientationBridge` in the qt5 plugin, driven by QtSensors.
+   supplements installed from `WebPage.cpp`. **Done.**
+3. IPC both ways + the `wpe_sfos_*` exported entry points. **Done.**
+4. `WPEDeviceOrientationBridge` in the qt5 plugin, driven by QtSensors. **Done.**
+5. Verify on device — nothing below has been run yet.
 
-Steps 1-3 are one patch, `patches/webkit/webkit-wpe-device-orientation.patch`.
+Steps 1-3 are `patches/webkit/webkit-wpe-device-orientation.patch`.
+
+## What is not verified
+
+Everything, until a build runs. The specific things most likely to be wrong:
+
+- **Axis sign conventions.** Qt and the W3C agree on axes and units (degrees,
+  x->beta, y->gamma, z->alpha) and the documented ranges line up, but a flipped
+  beta or gamma looks entirely plausible in a log and is completely wrong in a
+  page. Check against a known-good reference, not against intuition.
+- Whether sensorfw actually supplies a compass component (`hasZ()` after start).
+  Without it `alpha` is null and `absolute` is false, which is honest but makes
+  compass sites useless.
+- Whether the backend implements `QAccelerometer::User` mode. If not,
+  `event.acceleration` stays null and only `accelerationIncludingGravity` works.
+- The sensor rates (60 Hz motion / 30 Hz orientation) are the spec's suggestion,
+  not a measurement. Watch what they cost.

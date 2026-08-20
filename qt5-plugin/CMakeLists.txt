@@ -3,7 +3,7 @@ project(qtwpe LANGUAGES CXX)
 
 include(GNUInstallDirs)
 
-find_package(Qt5 REQUIRED COMPONENTS Core Quick Gui Positioning)
+find_package(Qt5 REQUIRED COMPONENTS Core Quick Gui Positioning Sensors)
 find_package(Qt5Test)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(Epoxy REQUIRED IMPORTED_TARGET epoxy)
@@ -27,6 +27,7 @@ add_library(qtwpe MODULE
     WPEWaylandSubsurface.cpp
     WPEChromeOverlay.cpp
     WPEGeolocationBridge.cpp
+    WPEDeviceOrientationBridge.cpp
     WPEClipboardBridge.cpp
 )
 set_target_properties(qtwpe PROPERTIES
@@ -46,6 +47,7 @@ target_link_libraries(qtwpe PRIVATE
     Qt5::Quick
     Qt5::Gui
     Qt5::Positioning
+    Qt5::Sensors
 )
 target_include_directories(qtwpe PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}

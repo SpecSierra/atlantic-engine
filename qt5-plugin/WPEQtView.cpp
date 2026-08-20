@@ -22,6 +22,7 @@
 #include "WPEQtView.h"
 
 #include "WPEClipboardBridge.h"
+#include "WPEDeviceOrientationBridge.h"
 #include "WPEGeolocationBridge.h"
 #include "WPEQtViewBackend.h"
 #include "WPEQtViewLoadRequest.h"
@@ -293,6 +294,12 @@ void WPEQtView::createWebView()
         // WebKit's own provider needs GeoClue2, which SFOS doesn't ship.
         WPEGeolocationBridge::ensure(webContext);
     }
+
+    // DeviceOrientation / DeviceMotion: WebKit has no provider for these on any
+    // non-Cocoa port, so the sensors are driven from here. Per-view, not
+    // per-context: the "is anything listening" callback is a property of the
+    // page. Sensors stay off until a page actually registers a listener.
+    WPEDeviceOrientationBridge::ensure(m_webView);
 
     // The 3x UI scale is either page zoom (legacy default) or a real WebKit
     // device scale factor (ATLANTIC_TRUE_DEVICE_SCALE=1). Never both: applying

@@ -48,9 +48,36 @@ controllers are always destroyed before the clients are.
 The clients are passive by design. Sensors live in the UI process (QtSensors ->
 sensorfw) and samples are pushed down to orientationChanged()/motionChanged();
 the WebProcess never touches the sensor stack, matching how geolocation already
-avoids it. startUpdating()/stopUpdating() currently only record the state — the
-message that tells the UI process it can stop sampling is the next step, and
-until it lands the embedder has to decide for itself when to run the sensors.
+avoids it. startUpdating()/stopUpdating() record the state and let WebPage forward it
+up, so the embedder is told when it can stop sampling.
+
+
+Data path (second half): sensors live in the UI process, so samples come down
+over IPC and the clients only hand them to the controllers.
+
+  UI -> Web   WebPage::DeviceOrientationChanged / DeviceMotionChanged
+  Web -> UI   WebPageProxy::SetDeviceSensorsNeeded
+
+The Web->UI direction is what keeps the sensors off. startUpdating() /
+stopUpdating() on the clients are called by DeviceController as listeners come
+and go, and WebPage forwards the combined state up only when it actually
+changes; the embedder registers a handler and powers its sensors accordingly, so
+a page that never touches the API costs nothing.
+
+Three exported entry points, following the wpe_sfos_set_page_scale() convention
+(there is no WebKitGeolocationManager-equivalent to hook for sensors):
+wpe_sfos_set_device_sensors_callback(), wpe_sfos_device_orientation_changed()
+and wpe_sfos_device_motion_changed().
+
+Unavailable axes cross the C boundary as NaN and become std::nullopt, so the
+events report them as null. This matters: a page that reads
+accelerationIncludingGravity.z == 0 as "lying flat" would be told a lie by a
+device that simply cannot measure that axis.
+
+Note both gates a caller has to satisfy, neither of them ours:
+LocalDOMWindow::isAllowedToUseDeviceMotionOrOrientation() requires a SECURE
+CONTEXT, so sensors are https-only; and it requires the DeviceOrientationEvent
+preference, which already defaults true for the WebKit port.
 
 See docs/investigations/device-orientation.md.
 --- a/Source/WebCore/dom/DeviceOrientationController.h
@@ -147,7 +174,23 @@ See docs/investigations/device-orientation.md.
  class CallbackID;
  class ContextMenuContextData;
  class DrawingArea;
-@@ -2690,6 +2695,14 @@
+@@ -2450,6 +2455,15 @@
+ 
+     void didReceiveGeolocationPermissionDecision(GeolocationIdentifier, const String& authorizationToken);
+ 
++#if ENABLE(DEVICE_ORIENTATION)
++    // SFOS: sensor samples arriving from the UI process.
++    void deviceOrientationChanged(std::optional<double> alpha, std::optional<double> beta, std::optional<double> gamma, bool absolute);
++    void deviceMotionChanged(std::optional<double> x, std::optional<double> y, std::optional<double> z, std::optional<double> xIncludingGravity, std::optional<double> yIncludingGravity, std::optional<double> zIncludingGravity, std::optional<double> alphaRotationRate, std::optional<double> betaRotationRate, std::optional<double> gammaRotationRate, std::optional<double> interval);
++    // Called by the clients when WebCore starts or stops wanting updates, so the
++    // UI process can power the sensors down when nothing is listening.
++    void updateDeviceSensorsNeeded();
++#endif
++
+ #if ENABLE(MEDIA_STREAM)
+     void userMediaAccessWasGranted(WebCore::UserMediaRequestIdentifier, WebCore::CaptureDevice&& audioDeviceUID, WebCore::CaptureDevice&& videoDeviceUID, WebCore::MediaDeviceHashSalts&& mediaDeviceIdentifierHashSalt, Vector<SandboxExtensionHandle>&&, CompletionHandler<void()>&&);
+     void userMediaAccessWasDenied(WebCore::UserMediaRequestIdentifier, uint64_t reason, String&& message, WebCore::MediaConstraintType);
+@@ -2690,6 +2704,17 @@
  
      RefPtr<WebCore::Page> m_page;
  
@@ -157,6 +200,9 @@ See docs/investigations/device-orientation.md.
 +    // controllers are already gone by the time these members are destroyed.
 +    std::unique_ptr<WebDeviceOrientationClient> m_deviceOrientationClient;
 +    std::unique_ptr<WebDeviceMotionClient> m_deviceMotionClient;
++    // Last state sent to the UI process, so an unchanged state sends nothing.
++    bool m_deviceOrientationNeeded { false };
++    bool m_deviceMotionNeeded { false };
 +#endif
 +
      WebCore::IntSize m_viewSize;
@@ -220,8 +266,8 @@ See docs/investigations/device-orientation.md.
 +    // declared for the base type and asserts on the exact object size.)
 +    void deviceOrientationControllerDestroyed() final { m_controller = nullptr; }
 +
-+    void startUpdating() final { m_updating = true; }
-+    void stopUpdating() final { m_updating = false; }
++    void startUpdating() final { m_updating = true; m_page->updateDeviceSensorsNeeded(); }
++    void stopUpdating() final { m_updating = false; m_page->updateDeviceSensorsNeeded(); }
 +    bool isUpdating() const { return m_updating; }
 +
 +    void orientationChanged(WebCore::DeviceOrientationData& data)
@@ -249,8 +295,8 @@ See docs/investigations/device-orientation.md.
 +    WebCore::DeviceMotionData* lastMotion() const final { return m_lastMotion.get(); }
 +    void deviceMotionControllerDestroyed() final { m_controller = nullptr; }
 +
-+    void startUpdating() final { m_updating = true; }
-+    void stopUpdating() final { m_updating = false; }
++    void startUpdating() final { m_updating = true; m_page->updateDeviceSensorsNeeded(); }
++    void stopUpdating() final { m_updating = false; m_page->updateDeviceSensorsNeeded(); }
 +    bool isUpdating() const { return m_updating; }
 +
 +    void motionChanged(WebCore::DeviceMotionData& data)
@@ -293,3 +339,212 @@ See docs/investigations/device-orientation.md.
      // FIXME: These should use makeUnique and makeUniqueRef instead of new.
  #if ENABLE(NOTIFICATIONS)
      WebCore::provideNotification(page.ptr(), new WebNotificationClient(this));
+@@ -5900,6 +6008,44 @@
+ #endif
+ 
+ #if ENABLE(GEOLOCATION)
++#if ENABLE(DEVICE_ORIENTATION)
++
++void WebPage::deviceOrientationChanged(std::optional<double> alpha, std::optional<double> beta, std::optional<double> gamma, bool absolute)
++{
++    if (!m_deviceOrientationClient)
++        return;
++
++    Ref data = WebCore::DeviceOrientationData::create(alpha, beta, gamma, absolute);
++    m_deviceOrientationClient->orientationChanged(data.get());
++}
++
++void WebPage::deviceMotionChanged(std::optional<double> x, std::optional<double> y, std::optional<double> z, std::optional<double> xIncludingGravity, std::optional<double> yIncludingGravity, std::optional<double> zIncludingGravity, std::optional<double> alphaRotationRate, std::optional<double> betaRotationRate, std::optional<double> gammaRotationRate, std::optional<double> interval)
++{
++    if (!m_deviceMotionClient)
++        return;
++
++    Ref data = WebCore::DeviceMotionData::create(
++        WebCore::DeviceMotionData::Acceleration::create(x, y, z),
++        WebCore::DeviceMotionData::Acceleration::create(xIncludingGravity, yIncludingGravity, zIncludingGravity),
++        WebCore::DeviceMotionData::RotationRate::create(alphaRotationRate, betaRotationRate, gammaRotationRate),
++        interval);
++    m_deviceMotionClient->motionChanged(data.get());
++}
++
++void WebPage::updateDeviceSensorsNeeded()
++{
++    bool orientationNeeded = m_deviceOrientationClient && m_deviceOrientationClient->isUpdating();
++    bool motionNeeded = m_deviceMotionClient && m_deviceMotionClient->isUpdating();
++    if (orientationNeeded == m_deviceOrientationNeeded && motionNeeded == m_deviceMotionNeeded)
++        return;
++
++    m_deviceOrientationNeeded = orientationNeeded;
++    m_deviceMotionNeeded = motionNeeded;
++    send(Messages::WebPageProxy::SetDeviceSensorsNeeded(orientationNeeded, motionNeeded));
++}
++
++#endif // ENABLE(DEVICE_ORIENTATION)
++
+ void WebPage::didReceiveGeolocationPermissionDecision(GeolocationIdentifier geolocationID, const String& authorizationToken)
+ {
+     m_geolocationPermissionRequestManager->didReceiveGeolocationPermissionDecision(geolocationID, authorizationToken);
+--- a/Source/WebKit/WebProcess/WebPage/WebPage.messages.in
++++ b/Source/WebKit/WebProcess/WebPage/WebPage.messages.in
+@@ -436,6 +436,14 @@
+     DidReceiveGeolocationPermissionDecision(WebKit::GeolocationIdentifier geolocationID, String authorizationToken)
+ #endif
+ 
++#if ENABLE(DEVICE_ORIENTATION)
++    # SFOS: sensor samples pushed down from the UI process, where the sensors
++    # live. std::nullopt is "this axis is unavailable", which the events must
++    # report as null rather than 0.
++    DeviceOrientationChanged(std::optional<double> alpha, std::optional<double> beta, std::optional<double> gamma, bool absolute)
++    DeviceMotionChanged(std::optional<double> x, std::optional<double> y, std::optional<double> z, std::optional<double> xIncludingGravity, std::optional<double> yIncludingGravity, std::optional<double> zIncludingGravity, std::optional<double> alphaRotationRate, std::optional<double> betaRotationRate, std::optional<double> gammaRotationRate, std::optional<double> interval)
++#endif
++
+ #if ENABLE(MEDIA_STREAM)
+     # MediaSteam
+     UserMediaAccessWasGranted(WebCore::UserMediaRequestIdentifier userMediaID, WebCore::CaptureDevice audioDevice, WebCore::CaptureDevice videoDevice, struct WebCore::MediaDeviceHashSalts mediaDeviceIdentifierHashSalts, Vector<WebKit::SandboxExtensionHandle> sandboxExtensionHandles) -> ()
+--- a/Source/WebKit/UIProcess/WebPageProxy.h
++++ b/Source/WebKit/UIProcess/WebPageProxy.h
+@@ -1417,6 +1417,19 @@
+     void dispatchMouseDidMoveOverElementAsynchronously(const NativeWebMouseEvent&);
+ 
+     void doAfterProcessingAllPendingMouseEvents(Function<void()>&&);
++
++#if ENABLE(DEVICE_ORIENTATION)
++    // SFOS: the web process telling us whether any page is listening for sensor
++    // events. The embedder registers a handler and powers its sensors up and
++    // down accordingly, so nothing is sampled for pages that never ask.
++    using DeviceSensorsNeededHandler = Function<void(bool orientationNeeded, bool motionNeeded)>;
++    void setDeviceSensorsNeededHandler(DeviceSensorsNeededHandler&& handler) { m_deviceSensorsNeededHandler = WTF::move(handler); }
++    void setDeviceSensorsNeeded(bool orientationNeeded, bool motionNeeded);
++    // Push a sensor sample down to the web process. std::nullopt means the axis
++    // is unavailable and must surface as null on the event, not as 0.
++    void deviceOrientationChanged(std::optional<double> alpha, std::optional<double> beta, std::optional<double> gamma, bool absolute);
++    void deviceMotionChanged(std::optional<double> x, std::optional<double> y, std::optional<double> z, std::optional<double> xIncludingGravity, std::optional<double> yIncludingGravity, std::optional<double> zIncludingGravity, std::optional<double> alphaRotationRate, std::optional<double> betaRotationRate, std::optional<double> gammaRotationRate, std::optional<double> interval);
++#endif
+     void didFinishProcessingAllPendingMouseEvents();
+     void flushPendingMouseEventCallbacks();
+ 
+@@ -4003,6 +4016,10 @@
+ 
+     WeakHashSet<WebViewDidMoveToWindowObserver> m_webViewDidMoveToWindowObservers;
+ 
++#if ENABLE(DEVICE_ORIENTATION)
++    DeviceSensorsNeededHandler m_deviceSensorsNeededHandler;
++#endif
++
+     mutable RefPtr<Logger> m_logger;
+ 
+     RefPtr<SpeechRecognitionPermissionManager> m_speechRecognitionPermissionManager;
+--- a/Source/WebKit/UIProcess/WebPageProxy.cpp
++++ b/Source/WebKit/UIProcess/WebPageProxy.cpp
+@@ -13471,6 +13471,31 @@
+ 
+ #if ENABLE(DEVICE_ORIENTATION)
+ 
++// SFOS: forwarded from the web process whenever the set of pages listening for
++// deviceorientation/devicemotion changes. Purely advisory to the embedder — it
++// decides what to do with its sensors.
++void WebPageProxy::setDeviceSensorsNeeded(bool orientationNeeded, bool motionNeeded)
++{
++    if (m_deviceSensorsNeededHandler)
++        m_deviceSensorsNeededHandler(orientationNeeded, motionNeeded);
++}
++
++void WebPageProxy::deviceOrientationChanged(std::optional<double> alpha, std::optional<double> beta, std::optional<double> gamma, bool absolute)
++{
++    if (!hasRunningProcess())
++        return;
++
++    send(Messages::WebPage::DeviceOrientationChanged(alpha, beta, gamma, absolute));
++}
++
++void WebPageProxy::deviceMotionChanged(std::optional<double> x, std::optional<double> y, std::optional<double> z, std::optional<double> xIncludingGravity, std::optional<double> yIncludingGravity, std::optional<double> zIncludingGravity, std::optional<double> alphaRotationRate, std::optional<double> betaRotationRate, std::optional<double> gammaRotationRate, std::optional<double> interval)
++{
++    if (!hasRunningProcess())
++        return;
++
++    send(Messages::WebPage::DeviceMotionChanged(x, y, z, xIncludingGravity, yIncludingGravity, zIncludingGravity, alphaRotationRate, betaRotationRate, gammaRotationRate, interval));
++}
++
+ void WebPageProxy::shouldAllowDeviceOrientationAndMotionAccess(IPC::Connection& connection, FrameIdentifier frameID, FrameInfoData&& frameInfo, bool mayPrompt, CompletionHandler<void(DeviceOrientationOrMotionPermissionState)>&& completionHandler)
+ {
+     RefPtr frame = WebFrameProxy::webFrame(frameID);
+--- a/Source/WebKit/UIProcess/WebPageProxy.messages.in
++++ b/Source/WebKit/UIProcess/WebPageProxy.messages.in
+@@ -522,6 +522,9 @@
+ 
+ #if ENABLE(DEVICE_ORIENTATION)
+     [EnabledBy=DeviceOrientationPermissionAPIEnabled] ShouldAllowDeviceOrientationAndMotionAccess(WebCore::FrameIdentifier frameID, struct WebKit::FrameInfoData frameInfo, bool mayPrompt) -> (enum:uint8_t WebCore::DeviceOrientationOrMotionPermissionState permissionState)
++    # SFOS: WebCore telling the embedder whether anything is listening, so the
++    # sensors can stay powered down when no page wants them.
++    SetDeviceSensorsNeeded(bool orientationNeeded, bool motionNeeded)
+ #endif
+ 
+ #if ENABLE(ATTACHMENT_ELEMENT)
+--- a/Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp
++++ b/Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp
+@@ -6083,3 +6083,65 @@
+ 
+     getPage(webView).preconnectTo(ResourceRequest { WTF::move(url) });
+ }
++
++#if ENABLE(DEVICE_ORIENTATION)
++// SFOS: DeviceOrientation / DeviceMotion entry points, following the
++// wpe_sfos_set_page_scale() convention — WPE has no public API for sensors, and
++// unlike geolocation there is no WebKitGeolocationManager-equivalent to hook.
++//
++// Doubles cross this boundary as NaN when an axis is unavailable, because the
++// events must report those as null rather than 0: a page reading
++// event.accelerationIncludingGravity.z == 0 as "lying flat" would otherwise be
++// told a lie by a device with no such axis.
++static inline std::optional<double> optionalFromNaN(double value)
++{
++    if (std::isnan(value))
++        return std::nullopt;
++    return value;
++}
++
++// Register @callback to be told whether anything in @web_view is listening for
++// deviceorientation/devicemotion. The embedder powers its sensors accordingly;
++// nothing is sampled for pages that never ask. Pass nullptr to unregister.
++extern "C" __attribute__((visibility("default")))
++void wpe_sfos_set_device_sensors_callback(WebKitWebView* webView, void (*callback)(gboolean orientationNeeded, gboolean motionNeeded, gpointer userData), gpointer userData)
++{
++    g_return_if_fail(WEBKIT_IS_WEB_VIEW(webView));
++
++    if (!callback) {
++        getPage(webView).setDeviceSensorsNeededHandler({ });
++        return;
++    }
++
++    getPage(webView).setDeviceSensorsNeededHandler([callback, userData](bool orientationNeeded, bool motionNeeded) {
++        callback(orientationNeeded ? TRUE : FALSE, motionNeeded ? TRUE : FALSE, userData);
++    });
++}
++
++// One deviceorientation sample. @alpha/@beta/@gamma are degrees in the W3C
++// convention; pass NAN for an axis this device cannot measure. @absolute says
++// whether the frame of reference is the Earth's (a real compass) rather than an
++// arbitrary starting orientation.
++extern "C" __attribute__((visibility("default")))
++void wpe_sfos_device_orientation_changed(WebKitWebView* webView, double alpha, double beta, double gamma, gboolean absolute)
++{
++    g_return_if_fail(WEBKIT_IS_WEB_VIEW(webView));
++
++    getPage(webView).deviceOrientationChanged(optionalFromNaN(alpha), optionalFromNaN(beta), optionalFromNaN(gamma), absolute != FALSE);
++}
++
++// One devicemotion sample. Accelerations are m/s^2, rotation rates deg/s and
++// @interval is the sampling interval in milliseconds. Pass NAN for anything
++// unavailable — in particular gravity-free acceleration, which needs a sensor
++// or a filter that not every device has.
++extern "C" __attribute__((visibility("default")))
++void wpe_sfos_device_motion_changed(WebKitWebView* webView, double x, double y, double z, double xIncludingGravity, double yIncludingGravity, double zIncludingGravity, double alphaRotationRate, double betaRotationRate, double gammaRotationRate, double interval)
++{
++    g_return_if_fail(WEBKIT_IS_WEB_VIEW(webView));
++
++    getPage(webView).deviceMotionChanged(optionalFromNaN(x), optionalFromNaN(y), optionalFromNaN(z),
++        optionalFromNaN(xIncludingGravity), optionalFromNaN(yIncludingGravity), optionalFromNaN(zIncludingGravity),
++        optionalFromNaN(alphaRotationRate), optionalFromNaN(betaRotationRate), optionalFromNaN(gammaRotationRate),
++        optionalFromNaN(interval));
++}
++#endif // ENABLE(DEVICE_ORIENTATION)
