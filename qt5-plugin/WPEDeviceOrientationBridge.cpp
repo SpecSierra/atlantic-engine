@@ -129,22 +129,56 @@ void WPEDeviceOrientationBridge::handleRotationChanged()
     if (!reading)
         return;
 
-    // Qt and the W3C use the same axes and units here (degrees): Qt's x is
-    // rotation about the x axis (W3C beta), y about y (gamma) and z about z
-    // (alpha). Ranges line up too — Qt documents z as 0..360, x as -180..180
-    // and y as -90..90.
+    // Axis mapping, measured on the device (Xperia 10 II / sensorfw) against the
+    // gravity vector, which is unambiguous. Three held-still orientations, each
+    // matching to within a degree:
     //
-    // UNVERIFIED ON DEVICE: sign conventions are the obvious thing to get wrong
-    // here, and a flipped beta or gamma looks plausible in a log and completely
-    // wrong in a page. Check against a known-good reference before trusting.
+    //   reported y  |  y - 180  |  gravity-derived gamma
+    //        174    |     -6    |         -6
+    //        110    |    -70    |        -70
+    //        155    |    -25    |        -25
+    //
+    // So sensorfw's y is the W3C gamma offset by 180, and its x is beta negated
+    // (reported -9 where gravity said +9). Neither matches the documented Qt
+    // convention, which is why this is measured rather than assumed. Do not
+    // "simplify" these back to a straight pass-through.
+    //
+    // The one case the measurement did not cover is |gamma| past 90 — rolled
+    // beyond on-edge — so the normalisation below is by the spec's rule rather
+    // than by observation, and is the first thing to check if a page misbehaves
+    // when the device is nearly upside down.
+    double beta = -reading->x();
+    double gamma = reading->y() - 180.0;
+
+    // W3C: gamma is [-90, 90] and beta is [-180, 180). Rolling past on-edge is
+    // represented by flipping beta rather than by letting gamma run out of range.
+    if (gamma > 90.0) {
+        gamma = 180.0 - gamma;
+        beta = 180.0 - beta;
+    } else if (gamma < -90.0) {
+        gamma = -180.0 - gamma;
+        beta = 180.0 - beta;
+    }
+    beta = std::fmod(beta + 180.0, 360.0);
+    if (beta < 0)
+        beta += 360.0;
+    beta -= 180.0;
+
     // setHasZ() only *requests* the compass component; hasZ() after start is
-    // what the backend actually provides.
+    // what the backend actually provides. Without it there is no Earth frame of
+    // reference, so alpha is meaningless and absolute must be false.
     const bool absolute = m_rotation->hasZ();
-    wpe_sfos_device_orientation_changed(m_webView,
-        absolute ? reading->z() : NAN,
-        reading->x(),
-        reading->y(),
-        absolute ? TRUE : FALSE);
+    double alpha = NAN;
+    if (absolute) {
+        // W3C: alpha is [0, 360). sensorfw hands out negative values here
+        // (-161 was measured), which pages doing arithmetic on a compass
+        // heading will read as a bearing behind them.
+        alpha = std::fmod(reading->z(), 360.0);
+        if (alpha < 0)
+            alpha += 360.0;
+    }
+
+    wpe_sfos_device_orientation_changed(m_webView, alpha, beta, gamma, absolute ? TRUE : FALSE);
 }
 
 void WPEDeviceOrientationBridge::handleMotionChanged()

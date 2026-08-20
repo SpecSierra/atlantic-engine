@@ -1,6 +1,6 @@
 # DeviceOrientation / DeviceMotion on WPE
 
-Status: **in progress** — engine + bridge written, unverified on device.
+Status: **working on device** (build 664); axis mapping measured and corrected, wrap regime still unverified.
 
 `window.DeviceOrientationEvent` and `window.DeviceMotionEvent` do not exist in our
 build. Sites that feature-detect them (map compasses, 360° photo viewers, casual
@@ -133,18 +133,38 @@ is set, which is the iOS-style `requestPermission()` API and off here.
 
 Steps 1-3 are `patches/webkit/webkit-wpe-device-orientation.patch`.
 
-## What is not verified
+## Verified on device (build 664, Xperia 10 II, SFOS 5.2.0.15)
 
-Everything, until a build runs. The specific things most likely to be wrong:
+The whole chain delivers: `DeviceOrientationEvent`/`DeviceMotionEvent` exist,
+events fire, `absolute` is true (sensorfw does supply a compass component),
+`interval` is 16.67 ms as requested, and `accelerationIncludingGravity`
+magnitude is 9.91 m/s². `event.acceleration` is null because this backend has no
+`QAccelerometer::User` mode — logged once at startup, degraded rather than faked.
 
-- **Axis sign conventions.** Qt and the W3C agree on axes and units (degrees,
-  x->beta, y->gamma, z->alpha) and the documented ranges line up, but a flipped
-  beta or gamma looks entirely plausible in a log and is completely wrong in a
-  page. Check against a known-good reference, not against intuition.
-- Whether sensorfw actually supplies a compass component (`hasZ()` after start).
-  Without it `alpha` is null and `absolute` is false, which is honest but makes
-  compass sites useless.
-- Whether the backend implements `QAccelerometer::User` mode. If not,
-  `event.acceleration` stays null and only `accelerationIncludingGravity` works.
-- The sensor rates (60 Hz motion / 30 Hz orientation) are the spec's suggestion,
-  not a measurement. Watch what they cost.
+**The axis conventions did not match Qt's documentation and had to be measured**
+against the gravity vector, which is unambiguous when the device is held still.
+Three held-still orientations:
+
+| reported y | y − 180 | gravity-derived gamma |
+|---|---|---|
+| 174 | −6 | −6 |
+| 110 | −70 | −70 |
+| 155 | −25 | −25 |
+
+So `gamma = y − 180` and `beta = −x` (reported −9 where gravity said +9). A
+fourth defect only the tilt test exposed: sensorfw's `z` goes **negative**
+(−161 measured), while the spec requires alpha in [0, 360).
+
+Gravity-derived beta is ill-conditioned when |gamma| approaches 90 — both `ay`
+and `az` go to zero — so disagreement there is the reference being unreliable,
+not the reading. Do not "correct" against it in that regime.
+
+## Still not verified
+
+- **|gamma| past 90** (rolled beyond on-edge, near upside down). The
+  normalisation follows the spec's beta-flip rule rather than measurement, and
+  is the first suspect if a page misbehaves in that attitude.
+- **alpha's absolute accuracy.** It is in range and stable, but nothing has
+  checked it against a known bearing, so "is north actually north" is open.
+- The 60 Hz / 30 Hz sensor rates are the spec's suggestion; their battery cost
+  has not been measured.
