@@ -1,6 +1,8 @@
-> **Status: OPEN (2026-08-03)** — A roadmap, not a conclusion. Derived from open
-> upstream bugs against WPE 2.52.5, our actual engine version. Item 2 is **done
-> and negative** (see below); the rest are unstarted and ranked by expected value.
+> **Status: OPEN (2026-08-03, still current at the 2.52.6 bump 2026-08-20)** — A
+> roadmap, not a conclusion. Derived from open upstream bugs against WPE 2.52.x,
+> our actual engine line. Item 2 is **done and negative** (see below); the rest
+> are unstarted and ranked by expected value. The 2.52.5 → 2.52.6 bump changed
+> nothing here: 2.52.6 is a bugfix release with no perf work in these areas.
 
 # Upstream performance roadmap
 
@@ -8,7 +10,7 @@
 
 Most of our rendering work has been root-caused from the device down. This is the
 other direction: what upstream already knows is slow, filtered to what acts on
-2.52.5. It exists so we stop re-deriving things Igalia has already filed, and so
+the 2.52 line (2.52.6 as of 2026-08-20). It exists so we stop re-deriving things Igalia has already filed, and so
 we know which landmines are waiting in the 2.54 bump.
 
 Sources are WebKit Bugzilla (WPE WebKit + WebKitGTK components), the
@@ -20,9 +22,12 @@ WebPlatformForEmbedded downstream tracker, and the Igalia WebKit periodicals.
 
 Bug [306420] reports excessive `glClear` in CoordinatedGraphics from commit
 `306119@main`, hitting embedded hardest (reporter is on NXP iMX8MP). Checked
-against `sources/wpewebkit-2.52.5`: `TextureMapper::clearColor()` exists at
+against pristine 2.52.5, and **re-checked against pristine 2.52.6 at the
+2026-08-20 bump**: `TextureMapper::clearColor()` exists at
 `Source/WebCore/platform/graphics/texmap/TextureMapper.cpp:833` and has **zero
-call sites** in the tree. The regression landed on main after the 2.52 branch.
+call sites** in the tree (the only `clearColor(` hits tree-wide are unrelated
+ANGLE ones). The regression landed on main after the 2.52 branch, so no 2.52.x
+point release can pull it in.
 
 **Action: none now.** Re-check at the 2.54 bump. This matters more than its size
 suggests — the frame-handoff work already deleted a redundant `glClear` + quad,
@@ -90,7 +95,7 @@ Bug [319685] flips `UseDamagingInformationForCompositing` on for GTK and WPE
 **2.54, not 2.52**. Companion bug [315687] restricts compositing with damage in
 the Skia compositor.
 
-Cherry-pick onto 2.52.5 rather than waiting. Ship as `ATLANTIC_DAMAGE_COMPOSITING`
+Cherry-pick onto 2.52.6 rather than waiting. Ship as `ATLANTIC_DAMAGE_COMPOSITING`
 default **OFF** and A/B on device. This is the same lever as
 `WEBKIT_SKIP_ROOT_CUSTOMPROP_REPAINT` and the damage-limited compositing work,
 but general rather than special-cased, and it is explicitly aimed at low-end

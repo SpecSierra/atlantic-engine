@@ -89,8 +89,8 @@ Any future merge or removal should be proven, not argued —
    the hash returns to the old one — that proves the delta is exactly the
    intended patches and nothing else.
 
-Current stack hash (39 patches, 2.52.5):
-`fe537d25f73cdddaa6e2117664152ef4e7ffe668c5397670c30f1703831e582f`
+Current stack hash (39 patches, 2.52.6):
+`dc84ed3e34bebed57f061b5d4715c328eaa8c7ae077ae62af1ee0a42e1c7baf6`
 
 Cheap (minutes, no compiler) and it catches every ordering and context mistake
 that would otherwise surface as a CI build failure or, worse, as a silently
