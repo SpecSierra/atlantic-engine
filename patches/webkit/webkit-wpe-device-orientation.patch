@@ -79,7 +79,28 @@ LocalDOMWindow::isAllowedToUseDeviceMotionOrOrientation() requires a SECURE
 CONTEXT, so sensors are https-only; and it requires the DeviceOrientationEvent
 preference, which already defaults true for the WebKit port.
 
+Headers.cmake is not optional here: WebCore headers are only visible to WebKit as
+<WebCore/Foo.h> if they are listed there, and dom/DeviceMotion*.h /
+dom/DeviceOrientationController.h never were, because nothing outside WebCore had
+ever included them. Leaving them out costs a full WebKit compile before
+"'WebCore/DeviceMotionClient.h' file not found" appears. page/DeviceClient.h and
+page/DeviceController.h were already listed.
+
 See docs/investigations/device-orientation.md.
+--- a/Source/WebCore/Headers.cmake
++++ b/Source/WebCore/Headers.cmake
+@@ -1344,7 +1344,11 @@
+     dom/DOMRectReadOnly.h
+     dom/DOMStringList.h
+     dom/DataTransfer.h
++    dom/DeviceMotionClient.h
++    dom/DeviceMotionController.h
++    dom/DeviceMotionData.h
+     dom/DeviceOrientationClient.h
++    dom/DeviceOrientationController.h
+     dom/DeviceOrientationData.h
+     dom/DeviceOrientationOrMotionPermissionState.h
+     dom/Document.h
 --- a/Source/WebCore/dom/DeviceOrientationController.h
 +++ b/Source/WebCore/dom/DeviceOrientationController.h
 @@ -60,8 +60,11 @@
@@ -482,7 +503,18 @@ See docs/investigations/device-orientation.md.
  #if ENABLE(ATTACHMENT_ELEMENT)
 --- a/Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp
 +++ b/Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp
-@@ -6083,3 +6083,65 @@
+@@ -76,6 +76,10 @@
+ #include "WebKitWebsitePoliciesPrivate.h"
+ #include "WebKitWindowPropertiesPrivate.h"
+ #include "WebPageMessages.h"
++#if ENABLE(DEVICE_ORIENTATION)
++// SFOS: NAN / std::isnan for the sensor entry points at the end of this file.
++#include <cmath>
++#endif
+ #include <JavaScriptCore/APICast.h>
+ #include <JavaScriptCore/JSRetainPtr.h>
+ #include <WebCore/CertificateInfo.h>
+@@ -6083,3 +6087,65 @@
  
      getPage(webView).preconnectTo(ResourceRequest { WTF::move(url) });
  }
