@@ -61,6 +61,10 @@ readonly WEBKIT_SOURCE_PATCHES=(
     "patches/webkit/webkit-wpe-page-scale-api.patch"
     # AFTER page-scale-api: both append to the end of WebKitWebView.cpp.
     "patches/webkit/webkit-wpe-preconnect-api.patch"
+    # Disjoint from every other patch (WebCore/dom/Device*Controller.* and
+    # WebProcess/WebPage/WebPage.{h,cpp} are touched by nothing else), so the
+    # position here is free.
+    "patches/webkit/webkit-wpe-device-orientation.patch"
 
     # --- Sandboxing --------------------------------------------------------
     # Disjoint files, order between these two is irrelevant.

@@ -32,6 +32,21 @@ set(USE_GSTREAMER_WEBRTC ON CACHE BOOL "" FORCE)
 # won't resolve until a GeoClue2 bridge exists. API surface is still worth having.
 set(ENABLE_GEOLOCATION ON CACHE BOOL "" FORCE)
 set(ENABLE_GAMEPAD OFF CACHE BOOL "" FORCE)
+# DeviceOrientation / DeviceMotion. Defined PRIVATE OFF in WebKitFeatures.cmake
+# and turned on by no port, so window.DeviceOrientationEvent does not exist and
+# every sensor-aware page takes its no-sensor path. Everything behind the flag in
+# WebCore is generic and present; what upstream never does on a non-Cocoa port is
+# *provide* the DeviceOrientationController Page supplement, so the controller
+# resolves to null forever. webkit-wpe-device-orientation.patch adds the clients
+# and the supplement, plus the IPC that feeds samples from the UI process, where
+# the sensors live (WPEDeviceOrientationBridge, QtSensors) — the WebProcess stays
+# out of the sensor stack exactly as it does for geolocation.
+#
+# NOTE this flag alone is NOT a shippable feature: it makes the API appear while
+# no event ever fires, so pages feature-detect success and silently get nothing.
+# It only makes sense together with the patch and the bridge.
+# See docs/investigations/device-orientation.md.
+set(ENABLE_DEVICE_ORIENTATION ON CACHE BOOL "" FORCE)
 # Spellcheck links host libenchant-2; enchant + hunspell backend + en_US dicts
 # are bundled for the device by stage-compat-shims.sh (SFOS has no enchant).
 set(ENABLE_SPELLCHECK ON CACHE BOOL "" FORCE)

@@ -1,0 +1,295 @@
+#  webkit-wpe-device-orientation.patch: make DeviceOrientation/DeviceMotion
+#  reachable on a non-Cocoa port. ENABLE_DEVICE_ORIENTATION is defined PRIVATE
+#  OFF and enabled by no port; even switched on, the controllers are only ever
+#  created under PLATFORM(IOS_FAMILY) (through Document), so on WPE
+#  LocalDOMWindow::deviceOrientationController() resolves a Page supplement that
+#  nothing provides and no sensor event can fire. Adds the two provide*To()
+#  functions every other supplement already has, plus the WebProcess-side
+#  clients, and installs them from WebPage.
+#
+# ---
+DeviceOrientation and DeviceMotion for WPE.
+
+Everything behind ENABLE(DEVICE_ORIENTATION) in WebCore is generic and present in
+the tarball: both controllers, the client interfaces, DeviceOrientationData /
+DeviceMotionData, both events and the permission controller. What is missing is
+anything that connects them to a port.
+
+On PLATFORM(IOS_FAMILY), Document owns a DeviceOrientationClientIOS and a
+DeviceMotionClientIOS and constructs the controllers directly
+(Document.cpp:691-696). Every other port goes through
+DeviceOrientationController::from(Page*) — a Supplement<Page> lookup
+(LocalDOMWindow.cpp:2130) — and nothing in the tree ever provides that
+supplement, so it is null forever. Enabling the build flag alone therefore adds
+window.DeviceOrientationEvent while guaranteeing no event behind it.
+
+Not reusable, for the record: WebDeviceOrientationUpdateProvider in
+WebProcess/WebCoreSupport already implements exactly the IPC receiver this needs
+and contains no Cocoa code, but every header it includes
+(WebCore/DeviceOrientationUpdateProvider.h, MotionManagerClient.h) is one of the
+PLATFORM(IOS_FAMILY) sources Apple strips from WPE releases, as are the two iOS
+clients. There is nothing to revive.
+
+So: provideDeviceOrientationTo() / provideDeviceMotionTo(), modelled on
+provideGeolocationTo() (GeolocationController.cpp:195), and two small clients
+that hold the last sample and track whether WebCore wants updates.
+
+Client ownership differs from geolocation's on purpose. GeolocationClient is
+RefCounted and GeolocationController keeps a RefPtr; DeviceOrientationClient is
+not refcounted and the controller keeps a WeakRef, with
+deviceOrientationControllerDestroyed() as the teardown signal. The obvious
+`delete this` in that callback is wrong here — WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR
+gives the base class a destroying operator delete that asserts on the exact
+object size, so destroying a derived client through it is a size mismatch.
+WebPage owns both clients instead. That is safe in either order: the Page is
+torn down in WebPage::close(), and WebPage::~WebPage asserts !m_page, so the
+controllers are always destroyed before the clients are.
+
+The clients are passive by design. Sensors live in the UI process (QtSensors ->
+sensorfw) and samples are pushed down to orientationChanged()/motionChanged();
+the WebProcess never touches the sensor stack, matching how geolocation already
+avoids it. startUpdating()/stopUpdating() currently only record the state — the
+message that tells the UI process it can stop sampling is the next step, and
+until it lands the embedder has to decide for itself when to run the sensors.
+
+See docs/investigations/device-orientation.md.
+--- a/Source/WebCore/dom/DeviceOrientationController.h
++++ b/Source/WebCore/dom/DeviceOrientationController.h
+@@ -60,8 +60,11 @@
+     static DeviceOrientationController* from(Page*);
+     static bool isActiveAt(Page*);
+ 
+-private:
++    // SFOS: provideDeviceOrientationTo() is a free function, as it is for every
++    // other supplement, so the name it provides under has to be reachable.
+     static ASCIILiteral supplementName() { return "DeviceOrientationController"_s; }
++
++private:
+     bool isDeviceOrientationController() const final { return true; }
+ 
+     CheckedRef<DeviceOrientationClient> checkedClient();
+@@ -69,6 +72,13 @@
+     WeakRef<DeviceOrientationClient> m_client;
+ };
+ 
++// SFOS: installs the DeviceOrientationController Page supplement. Upstream only
++// ever creates the controller on PLATFORM(IOS_FAMILY), where Document owns it
++// directly; on every other port LocalDOMWindow::deviceOrientationController()
++// resolves it as a Supplement<Page> that nothing provides, so it is null forever
++// and no deviceorientation event can fire. Mirrors provideGeolocationTo().
++WEBCORE_EXPORT void provideDeviceOrientationTo(Page*, DeviceOrientationClient&);
++
+ } // namespace WebCore
+ 
+ SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::DeviceOrientationController)
+--- a/Source/WebCore/dom/DeviceOrientationController.cpp
++++ b/Source/WebCore/dom/DeviceOrientationController.cpp
+@@ -104,4 +104,10 @@
+     return m_client.get();
+ }
+ 
++void provideDeviceOrientationTo(Page* page, DeviceOrientationClient& client)
++{
++    ASSERT(page);
++    Supplement<Page>::provideTo(page, DeviceOrientationController::supplementName(), makeUnique<DeviceOrientationController>(client));
++}
++
+ } // namespace WebCore
+--- a/Source/WebCore/dom/DeviceMotionController.h
++++ b/Source/WebCore/dom/DeviceMotionController.h
+@@ -59,8 +59,10 @@
+     static DeviceMotionController* from(Page*);
+     static bool isActiveAt(Page*);
+ 
+-private:
++    // SFOS: see the matching comment in DeviceOrientationController.h.
+     static ASCIILiteral supplementName() { return "DeviceMotionController"_s; }
++
++private:
+     bool isDeviceMotionController() const final { return true; }
+ 
+     CheckedRef<DeviceMotionClient> checkedClient();
+@@ -68,6 +70,10 @@
+     WeakRef<DeviceMotionClient> m_client;
+ };
+ 
++// SFOS: installs the DeviceMotionController Page supplement — see
++// provideDeviceOrientationTo().
++WEBCORE_EXPORT void provideDeviceMotionTo(Page*, DeviceMotionClient&);
++
+ } // namespace WebCore
+ 
+ SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::DeviceMotionController)
+--- a/Source/WebCore/dom/DeviceMotionController.cpp
++++ b/Source/WebCore/dom/DeviceMotionController.cpp
+@@ -101,4 +101,10 @@
+     return m_client.get();
+ }
+ 
++void provideDeviceMotionTo(Page* page, DeviceMotionClient& client)
++{
++    ASSERT(page);
++    Supplement<Page>::provideTo(page, DeviceMotionController::supplementName(), makeUnique<DeviceMotionController>(client));
++}
++
+ } // namespace WebCore
+--- a/Source/WebKit/WebProcess/WebPage/WebPage.h
++++ b/Source/WebKit/WebProcess/WebPage/WebPage.h
+@@ -383,6 +383,11 @@
+ 
+ namespace WebKit {
+ 
++#if ENABLE(DEVICE_ORIENTATION)
++class WebDeviceMotionClient;
++class WebDeviceOrientationClient;
++#endif
++
+ class CallbackID;
+ class ContextMenuContextData;
+ class DrawingArea;
+@@ -2690,6 +2695,14 @@
+ 
+     RefPtr<WebCore::Page> m_page;
+ 
++#if ENABLE(DEVICE_ORIENTATION)
++    // SFOS: owned here, not by the controllers, which keep only a WeakRef.
++    // Destruction order is not a hazard: the Page goes away in close(), so both
++    // controllers are already gone by the time these members are destroyed.
++    std::unique_ptr<WebDeviceOrientationClient> m_deviceOrientationClient;
++    std::unique_ptr<WebDeviceMotionClient> m_deviceMotionClient;
++#endif
++
+     WebCore::IntSize m_viewSize;
+     RefPtr<DrawingArea> m_drawingArea;
+ 
+--- a/Source/WebKit/WebProcess/WebPage/WebPage.cpp
++++ b/Source/WebKit/WebProcess/WebPage/WebPage.cpp
+@@ -200,6 +200,14 @@
+ #include <WebCore/DataTransfer.h>
+ #include <WebCore/DatabaseManager.h>
+ #include <WebCore/DeprecatedGlobalSettings.h>
++#if ENABLE(DEVICE_ORIENTATION)
++#include <WebCore/DeviceMotionClient.h>
++#include <WebCore/DeviceMotionController.h>
++#include <WebCore/DeviceMotionData.h>
++#include <WebCore/DeviceOrientationClient.h>
++#include <WebCore/DeviceOrientationController.h>
++#include <WebCore/DeviceOrientationData.h>
++#endif
+ #include <WebCore/DisplayListRecorderImpl.h>
+ #include <WebCore/Document.h>
+ #include <WebCore/DocumentFragment.h>
+@@ -507,6 +515,90 @@
+ #endif
+ 
+ namespace WebKit {
++
++#if ENABLE(DEVICE_ORIENTATION)
++// SFOS: WebProcess-side DeviceOrientation/DeviceMotion clients.
++//
++// Upstream's clients for this are DeviceOrientationClientIOS /
++// DeviceMotionClientIOS, which the WPE tarball does not ship (Apple strips
++// PLATFORM(IOS_FAMILY) sources), along with everything
++// WebDeviceOrientationUpdateProvider depends on — so there is nothing to reuse
++// and these are written from the WebCore interfaces directly.
++//
++// They are deliberately passive: they hold the most recent sample so that
++// DeviceController::getLastEvent() can answer a newly-registered listener
++// immediately, and they record whether WebCore currently wants updates. The
++// sensors themselves live in the UI process (QtSensors -> sensorfw), which is
++// where samples are pushed in from; the WebProcess never touches the sensor
++// stack, exactly as it does not touch the positioning stack for geolocation.
++//
++// NOTE: startUpdating()/stopUpdating() are what should power the sensors on and
++// off. Until the UI-process notification lands they only record the state, so a
++// page that never listens still costs nothing here, but the embedder has no way
++// to know it can stop sampling. That message is the next step.
++class WebDeviceOrientationClient final : public WebCore::DeviceOrientationClient {
++public:
++    explicit WebDeviceOrientationClient(WebPage& page)
++        : m_page(page)
++    {
++    }
++
++    void setController(WebCore::DeviceOrientationController* controller) final { m_controller = controller; }
++    WebCore::DeviceOrientationData* lastOrientation() const final { return m_lastOrientation.get(); }
++
++    // The controller holds only a WeakRef and this client is owned by WebPage,
++    // so there is nothing to destroy here. (Deleting self would be wrong: the
++    // WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR destroying-delete on the base is
++    // declared for the base type and asserts on the exact object size.)
++    void deviceOrientationControllerDestroyed() final { m_controller = nullptr; }
++
++    void startUpdating() final { m_updating = true; }
++    void stopUpdating() final { m_updating = false; }
++    bool isUpdating() const { return m_updating; }
++
++    void orientationChanged(WebCore::DeviceOrientationData& data)
++    {
++        m_lastOrientation = &data;
++        if (m_controller)
++            m_controller->didChangeDeviceOrientation(m_lastOrientation.get());
++    }
++
++private:
++    WeakRef<WebPage> m_page;
++    CheckedPtr<WebCore::DeviceOrientationController> m_controller;
++    RefPtr<WebCore::DeviceOrientationData> m_lastOrientation;
++    bool m_updating { false };
++};
++
++class WebDeviceMotionClient final : public WebCore::DeviceMotionClient {
++public:
++    explicit WebDeviceMotionClient(WebPage& page)
++        : m_page(page)
++    {
++    }
++
++    void setController(WebCore::DeviceMotionController* controller) final { m_controller = controller; }
++    WebCore::DeviceMotionData* lastMotion() const final { return m_lastMotion.get(); }
++    void deviceMotionControllerDestroyed() final { m_controller = nullptr; }
++
++    void startUpdating() final { m_updating = true; }
++    void stopUpdating() final { m_updating = false; }
++    bool isUpdating() const { return m_updating; }
++
++    void motionChanged(WebCore::DeviceMotionData& data)
++    {
++        m_lastMotion = &data;
++        if (m_controller)
++            m_controller->didChangeDeviceMotion(m_lastMotion.get());
++    }
++
++private:
++    WeakRef<WebPage> m_page;
++    CheckedPtr<WebCore::DeviceMotionController> m_controller;
++    RefPtr<WebCore::DeviceMotionData> m_lastMotion;
++    bool m_updating { false };
++};
++#endif // ENABLE(DEVICE_ORIENTATION)
+ using namespace JSC;
+ using namespace WebCore;
+ 
+@@ -1023,6 +1115,22 @@
+ #if ENABLE(GEOLOCATION)
+     WebCore::provideGeolocationTo(page.ptr(), WebGeolocationClient::create(*this));
+ #endif
++#if ENABLE(DEVICE_ORIENTATION)
++    // SFOS: install the DeviceOrientation/DeviceMotion Page supplements. Without
++    // these two calls LocalDOMWindow::deviceOrientationController() resolves to
++    // null on every non-Cocoa port and no sensor event can ever be delivered —
++    // upstream only ever wires this up under PLATFORM(IOS_FAMILY), through
++    // Document. See docs/investigations/device-orientation.md.
++    //
++    // The clients are owned by this WebPage rather than by the controllers,
++    // which hold only a WeakRef. That is safe in either destruction order: the
++    // Page is torn down in WebPage::close() (WebPage::~WebPage asserts !m_page),
++    // so the controllers are always gone before these members are destroyed.
++    m_deviceOrientationClient = makeUnique<WebDeviceOrientationClient>(*this);
++    WebCore::provideDeviceOrientationTo(page.ptr(), *m_deviceOrientationClient);
++    m_deviceMotionClient = makeUnique<WebDeviceMotionClient>(*this);
++    WebCore::provideDeviceMotionTo(page.ptr(), *m_deviceMotionClient);
++#endif
+     // FIXME: These should use makeUnique and makeUniqueRef instead of new.
+ #if ENABLE(NOTIFICATIONS)
+     WebCore::provideNotification(page.ptr(), new WebNotificationClient(this));
