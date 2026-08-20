@@ -399,6 +399,18 @@ void WPEQtView::applyWebKitVisibility()
 
 void WPEQtView::notifyUrlChangedCallback(WPEQtView* view)
 {
+    // Keep m_url on the URL the view is actually showing, not on the last one
+    // somebody assigned. setUrl() dedupes against m_url, so a stale m_url makes
+    // a later request for that same URL a silent no-op: load X from the URL bar
+    // (m_url = X), follow a link or a redirect away from X, then pick X again
+    // out of history and nothing happens. Every navigation the view performs on
+    // its own -- link, redirect, back/forward, pushState -- lands here, so this
+    // is the one place that sees them all.
+    if (view->m_webView) {
+        const gchar* uri = webkit_web_view_get_uri(view->m_webView);
+        if (uri)
+            view->m_url = QUrl(QString::fromUtf8(uri));
+    }
     Q_EMIT view->urlChanged();
 }
 
