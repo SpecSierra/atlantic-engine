@@ -79,11 +79,15 @@ LocalDOMWindow::isAllowedToUseDeviceMotionOrOrientation() requires a SECURE
 CONTEXT, so sensors are https-only; and it requires the DeviceOrientationEvent
 preference, which already defaults true for the WebKit port.
 
-Concrete DeviceClient subclasses need CanMakeCheckedPtr<T> and
-WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR: the base derives from
-AbstractCanMakeCheckedPtr, which leaves five pure virtuals (checkedPtrCount and
-friends) for the concrete class, and the CRTP mixin is what supplies them.
-DeviceOrientationClientMock is built the same way and is the reference.
+Concrete DeviceClient subclasses need three pieces of CheckedPtr boilerplate:
+CanMakeCheckedPtr<T>, WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR, and — the one that is
+easy to miss — OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeCheckedPtr). The base
+derives from AbstractCanMakeCheckedPtr, which leaves five pure virtuals for the
+concrete class; CanMakeCheckedPtr<T> implements them but as a sibling base, so
+without the forwarding macro the names are ambiguous and the pure virtuals stay
+unimplemented. StyleCanvasImage and InspectorCanvasAgent are the references.
+DeviceOrientationClientMock is NOT: it omits the macro and only compiles because
+nothing instantiates it.
 
 Headers.cmake is not optional here: WebCore headers are only visible to WebKit as
 <WebCore/Foo.h> if they are listed there, and dom/DeviceMotion*.h /
@@ -248,11 +252,12 @@ See docs/investigations/device-orientation.md.
  
 --- a/Source/WebKit/WebProcess/WebPage/WebPage.cpp
 +++ b/Source/WebKit/WebProcess/WebPage/WebPage.cpp
-@@ -200,6 +200,15 @@
+@@ -200,6 +200,16 @@
  #include <WebCore/DataTransfer.h>
  #include <WebCore/DatabaseManager.h>
  #include <WebCore/DeprecatedGlobalSettings.h>
 +#if ENABLE(DEVICE_ORIENTATION)
++#include <wtf/AbstractCanMakeCheckedPtr.h>
 +#include <wtf/CheckedRef.h>
 +#include <WebCore/DeviceMotionClient.h>
 +#include <WebCore/DeviceMotionController.h>
@@ -264,7 +269,7 @@ See docs/investigations/device-orientation.md.
  #include <WebCore/DisplayListRecorderImpl.h>
  #include <WebCore/Document.h>
  #include <WebCore/DocumentFragment.h>
-@@ -507,6 +516,99 @@
+@@ -507,6 +517,109 @@
  #endif
  
  namespace WebKit {
@@ -285,19 +290,27 @@ See docs/investigations/device-orientation.md.
 +// where samples are pushed in from; the WebProcess never touches the sensor
 +// stack, exactly as it does not touch the positioning stack for geolocation.
 +//
-+// NOTE: startUpdating()/stopUpdating() are what should power the sensors on and
-+// off. Until the UI-process notification lands they only record the state, so a
-+// page that never listens still costs nothing here, but the embedder has no way
-+// to know it can stop sampling. That message is the next step.
-+// CanMakeCheckedPtr + WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR are not optional: the
-+// DeviceClient base derives from AbstractCanMakeCheckedPtr, which leaves five
-+// pure virtuals (checkedPtrCount and friends) for the concrete class to supply.
-+// The CRTP mixin is what supplies them — see DeviceOrientationClientMock, which
-+// is built the same way.
++// startUpdating()/stopUpdating() are what power the sensors on and off: WebCore
++// calls them as listeners come and go, and WebPage forwards the combined state
++// to the UI process, so a page that never listens never spins a sensor.
++//
++// The CheckedPtr boilerplate below is all load-bearing. DeviceClient derives
++// from AbstractCanMakeCheckedPtr, which declares five pure virtuals
++// (checkedPtrCount and friends) for the concrete class to supply;
++// CanMakeCheckedPtr<T> implements them, but as a *sibling* base, so without
++// OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR the names are ambiguous AND the pure
++// virtuals stay unimplemented. That macro exists precisely to forward one to the
++// other — see StyleCanvasImage or InspectorCanvasAgent.
++//
++// Do NOT copy DeviceOrientationClientMock here: it omits the macro and only gets
++// away with it because nothing ever instantiates it, so the ambiguity never
++// triggers.
 +class WebDeviceOrientationClient final : public WebCore::DeviceOrientationClient, public CanMakeCheckedPtr<WebDeviceOrientationClient> {
 +    WTF_MAKE_TZONE_ALLOCATED_INLINE(WebDeviceOrientationClient);
 +    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(WebDeviceOrientationClient);
 +public:
++    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeCheckedPtr);
++
 +    explicit WebDeviceOrientationClient(WebPage& page)
 +        : m_page(page)
 +    {
@@ -334,6 +347,8 @@ See docs/investigations/device-orientation.md.
 +    WTF_MAKE_TZONE_ALLOCATED_INLINE(WebDeviceMotionClient);
 +    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(WebDeviceMotionClient);
 +public:
++    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeCheckedPtr);
++
 +    explicit WebDeviceMotionClient(WebPage& page)
 +        : m_page(page)
 +    {
@@ -364,7 +379,7 @@ See docs/investigations/device-orientation.md.
  using namespace JSC;
  using namespace WebCore;
  
-@@ -1023,6 +1125,22 @@
+@@ -1023,6 +1136,22 @@
  #if ENABLE(GEOLOCATION)
      WebCore::provideGeolocationTo(page.ptr(), WebGeolocationClient::create(*this));
  #endif
@@ -387,7 +402,7 @@ See docs/investigations/device-orientation.md.
      // FIXME: These should use makeUnique and makeUniqueRef instead of new.
  #if ENABLE(NOTIFICATIONS)
      WebCore::provideNotification(page.ptr(), new WebNotificationClient(this));
-@@ -5900,6 +6018,44 @@
+@@ -5900,6 +6029,44 @@
  #endif
  
  #if ENABLE(GEOLOCATION)
