@@ -16,6 +16,7 @@ concludes, add a status header and move it here.
 | [scroll-freeze-decouple.md](scroll-freeze-decouple.md) | fix shipped; the wider decouple is abandoned |
 | [load-perf-paint-storm.md](load-perf-paint-storm.md) | load-rendering throttle unfixable (compositor deadlock) — **do not retry**; repaint storm still open |
 | [rendering-audit.md](rendering-audit.md) | stale (2026-05-28), early device facts only |
+| [gpu-raster-tile-size.md](gpu-raster-tile-size.md) | closed — GPU raster never beats CPU raster at a matched tile size, and fence sync cost is ~0 (**do not re-open on the fence theory**); the real lever is tile size: `cpu-1024` is +10% fps / −28% p95 over the shipped 256, pending image-heavy + memory validation |
 | [upstream-perf-roadmap.md](upstream-perf-roadmap.md) | **open roadmap** — what upstream already knows is slow in the 2.52 line, ranked; the CPU-rendering crash check is done and negative |
 | [latency-levers.md](latency-levers.md) | **partly resolved** — preconnect mechanism device-verified (646.2), still default OFF pending an instrument; page interventions measured inert and REMOVED (attributes set from JS arrive after the parser has already started the load); input boost proven but unquantified and MOVED OUT to [sfos-qcom-boost](https://github.com/SpecSierra/sfos-qcom-boost); bfcache and JS bytecode caching root-caused only |
 
