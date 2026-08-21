@@ -105,10 +105,17 @@ independent of the probe.
   client-wait arm left the WebProcess main thread at 93.6% at t+30s vs 15.4% for CPU raster,
   and never became measurable (6/6 runs failed). Measured at 256 px tiles — whether that
   survives at 1024 was not retested.
-- **Open, worth doing:** raising the tile-size default to 1024. Needs validation this run did
-  not cover: image-heavy pages (the known texture-pool corruption reproducer, and where 4 MB
-  tiles bite), tile memory with background tabs, and repaint granularity on small dirty regions
-  during ordinary browsing rather than flings.
+- **SHIPPED:** `WEBKIT_LAYERS_TILE_SIZE` default 256 -> 1024 in `deploy/runtime-common.sh`
+  (single source of truth; the sailjail profile's env block is generated from it by
+  `build-rpms-native.sh`). This reverses `5c2ef1b` (2026-06-02, 512 -> 256), which was tuned
+  against the GPU raster path five days before the GPU-corruption diagnosis and a month before
+  CPU raster became the default at build 416; the value was never re-swept after that switch.
+  `git log -S` does NOT find `5c2ef1b` — changing 512 to 256 leaves the occurrence count
+  unchanged, so use `-G` when tracing a value.
+- **Validation still outstanding at ship time** (flipped on the fling benchmark alone): image-
+  heavy pages (the known texture-pool corruption reproducer, and where 4 MB tiles bite), tile
+  memory with background tabs, and repaint granularity on small dirty regions during ordinary
+  browsing rather than flings. Revert is a one-line default change.
 
 ## Instrument notes (cost real time here)
 

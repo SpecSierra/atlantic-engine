@@ -858,11 +858,30 @@ atlantic_export_browser_env() {
     # exactly the stroked-path content MSAA was meant to accelerate. Upstream's
     # non-x86 default of 4 is correct here -- leave it alone.
 
-    # ── Tile size alignment ───────────────────────────────────────────────────
-    # 256 px tiles for Adreno 610 — smaller texture uploads reduce GPU pipeline
-    # stalls vs 512 px, avoiding dropped frames during scroll on limited-bandwidth GPUs.
-    # Env-tunable (e.g. 512 on the future Mali device) — default applied if unset.
-    export WEBKIT_LAYERS_TILE_SIZE="${WEBKIT_LAYERS_TILE_SIZE:-256}"
+    # ── Tile size ─────────────────────────────────────────────────────────────
+    # 1024 px tiles. The Adreno 610 is a tiling GPU: every tile is a render
+    # target paying a bin/resolve cycle, so cost scales with tile COUNT, and
+    # fewer/larger tiles win. Device A/B on the stock engine, MDN input/date,
+    # 3 reps (docs/investigations/gpu-raster-tile-size.md):
+    #
+    #     256 (old)   28.1 fps  p95 135 ms
+    #     1024        31.3 fps  p95 107 ms      <- +10% fps, -28% p95
+    #
+    # This REVERSES 5c2ef1b (2026-06-02, 512 -> 256, "smaller texture uploads
+    # reduce GPU pipeline stalls"). That was tuned against the GPU raster path,
+    # five days before the GPU-corruption diagnosis and a month before CPU
+    # raster became the conservative default at build 416 — the upload path it
+    # was reasoning about is not the one we ship any more, and the value was
+    # never re-swept afterwards.
+    #
+    # Do not raise further: the curve SATURATES at 1024. 2048 is identical
+    # within noise, and rectangular tiles are inert (1080x1024, which collapses
+    # the grid to a single column, is no better) — edge tiles are clipped to the
+    # contents rect, so slivers rasterize only their sliver of pixels. The p95
+    # noise floor between sessions is ~10 ms; only 256 -> 1024 clears it.
+    #
+    # Env-tunable — default applied if unset.
+    export WEBKIT_LAYERS_TILE_SIZE="${WEBKIT_LAYERS_TILE_SIZE:-1024}"
 }
 
 atlantic_cleanup_runtime_artifacts() {
