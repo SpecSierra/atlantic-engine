@@ -26,6 +26,15 @@ void wpe_sfos_device_motion_changed(WebKitWebView*, double x, double y, double z
 static constexpr int kMotionRateHz = 60;
 static constexpr int kOrientationRateHz = 30;
 
+// Fold an angle in degrees into [-180, 180).
+static double wrapTo180(double degrees)
+{
+    double wrapped = std::fmod(degrees + 180.0, 360.0);
+    if (wrapped < 0)
+        wrapped += 360.0;
+    return wrapped - 180.0;
+}
+
 void WPEDeviceOrientationBridge::ensure(WebKitWebView* webView)
 {
     static QSet<WebKitWebView*> bridgedViews;
@@ -147,22 +156,24 @@ void WPEDeviceOrientationBridge::handleRotationChanged()
     // beyond on-edge — so the normalisation below is by the spec's rule rather
     // than by observation, and is the first thing to check if a page misbehaves
     // when the device is nearly upside down.
-    double beta = -reading->x();
-    double gamma = reading->y() - 180.0;
+    double beta = wrapTo180(-reading->x());
+    double gamma = wrapTo180(reading->y() - 180.0);
 
     // W3C: gamma is [-90, 90] and beta is [-180, 180). Rolling past on-edge is
-    // represented by flipping beta rather than by letting gamma run out of range.
+    // represented by flipping beta rather than by letting gamma leave its range.
+    //
+    // Order matters and got this wrong once: the flip rule is only meaningful
+    // once gamma is already inside [-180, 180). sensorfw's y goes NEGATIVE, so
+    // y - 180 reaches -540, and running the rule on that produced gamma = 179
+    // for a phone lying flat — worse than the unnormalised value. Both inputs
+    // are wrapped above before anything else looks at them.
     if (gamma > 90.0) {
         gamma = 180.0 - gamma;
-        beta = 180.0 - beta;
+        beta = wrapTo180(180.0 - beta);
     } else if (gamma < -90.0) {
         gamma = -180.0 - gamma;
-        beta = 180.0 - beta;
+        beta = wrapTo180(180.0 - beta);
     }
-    beta = std::fmod(beta + 180.0, 360.0);
-    if (beta < 0)
-        beta += 360.0;
-    beta -= 180.0;
 
     // setHasZ() only *requests* the compass component; hasZ() after start is
     // what the backend actually provides. Without it there is no Earth frame of
@@ -173,6 +184,8 @@ void WPEDeviceOrientationBridge::handleRotationChanged()
         // W3C: alpha is [0, 360). sensorfw hands out negative values here
         // (-161 was measured), which pages doing arithmetic on a compass
         // heading will read as a bearing behind them.
+        // NB: not wrapTo180()+180 — that shifts the bearing by half a turn
+        // instead of folding it. alpha needs its own [0, 360) wrap.
         alpha = std::fmod(reading->z(), 360.0);
         if (alpha < 0)
             alpha += 360.0;

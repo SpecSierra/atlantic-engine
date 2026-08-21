@@ -1,6 +1,6 @@
 # DeviceOrientation / DeviceMotion on WPE
 
-Status: **working on device** (build 664); axis mapping measured and corrected, wrap regime still unverified.
+Status: **working on device**; mapping measured, normalisation fixed on 665.
 
 `window.DeviceOrientationEvent` and `window.DeviceMotionEvent` do not exist in our
 build. Sites that feature-detect them (map compasses, 360° photo viewers, casual
@@ -161,10 +161,35 @@ not the reading. Do not "correct" against it in that regime.
 
 ## Still not verified
 
-- **|gamma| past 90** (rolled beyond on-edge, near upside down). The
-  normalisation follows the spec's beta-flip rule rather than measurement, and
-  is the first suspect if a page misbehaves in that attitude.
+- **|gamma| past 90** (rolled beyond on-edge). The beta-flip itself still has
+  not been observed firing on real data — but the wrapping around it has now
+  been fixed after it misfired (see below), so the remaining risk is smaller.
 - **alpha's absolute accuracy.** It is in range and stable, but nothing has
   checked it against a known bearing, so "is north actually north" is open.
 - The 60 Hz / 30 Hz sensor rates are the spec's suggestion; their battery cost
   has not been measured.
+
+## The normalisation trap (found on build 665)
+
+The measured mapping (`beta = -x`, `gamma = y - 180`) was right, but the code
+around it applied the W3C beta-flip rule *before* folding gamma into range. That
+rule is only meaningful once gamma is already inside [-180, 180).
+
+sensorfw's `y` goes **negative** — `y = -179` was observed with the phone flat —
+so `y - 180` reaches -359 (and in principle -540). The flip branch fired on that
+and produced `gamma = 179` for a flat phone: worse than doing nothing, and still
+outside the legal range.
+
+Fix: wrap both angles with a `wrapTo180()` helper first, then apply the flip.
+Verified against every data point captured so far:
+
+| raw x, y | converted (beta, gamma) | gravity truth |
+|---|---|---|
+| 1, -179 | -1.0, 1.0 | -0.7, 1.0 |
+| -9, 174 | 9.0, -6.0 | 9, -6 |
+| 4, 110 | -4.0, -70.0 | -10 (noisy), -70 |
+| 0, 155 | 0.0, -25.0 | 0, -25 |
+
+alpha keeps its own [0, 360) wrap — folding it with `wrapTo180()+180` shifts the
+bearing by half a turn instead, which is a tempting one-liner and completely
+wrong.
