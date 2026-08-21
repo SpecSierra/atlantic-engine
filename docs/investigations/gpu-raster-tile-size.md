@@ -55,11 +55,37 @@ tile *count*. Sweeping it, MDN, 3 reps per cell:
 - GPU never beats CPU at a **matched** tile size. It ties at 2048. (An earlier reading of this
   data compared `gpu-1024` against `cpu-256` and wrongly called it a GPU win — always match
   the tile size before comparing raster modes.)
-- 2048 is not better than 1024: p95 is slightly worse and reps scatter (29.6 / 33.8 / 31.3 vs
-  1024's 31.6 / 31.3 / 31.3). At a 1080 px viewport a 2048 tile paints ~half its width
-  off-screen; falling tile count and rising wasted paint cancel. **1024 is the peak.**
+- 2048 is not better than 1024: same fps within noise, p95 indistinguishable once the ~10 ms
+  noise floor is accounted for, and reps scatter (29.6 / 33.8 / 31.3 vs 1024's 31.6 / 31.3 /
+  31.3). **The curve saturates at ~1024**; see the rectangular section for why shape does not
+  help either.
 - Memory did **not** blow up: whole-run delta ~45 MB at 2048. Per-tile bytes rise 64× from 256
   to 2048, but tile count falls proportionally.
+
+### Rectangular tiles: no effect (negative result)
+
+`computeTileSize` accepts `WxH`. Hypothesis: at 1024 wide on a 1080 px viewport the grid has a
+second column only 56 px wide, and those slivers are still render targets paying bin/resolve.
+A tile >= viewport width collapses the grid to one column. CPU raster, 3 reps:
+
+| Arm | fps | p95 |
+|---|---|---|
+| `1024` square (in-session baseline) | 31.4 | 111 |
+| `1080x1024` (1 column) | 30.7 | 105 |
+| `1080x2048` (1 column, tall) | 31.7 | 104 |
+| `1080x2520` (1 column, one viewport per tile) | 31.0 | 105 |
+
+All inside a 1 fps band. The clean test is `1080x1024` vs square `1024` — near-identical tile
+area, grid collapsed from two columns to one — and it is 0.7 fps *slower*. Sliver tiles cost
+nothing: tile rects are clipped to the contents rect (`tileRectForPosition`, line ~1265), so a
+sliver rasterizes only its sliver of pixels. **Tile size saturates at ~1024; shape is
+irrelevant.** (An earlier note in this file claimed a 2048 tile "paints half its width
+off-screen" — wrong, same clipping reason.)
+
+**Noise floor.** Square `1024` re-measured across two sessions on an unchanged config: 31.4 fps
+both times, p95 **101 vs 111**. So the p95 noise floor is ~10 ms, wider than every difference in
+the rectangular table and wider than the 1024-vs-2048 p95 gap. Do not read p95 deltas under
+~10 ms as signal. 256 -> 1024 (p95 140 -> ~105) clears it comfortably; nothing past 1024 does.
 
 ### Confirmed on the stock engine (no patch)
 
