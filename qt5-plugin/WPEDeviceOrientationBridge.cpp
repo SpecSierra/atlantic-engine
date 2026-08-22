@@ -46,7 +46,23 @@ void WPEDeviceOrientationBridge::ensure(WebKitWebView* webView)
     // with the geolocation manager.
     auto* bridge = new WPEDeviceOrientationBridge(webView);
     g_object_set_data_full(G_OBJECT(webView), "wpe-qt-device-orientation-bridge", bridge,
-        [](gpointer data) { delete static_cast<WPEDeviceOrientationBridge*>(data); });
+        [](gpointer data) {
+            auto* self = static_cast<WPEDeviceOrientationBridge*>(data);
+            // This runs because the view itself is going away and is clearing
+            // its qdata, which happens after dispose has torn the page down.
+            // Calling back into the view here - as ~WPEDeviceOrientationBridge
+            // otherwise would, to unregister the sensors callback - reaches a
+            // dead WebPageProxy and segfaults, killing the UI process on every
+            // tab close. Drop the back-pointer so the destructor stays quiet.
+            //
+            // Freeing the bridgedViews slot matters too: without it the set
+            // keeps a dangling pointer per closed tab, and a view later
+            // allocated at the same address is taken for an already-bridged
+            // one, so its pages get no sensor events at all.
+            bridgedViews.remove(self->m_webView);
+            self->m_webView = nullptr;
+            delete self;
+        });
 }
 
 WPEDeviceOrientationBridge::WPEDeviceOrientationBridge(WebKitWebView* webView)
