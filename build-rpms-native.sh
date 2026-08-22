@@ -116,10 +116,31 @@ fpm_rpm() {
     shift 4
     local iteration="${RPM_ITERATION:-1}"
 
-    # Write ldconfig scripts; FPM_POST_EXTRA may inject extra commands into post
+    # Write ldconfig scripts; FPM_{POST,PREUN,POSTUN}_EXTRA inject extra commands.
+    #
+    # Directory ownership: without --rpm-auto-add-directories RPM knows only the
+    # files, so uninstalling leaves the now-empty /usr/libexec/atlantic and
+    # friends behind. systemd's own directories are excluded — co-owning those
+    # with the systemd package buys nothing and risks a file conflict.
+    #
+    # preun is where units get disabled. It must exist: `systemctl enable`
+    # creates .wants symlinks under /etc that RPM does not own, so without a
+    # matching disable an uninstall leaves them dangling and systemd reports
+    # the unit as "not-found" forever. postun then reloads so systemd forgets
+    # the units whose files have just been deleted.
+    #
+    # Enabling belongs in posttrans, not post. The .aio bundle Obsoletes the
+    # split packages, and RPM erases an obsoleted package AFTER installing its
+    # replacement — so a split->bundle upgrade would run the old package's
+    # preun (disable) after the bundle's post (enable) and leave the units off.
+    # posttrans runs once the whole transaction is done, so it always wins.
     local post="${STAGING}/post-${name}.sh" postun="${STAGING}/postun-${name}.sh"
+    local preun="${STAGING}/preun-${name}.sh"
+    local posttrans="${STAGING}/posttrans-${name}.sh"
     printf '#!/bin/sh\n/sbin/ldconfig || :\n%s\n' "${FPM_POST_EXTRA:-}" > "$post"
-    printf '#!/bin/sh\n/sbin/ldconfig || :\n' > "$postun"
+    printf '#!/bin/sh\n%s\n' "${FPM_PREUN_EXTRA:-:}" > "$preun"
+    printf '#!/bin/sh\n/sbin/ldconfig || :\n%s\n' "${FPM_POSTUN_EXTRA:-}" > "$postun"
+    printf '#!/bin/sh\n%s\n' "${FPM_POSTTRANS_EXTRA:-:}" > "$posttrans"
 
     echo "==> Building RPM: ${name}-${version}-${iteration}"
     fpm -s dir -t rpm \
@@ -129,7 +150,12 @@ fpm_rpm() {
         --architecture aarch64 \
         --rpm-summary "$summary" \
         --after-install "$post" \
+        --before-remove "$preun" \
         --after-remove "$postun" \
+        --rpm-posttrans "$posttrans" \
+        --rpm-auto-add-directories \
+        --rpm-auto-add-exclude-directories /usr/lib/systemd \
+        --rpm-auto-add-exclude-directories /usr/lib/systemd/system \
         --force \
         --package "${OUT}/${name}-${version}-${iteration}.aarch64.rpm" \
         "$@" \
@@ -420,11 +446,28 @@ install -m 644 "${SCRIPT_DIR}/deploy/atlantic-memory-reclaim.timer" \
 # Enable + start the boot oneshots and the reclaim timer on install
 # (idempotent; tolerant on a host without the unit running, e.g. during
 # image builds).
-FPM_POST_EXTRA="systemctl daemon-reload >/dev/null 2>&1 || :
+#
+# On removal ($1 = 0; an upgrade passes 1 and must leave the services running)
+# the units are disabled again, which is what deletes the .wants symlinks that
+# `systemctl enable` put under /etc. RPM never owned those, so skipping this
+# leaves them dangling and systemd lists the unit as "not-found" for good.
+#
+# The rm heals devices carrying atlantic-cpu-governor.service: Atlantic's own
+# governor unit moved to sfos-qcom-boost in 709af98, and installs older than
+# that kept an enable symlink no later package could ever clean up, since
+# nothing still ships a unit by that name to disable.
+FPM_POSTTRANS_EXTRA="rm -f /etc/systemd/system/*.target.wants/atlantic-cpu-governor.service >/dev/null 2>&1 || :
+systemctl daemon-reload >/dev/null 2>&1 || :
 systemctl enable atlantic-browser-memory.service >/dev/null 2>&1 || :
 systemctl start atlantic-browser-memory.service >/dev/null 2>&1 || :
 systemctl enable atlantic-memory-reclaim.timer >/dev/null 2>&1 || :
 systemctl start atlantic-memory-reclaim.timer >/dev/null 2>&1 || :" \
+FPM_PREUN_EXTRA="if [ \"\$1\" = 0 ]; then
+    systemctl disable --now atlantic-memory-reclaim.timer >/dev/null 2>&1 || :
+    systemctl disable --now atlantic-memory-reclaim.service >/dev/null 2>&1 || :
+    systemctl disable --now atlantic-browser-memory.service >/dev/null 2>&1 || :
+fi" \
+FPM_POSTUN_EXTRA="systemctl daemon-reload >/dev/null 2>&1 || :" \
 fpm_rpm wpe-sfos-compat "$WPE_SFOS_COMPAT_VERSION" "SFOS compatibility shims for WPE WebKit" "$S" \
     --depends sfos-qcom-boost
 
@@ -774,11 +817,23 @@ mkdir -p "${OUT}/bundle"
 (
 OUT="${OUT}/bundle"
 RPM_ITERATION="${RPM_ITERATION:-1}.aio"
-FPM_POST_EXTRA="systemctl daemon-reload >/dev/null 2>&1 || :
+#
+# Same enable/disable pairing as the split wpe-sfos-compat package, and it
+# matters more here: this is the OpenRepos bundle, so it is what most users
+# actually install and remove. See the comment there for why a missing preun
+# strands .wants symlinks, and for the atlantic-cpu-governor.service heal.
+FPM_POSTTRANS_EXTRA="rm -f /etc/systemd/system/*.target.wants/atlantic-cpu-governor.service >/dev/null 2>&1 || :
+systemctl daemon-reload >/dev/null 2>&1 || :
 systemctl enable atlantic-browser-memory.service >/dev/null 2>&1 || :
 systemctl start atlantic-browser-memory.service >/dev/null 2>&1 || :
 systemctl enable atlantic-memory-reclaim.timer >/dev/null 2>&1 || :
 systemctl start atlantic-memory-reclaim.timer >/dev/null 2>&1 || :"
+FPM_PREUN_EXTRA="if [ \"\$1\" = 0 ]; then
+    systemctl disable --now atlantic-memory-reclaim.timer >/dev/null 2>&1 || :
+    systemctl disable --now atlantic-memory-reclaim.service >/dev/null 2>&1 || :
+    systemctl disable --now atlantic-browser-memory.service >/dev/null 2>&1 || :
+fi"
+FPM_POSTUN_EXTRA="systemctl daemon-reload >/dev/null 2>&1 || :"
 fpm_rpm atlantic-browser "$ATLANTIC_BROWSER_VERSION" "Atlantic Browser (WPE WebKit engine, all-in-one)" "$B" \
     --depends sailjail \
     --depends firejail \
