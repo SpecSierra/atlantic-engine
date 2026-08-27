@@ -3,8 +3,9 @@
 > **Status: IMPLEMENTED, not yet device-verified.** Landed in
 > `atlantic-browser/apps/wpe/WebExtension*` plus `qml/pages/ExtensionsPage.qml`.
 > Nothing in the engine repo changed — this is entirely UI-process work on top of
-> APIs WPE WebKit 2.52 already exposes. `cookies`, `history` and `bookmarks`
-> landed later than the rest and are the least exercised part (§3d).
+> APIs WPE WebKit 2.52 already exposes. `cookies`, `history`, `bookmarks` and
+> `downloads` landed later than the rest and are the least exercised part
+> (§3d, §3e).
 
 **Date:** 2026-08-27
 
@@ -26,6 +27,7 @@ lists them, toggles them, removes them and installs new ones from a file.
 | Tab APIs | `WPEWebContainer` implements `WebExtensionHost` |
 | `cookies` | `WebExtensionCookies.cpp` over the default session's `WebKitCookieManager` |
 | `history`, `bookmarks` | `WebExtensionBrowsingData.cpp` over `DBManager` and the live `DeclarativeBookmarkModel` |
+| `downloads` | `WebExtensionDownloads.cpp` over `DownloadManager`'s per-download records |
 | UI | `apps/browser/qml/pages/ExtensionsPage.qml` |
 | Catalog + AMO client | `WebExtensionStore.h/.cpp`, `data/extension-catalog.json`, `qml/pages/ExtensionStorePage.qml` |
 
@@ -156,10 +158,11 @@ every row — catalog and search result alike — against two tables:
 
 - **broken**: `webRequest`, `webRequestBlocking`, `declarativeNetRequest`,
   `proxy`, `dns` — the add-on's whole point is something we do not do.
-- **partial**: `downloads`, `webNavigation`, `management`, `idle`, … — it loses
-  a feature, not its purpose. `contextMenus`, `scripting`, `cookies`, `history`
-  and `bookmarks` have been taken *out* of this table as they landed; the table
-  is the one the store reads, so it has to track what is actually implemented.
+- **partial**: `webNavigation`, `management`, `idle`, `browsingData`, … — it
+  loses a feature, not its purpose. `contextMenus`, `scripting`, `cookies`,
+  `history`, `bookmarks` and `downloads` have been taken *out* of this table as
+  they landed; the table is the one the store reads, so it has to track what is
+  actually implemented.
 
 Catalog entries carry a reviewed verdict plus a hand-written note; search results
 get the derived one. `verified: false` on every catalog entry today means nobody
@@ -215,7 +218,7 @@ the whole background script instead of degrading one feature.
 | API | Why |
 |---|---|
 | `webRequest`, `declarativeNetRequest` | Network blocking lives in the Rust adblock WebProcess extension (`web-extension/`), which sees every subresource. The UI process does not, and there is no supported way to hand a per-request veto to extension JS across that boundary. Re-opening this means designing an IPC path from the WebProcess extension into the UI process on the hot request path — measure before believing it is affordable. |
-| `downloads`, `proxy`, `idle` | Not wired to the corresponding Atlantic subsystems. `downloads` is the closest of the three: `DownloadManager` already drives every transfer, but it keeps no queryable record, so `search`/`erase` would need a store before `download` is worth having on its own. (`cookies`, `history` and `bookmarks` used to be in this row — see §3d.) |
+| `proxy`, `idle` | Not wired to anything, and neither has an Atlantic subsystem to wire to. (`cookies`, `history`, `bookmarks` and `downloads` used to be in this row — see §3d and §3e.) |
 | `management` beyond `getSelf` | An extension may ask about itself; enumerating or disabling others is deliberately not offered. |
 | MV3 service-worker lifecycle | No worker, no `onInstalled` update reasons, no event-driven wake. `runtime.onStartup` fires on every launch. |
 | Anchored action popups | Popups open as an ordinary tab. |
@@ -341,6 +344,46 @@ opaque `atl-bm-N` strings that stay stable for the session. There are no
 creation timestamps in the store, so `dateAdded` is 0 and `getRecent` answers in
 list order — honest, and not what a real bookmark store would say.
 
+## 3e. downloads
+
+`DownloadManager` already drives every transfer, but nothing could ask it what
+had been downloaded: its bookkeeping is keyed by transfer id and dropped on
+completion, and the transfer engine owns the UI, not a queryable list. So it
+gained a `Record` per download — url, path, mime, state, bytes, start/end time —
+maintained in the handlers that already exist (`prepareDownload`,
+`confirmDownload`, `updateDownload`, `finalizeDownload`) and published through
+three signals. `WebExtensionDownloads.cpp` is a reader of that.
+
+`download()` starts a transfer nothing on a page asked for, via
+`webkit_network_session_download_uri()` on the default session, which raises
+`download-started` and therefore lands in the same handlers as any other
+download. The one difference is the destination: a page download prompts, and an
+API caller has nobody to answer the prompt, so `startDownload()` records the
+intended name in `m_autoDestination` *before* `decide-destination` can fire and
+`prepareDownload()` settles the path itself when it sees it. `saveAs: true` opts
+back into the prompt.
+
+Limits, all deliberate:
+
+- **`filename` must be a bare name.** A path with a `/` in it is refused — the
+  API only promises a name below the download directory, and this is the one
+  call where an extension could otherwise choose where to write.
+- **No custom `headers` or POST body.** The session builds the request, not us;
+  the call is refused rather than silently sending a plain GET.
+- **`pause`/`resume` do not exist** in WebKit's download API, so they reject
+  instead of lying; `paused` is always false and `canResume` always false.
+- **`open`, `show`, `showDefaultFolder`, `getFileIcon`** have nothing to hand a
+  file to on this platform yet.
+- **Records are per-session.** The download/transfer mappings were never
+  persistent (there is a standing TODO about it), so `search()` answers about
+  this run of the browser. Persisting them would be the same work as making
+  restartable transfers work, and belongs with that.
+- **`erase` refuses a running download**, since dropping the record would leave
+  a live transfer nothing can be matched back to.
+- `onChanged` reports a delta of state/error/filename/exists/totalBytes/endTime.
+  Progress is not in it — it moves on every network chunk, and Chrome leaves it
+  out too.
+
 ## 4. Things that bit, worth not rediscovering
 
 - **`signals`.** Any header that pulls in GLib after Qt has to be wrapped in
@@ -417,6 +460,11 @@ has run on the device:
 11. With `bookmarks`: `create`, then check the bookmark appears in the UI
     *without* a restart (that is the whole reason it writes through the model),
     `update` it, `remove` it.
+12. With `downloads`: `download({url})` and confirm the file lands in the
+    download folder with **no Save As prompt**, that the transfer shows in the
+    Sailfish transfer UI as usual, and that `onCreated` then `onChanged` to
+    `complete` arrive. Then `search({})` for it, `removeFile`, and `erase`.
+    Separately: a page-initiated download must still prompt.
 
 Store-specific device checks, on top of the five above:
 
