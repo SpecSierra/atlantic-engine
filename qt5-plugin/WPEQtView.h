@@ -80,7 +80,25 @@ public:
 
     WebKitWebView* webView() const;
 
+    // Both are Q_INVOKABLE for embedders using WPEView straight from QML: a raw
+    // view otherwise keeps the stock desktop WPE identity (desktop UA, 1080 CSS
+    // px, dpr 1), and Atlantic's own mobile setup lives in WPEWebPage, not here.
+    // Safe to call before the view exists — each buffers into m_pending* and is
+    // applied at creation.
     Q_INVOKABLE void setUserAgent(const QString& userAgent);
+
+    // NOTE for QML callers: this does not mean one thing. By default it is page
+    // zoom (webkit_web_view_set_zoom_level); under ATLANTIC_TRUE_DEVICE_SCALE=1
+    // it is a real WebKit device scale factor. Never both — see the comment at
+    // the apply site in createWebView().
+    //
+    // The page-zoom mode used to make font-size declared in viewport or
+    // container units (vw/vh, cqw/cqi) come out scale-times too large — zoomed
+    // once by the unit and again by the page zoom, with lengths unaffected, so
+    // only text was wrong. Our WebKit carries the compensating patch
+    // (WEBKIT_FONT_SIZE_UNIT_UNZOOM, default on), so embedders linking this
+    // engine get the fix for free; setting that variable to 0 brings the bug
+    // back. See docs/investigations/font-size-viewport-units-zoom.md.
     Q_INVOKABLE void setDeviceScaleFactor(qreal scale);
 
     // Drives the WPE activity state (visible+focused) so WebKit throttles
