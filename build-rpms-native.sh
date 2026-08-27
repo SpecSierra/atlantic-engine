@@ -594,10 +594,6 @@ mkdir -p "${S}/usr/share/atlantic-browser/data"
 cp -a "${BROWSER_SRC}/data/icon-launcher-browser.png" "${S}/usr/share/atlantic-browser/data/"
 
 # Search engines shipped by the browser (beyond the mozembedlite system set)
-# Curated extension catalog for the store page; the packages themselves are
-# downloaded from addons.mozilla.org at runtime, nothing is mirrored here.
-cp -a "${BROWSER_SRC}/data/extension-catalog.json" "${S}/usr/share/atlantic-browser/"
-
 mkdir -p "${S}/usr/share/atlantic-browser/searchEngines"
 cp -a "${BROWSER_SRC}/data/searchEngines/"*.xml "${S}/usr/share/atlantic-browser/searchEngines/"
 

@@ -29,7 +29,7 @@ lists them, toggles them, removes them and installs new ones from a file.
 | `history`, `bookmarks` | `WebExtensionBrowsingData.cpp` over `DBManager` and the live `DeclarativeBookmarkModel` |
 | `downloads` | `WebExtensionDownloads.cpp` over `DownloadManager`'s per-download records |
 | UI | `apps/browser/qml/pages/ExtensionsPage.qml` |
-| Catalog + AMO client | `WebExtensionStore.h/.cpp`, `data/extension-catalog.json`, `qml/pages/ExtensionStorePage.qml` |
+| AMO search and install | `WebExtensionStore.h/.cpp`, `qml/pages/ExtensionStorePage.qml` |
 
 ## 2. Why it looks like this
 
@@ -145,16 +145,21 @@ popup require a `web_accessible_resources` entry.
 
 ## 2b. Where extensions come from
 
-A curated catalog ships in `data/extension-catalog.json` (installed to
-`/usr/share/atlantic-browser/`, overridable with `ATLANTIC_EXTENSION_CATALOG`).
-Nothing is mirrored: the catalog is a list of AMO slugs, and packages are
-downloaded from addons.mozilla.org over its public v5 read API — no key, no
-account. Search covers all of AMO, so the catalog recommends without
-restricting; `install()` has no verdict gate, by design.
+The store is a **search over addons.mozilla.org** and nothing else. Nothing is
+mirrored and nothing is recommended: there is no shipped list, and `install()`
+has no verdict gate. Packages come from AMO's public v5 read API — no key, no
+account.
+
+**A curated catalog used to ship** (`data/extension-catalog.json`, a list of AMO
+slugs with reviewed verdicts and hand-written notes) and was removed: a
+recommendation nobody had run on the device is a promise the project could not
+keep, and it made the first screen of the store an endorsement rather than a
+search box. The rot guard it needed is gone with it; what remains is a test over
+the *rule*, not over a list (`tests/test_extension_store.py`).
 
 **Verdicts are derived, not guessed.** AMO reports each add-on's declared
 permissions *before* download, so `WebExtensionStore::verdictFor()` classifies
-every row — catalog and search result alike — against two tables:
+every search result against two tables:
 
 - **broken**: `webRequest`, `webRequestBlocking`, `declarativeNetRequest`,
   `proxy`, `dns` — the add-on's whole point is something we do not do.
@@ -164,16 +169,15 @@ every row — catalog and search result alike — against two tables:
   they landed; the table is the one the store reads, so it has to track what is
   actually implemented.
 
-Catalog entries carry a reviewed verdict plus a hand-written note; search results
-get the derived one. `verified: false` on every catalog entry today means nobody
-has run it on a device yet, and the UI says so rather than implying more
-confidence than we have.
+**Only a bad verdict is shown.** "Works" and "Unknown" print nothing at all: the
+verdict is derived from declared permissions, not from anybody running the
+add-on, so a green label would be a promise the page cannot make. A row either
+warns or is silent.
 
 That derivation is also the sobering finding: the popular end of the extension
 ecosystem is built on `webRequest`. uBlock Origin, Tampermonkey, Violentmonkey,
-Stylus, To Google Translate and Search by Image all come out **broken**. uBO is
-in the catalog *as* a broken entry, so the answer is easy to find rather than
-discovered after an install.
+Stylus, To Google Translate and Search by Image all come out **broken** — which
+the user now sees on the row before installing, rather than in a catalog entry.
 
 Integrity: AMO publishes `current_version.file.hash` as `sha256:<hex>`, checked
 before the package is handed to `WebExtensionManager::install()`. A mismatch
@@ -439,15 +443,14 @@ Nothing here has run on the Xperia yet. The first pass should be, in order:
 `atlantic-browser/tests/sample-extension/` is a smoke-test extension that
 exercises all five in one go; its README says what each observable proves.
 `node atlantic-browser/tests/webextension-shim.test.js` covers the JS shim and
-the background preamble on the host (32 assertions, no device needed).
-`python3 atlantic-browser/tests/test_extension_catalog.py` checks the catalog
-file; with `ATLANTIC_CATALOG_ONLINE=1` it re-derives every entry's verdict from
-AMO's current permissions, which is the guard against catalog rot — an add-on
-that picks up `webRequest` in a later release would otherwise go on being
-recommended. It parses the API tables out of `WebExtensionStore.cpp` rather than
-copying them, so the test cannot drift from the shipped rule.
+the background preamble on the host (56 assertions, no device needed).
+`python3 atlantic-browser/tests/test_extension_store.py` checks the verdict
+rule; with `ATLANTIC_STORE_ONLINE=1` it re-derives uBlock Origin's verdict from
+AMO's current permissions, the canary for the tables drifting from the
+ecosystem. It parses those tables out of `WebExtensionStore.cpp` rather than
+copying them, so the test cannot drift from the shipped rule either.
 
-`cookies`, `history` and `bookmarks` need their own pass — nothing about them
+`cookies`, `history`, `bookmarks` and `downloads` need their own pass — nothing about them
 has run on the device:
 
 9. From a background page with `cookies` + a host permission: `getAll` for that
@@ -468,9 +471,11 @@ has run on the device:
 
 Store-specific device checks, on top of the five above:
 
-6. Open Settings → Extensions → Get extensions offline — the catalog should
-   still render from its shipped names and verdicts.
-7. Install a `works` entry from the catalog, then a `broken` one — the second
-   must warn and still install.
-8. Search for something not in the catalog and install it; then paste a direct
-   `.xpi` URL, which should install with the unverified-package warning.
+6. Open Settings → Extensions → Get extensions: the page should open on the
+   search box with no list, and offline a search should fail with a message
+   rather than an empty page that looks broken.
+7. Search for an add-on that comes out `broken` (uBlock Origin) — it must warn
+   and still install; then one with a clean verdict, which must say nothing
+   about compatibility at all.
+8. Paste a direct `.xpi` URL, which should install with the unverified-package
+   warning.
