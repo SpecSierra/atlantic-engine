@@ -177,14 +177,48 @@ the whole background script instead of degrading one feature.
 | `webRequest`, `declarativeNetRequest` | Network blocking lives in the Rust adblock WebProcess extension (`web-extension/`), which sees every subresource. The UI process does not, and there is no supported way to hand a per-request veto to extension JS across that boundary. Re-opening this means designing an IPC path from the WebProcess extension into the UI process on the hot request path — measure before believing it is affordable. |
 | `webNavigation` | Would need per-frame navigation signals we do not surface. |
 | `cookies`, `downloads`, `history`, `bookmarks`, `management`, `proxy`, `idle` | Not wired to the corresponding Atlantic subsystems yet; each is a self-contained follow-up. |
-| `contextMenus` / `menus` | No extension-populated context menu in the UI. |
-| `scripting`, `tabs.executeScript`, `tabs.insertCSS` | Dynamic injection needs a user-script add/remove path per call; static `content_scripts` cover the common case. |
 | MV3 service-worker lifecycle | No worker, no `onInstalled` update reasons, no event-driven wake. `runtime.onStartup` fires on every launch. |
 | Anchored action popups | Popups open as an ordinary tab. |
 
 Each of these that an installed extension asks for is surfaced as a per-extension
 warning in Settings → Extensions, so a degraded extension is visibly degraded
 rather than mysteriously broken.
+
+## 3b. contextMenus and scripting
+
+Both landed after the first pass and are no longer inert.
+
+**`scripting`** (and the MV2 `tabs.executeScript` / `insertCSS` / `removeCSS`)
+rides the world-scoped evaluation that was already there:
+`webkit_web_view_evaluate_javascript()` takes a world name, so an injection runs
+in the extension's own isolated world by default and in the page's when the
+caller asks for `world: "MAIN"`. A function passed to `executeScript` cannot
+cross the bridge, so the shim sends `func.toString()` and the page side
+re-creates it — which is also why, exactly as in a real browser, such a function
+must not close over anything. Results come back through
+`jsc_value_to_json()`. `registerContentScripts` stores into the entry and is
+replayed by `installIntoPage()`, so dynamically registered scripts behave like
+manifest ones on the next load.
+
+Two traps in that wiring, both caught before they shipped: an extension whose
+*only* injection route is `registerContentScripts` was being skipped entirely,
+because `installIntoPage()` bailed out when the manifest declared no content
+scripts; and the shim's allow-list was built from manifest matches alone, so
+`browser.*` would have been undefined in a dynamically registered script.
+
+**`contextMenus`** needed a surface as well as an API — Atlantic has no menu bar,
+and the only long-press UI was the image panel. The `contextmenu` DOM event was
+already the dependable long-press signal (the JS touch timer gets pre-empted by
+the compositor), so the existing bridge script now reports link URL, editable
+state and selection alongside the image URL, and `ImageActionPanel` became the
+general long-press panel: built-in actions plus whatever items match. Item
+matching follows the API — `contexts`, `documentUrlPatterns`, `targetUrlPatterns`,
+`%s` substitution from the selection — and an extension only gets to offer items
+where it has host access anyway. `onClicked` goes to the background context
+only, as in Chrome.
+
+Not covered: submenus are flattened (`parentId` is recorded and reported in
+`info`, but the panel is one level), and `onShown`/`onHidden` stay inert.
 
 ## 4. Things that bit, worth not rediscovering
 
@@ -196,6 +230,12 @@ rather than mysteriously broken.
 - **Qt 5.6.3, not 5.15.** No `QString::chopped`, no `qAsConst`, and
   `QNetworkAccessManager::sendCustomRequest` has no `QByteArray` overload — it
   needs a `QIODevice` that outlives the call.
+- **`QByteArray + gchar*` is ambiguous**, and one of the candidates is pointer
+  arithmetic. `QByteArray("[") + json + "]"` compiles with a warning and could
+  have silently produced garbage; build it with explicit `append()` calls.
+- **`QVector<T>::erase` instantiates a `memmove` branch** over any `T`, tripping
+  `-Wclass-memaccess` for structs holding QStrings even though the branch is
+  never taken. `QList` is the cheap way out for small registries.
 - **Extension ids appear in URLs and in GObject signal details.** They are
   derived once (gecko id if declared, else a slug plus a hash of the *name* so
   the id survives version bumps) and sanitized to `[a-z0-9._-]`; world names and
