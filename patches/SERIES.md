@@ -10,10 +10,10 @@ Each patch carries its own rationale as a header comment at the top of the patch
 
 | | Count |
 |---|---|
-| Patches | 41 |
+| Patches | 43 |
 | …portability / build fixes | 4 |
-| …behaviour | 37 |
-| Distinct source files touched | 1309 |
+| …behaviour | 39 |
+| Distinct source files touched | 1321 |
 | Env flags introduced | 94 |
 
 ## Hot files
@@ -30,6 +30,8 @@ Files edited by more than one patch — every one is an ordering constraint.
 | `Source/WebCore/page/scrolling/ScrollingTree.h` | 3 |
 | `Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp` | 3 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp` | 3 |
+| `Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp` | 3 |
+| `Source/WebCore/page/EventHandler.cpp` | 2 |
 | `Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h` | 2 |
 | `Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h` | 2 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp` | 2 |
@@ -37,7 +39,6 @@ Files edited by more than one patch — every one is an ordering constraint.
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp` | 2 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h` | 2 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp` | 2 |
-| `Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp` | 2 |
 | `Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.cpp` | 2 |
 | `Source/cmake/OptionsWPE.cmake` | 2 |
 
@@ -61,27 +62,29 @@ Files edited by more than one patch — every one is an ordering constraint.
 | 14 | `webkit-wpe-dark-mode-runtime.patch` | 2 | — | runtime prefers-color-scheme switch. The legacy libwpe build hardwires SystemSettings darkMode to false, so websites always saw prefers-color-scheme: light. Exports wpe_sfos_set_dark_mode(int) for the… |
 | 15 | `webkit-wpe-page-scale-api.patch` | 1 | `WEBKIT_IS_WEB_VIEW` | expose visual-viewport (page-scale) zoom. WPE's public API only has webkit_web_view_set_zoom_level(), which is page zoom: it relayouts, reflows text and changes what fits on a line. Pinch on a phone i… |
 | 16 | `webkit-wpe-preconnect-api.patch` | 1 | `ATLANTIC_PRECONNECT`<br>`WEBKIT_IS_WEB_VIEW` | let the embedder warm a connection before the user commits to a navigation. WebKit already implements speculative connections end to end — WebPageProxy ::preconnectTo() -> NetworkProcess::preconnectTo… |
-| 17 | `webkit-bubblewrap-sfos-sandbox.patch` | 1 | `ATLANTIC_ENABLE_SANDBOX` | Re-enable the WPE bubblewrap process sandbox on SFOS / Android-4.14: --dev-bind / / (no pivot_root and no --dev masking of the GPU nodes), a shared network namespace for the Web and GPU processes (hyb… |
-| 18 | `webkit-seccomp-filter-no-namespace.patch` | 1 | `ATLANTIC_ENABLE_SECCOMP`<br>`WEBKIT_ENABLE_SECCOMP_FILTER` | install the bwrap seccomp syscall filter (BubblewrapLauncher::setupSeccomp's flatpak block list) directly in every auxiliary process via seccomp_load(), WITHOUT any namespace. The bwrap mount namespac… |
-| 19 | `webkit-composite-scroll-sync.patch` | 5 | `WEBKIT_COMPOSITE_SCROLL_SYNC` | Atomic scroll offset + fixed/sticky layer positions per composed frame. Merged from: webkit-sticky-scroll-composite-sync-env, webkit-composite-scroll-sync-stall-fix, webkit-composite-scroll-sync-lock-… |
-| 20 | `webkit-wpe-spellcheck-enchant.patch` | 8 | — | WPE has no TextChecker backend upstream (spellcheck is GTK-only); port the GTK enchant-backed implementation so ENABLE_SPELLCHECK builds/works. |
-| 21 | `webkit-load-responsiveness.patch` | 5 | `WEBKIT_LOADING_TIMER_ALIGNMENT_MS`<br>`WEBKIT_PARSER_TIME_LIMIT_MS`<br>`WEBKIT_TOUCH_ACK_TIMEOUT_MS` | Input and scrolling during a heavy page load. Merged from: webkit-loading-timer-alignment-env, webkit-parser-time-limit-env, webkit-touch-ack-timeout-env. |
-| 22 | `webkit-http-cache.patch` | 2 | `ATLANTIC_CACHE_MODEL`<br>`WEBKIT_SW_FALLBACK_HTTP_CACHE`<br>`WEBKIT_URL_CACHE_DISK_CAPACITY_MB` | A bounded on-flash HTTP cache that service-worker sites can also use. Merged from: webkit-url-cache-disk-capacity-env, webkit-sw-fallback-http-cache. |
-| 23 | `webkit-repaint-scope.patch` | 5 | `WEBKIT_PAINT_LOG`<br>`WEBKIT_REPAINT_ON_COMPOSITED_MOVE`<br>`WEBKIT_REPAINT_ON_LAYER_RESIZE` | Stop full-layer repaints that nothing asked for, plus the paint log that found them. Merged from: webkit-no-full-repaint-on-layer-grow, webkit-no-full-repaint-on-composited-move, webkit-paint-log-diag… |
-| 24 | `webkit-fling-throttle-env.patch` | 4 | `WEBKIT_FLING_THROTTLE_MS`<br>`WEBKIT_FLING_THROTTLE_SETTLE_MS`<br>`WEBKIT_FLING_THROTTLE_SPEED` | fling degradation for main-thread-bound pages (franceinfo/radiofrance scroll <1fps, 44% style resolution). While the scrolling thread reports a fast fling (velocity sampled in ScrollingTree::scrolling… |
-| 25 | `webkit-independent-scroll.patch` | 5 | `WEBKIT_FORCE_ASYNC_SCROLL`<br>`WEBKIT_FORCE_VBLANK_TIMER`<br>`WEBKIT_INDEPENDENT_SCROLL`<br>`WEBKIT_INDEPENDENT_SCROLL_TICK_MS` | Scrolling off the main thread (the APZ bargain), in four dependent parts. Merged from: webkit-force-async-scroll-env, webkit-independent-scroll-env, webkit-scrolling-thread-display-link-env, webkit-sc… |
-| 26 | `webkit-tile-upload.patch` | 10 | `WEBKIT_TILE_UPLOAD_BUDGET_MB`<br>`WEBKIT_TILE_UPLOAD_BUDGET_SCROLL_ONLY`<br>`WEBKIT_TILE_UPLOAD_REST_BUDGET_MB`<br>`WEBKIT_TILE_UPLOAD_SCROLL_SETTLE_MS` | Bound the tile work one composite may do, and make the fill-in look right. Merged from: webkit-tile-upload-budget-env, webkit-tile-upload-scroll-gate, webkit-tile-upload-nonblocking-settle. |
-| 27 | `webkit-no-fake-mouse-move-env.patch` | 1 | `WEBKIT_NO_FAKE_MOUSE_MOVE` | Touch devices: kill the fake mouse-move WebKit dispatches after every scroll at the stale synthetic-tap position, which :hover-highlights whatever link scrolls under the invisible cursor (WEBKIT_NO_FA… |
-| 28 | `webkit-video-proxy-target-unbind-guard.patch` | 3 | — | Video contents-buffer proxy: when the <video> element's backing layer is rebuilt (fullscreen enter/exit, navigation), the OLD GraphicsLayer's teardown unbound the shared buffer proxy AFTER the new lay… |
-| 29 | `webkit-damage-limited-composite-env.patch` | 1 | `WEBKIT_DAMAGE_COMPOSITING`<br>`WEBKIT_DAMAGE_UNIFY`<br>`WEBKIT_DAMAGE_USE_FOR_COMPOSITING` | Damage-limited compositing: enable WebKit's compiled-in-but-WPE-disabled damage subsystem so a composite is scissored to the region that actually changed instead of redrawing the whole scene (WEBKIT_D… |
-| 30 | `webkit-tile-buffer-skip-zero-env.patch` | 1 | `WEBKIT_TILE_BUFFER_SKIP_ZERO` | Skip the redundant main-thread memset of CPU tile buffers: the Skia worker clears+paints every tile before it is composited, so tryZeroedMalloc on the main thread is wasted work - device-measured as t… |
-| 31 | `webkit-frame-trace-env.patch` | 5 | `ATLANTIC_FRAME_TRACE`<br>`ATLANTIC_REPAINT_BT`<br>`WEBKIT_COVER_AREA_MULTIPLIER` | Frame-trace diagnostic (ATLANTIC_FRAME_TRACE=1, default OFF): CLOCK_MONOTONIC marker at each WebProcess composite, paired with the qt5-plugin ui recv/paint/ ack markers to localize the franceinfo free… |
-| 32 | `webkit-root-customprop-repaint-skip-env.patch` | 1 | `ATLANTIC_FRAME_TRACE`<br>`ATLANTIC_REPAINT_BT`<br>`WEBKIT_SKIP_ROOT_CUSTOMPROP_REPAINT` | THE franceinfo scroll-freeze fix: WEBKIT_SKIP_ROOT_CUSTOMPROP_REPAINT=1 (default ON) stops RenderBox::styleWillChange from repainting the whole page when a :root/<body> custom-property changes (the si… |
-| 33 | `webkit-drop-tiles-when-hidden-env.patch` | 4 | `WEBKIT_DROP_TILES_WHEN_HIDDEN` | WEBKIT_DROP_TILES_WHEN_HIDDEN=1 (default OFF, A/B) makes a backgrounded tab drop its tiled-backing tiles. Device-measured: a hidden tab pins ~1 GB of GPU tile textures forever (the cover rect in Coord… |
-| 34 | `webkit-composite-skip-locked-layers-env.patch` | 1 | `ATLANTIC_FRAME_TRACE`<br>`WEBKIT_COMPOSITE_SKIP_LOCKED_LAYERS` | WEBKIT_COMPOSITE_SKIP_LOCKED_- LAYERS=1 (default OFF) — the video fast path. CoordinatedPlatformLayer:: flushCompositingState() (compositor thread) blocks on the per-layer m_lock that the MAIN thread … |
-| 35 | `webkit-svg.patch` | 8 | `WEBKIT_SVG_FILTER_RESULTS_REUSE`<br>`WEBKIT_SVG_FILTER_SCALE_CAP`<br>`WEBKIT_SVG_RASTER_CACHE`<br>`WEBKIT_SVG_RASTER_CACHE_MAX_AREA_PX` | SVG: cache what can be cached, cap what cannot. Merged from: webkit-svg-raster-cache, webkit-svg-filter-results-reuse, webkit-svg-filter-scale-cap. Shipped 551-553, device-verified (2x AnTuTu). |
-| 36 | `webkit-clipboard-qt-hook.patch` | 1 | `ATLANTIC_DISABLE_CLIPBOARD_BRIDGE` | make web clipboard writes reach the SFOS system clipboard. The libwpe pasteboard singleton is an in-process std::map stub in this fdo build (no _wpe_pasteboard_interface exported), so navigator.clipbo… |
-| 37 | `webkit-viewport-unit-font-size-zoom.patch` | 1 | `WEBKIT_FONT_SIZE_UNIT_UNZOOM` | fix font-size resolved from viewport (vw/vh/...) or container (cqw/cqi/...) percentage units coming out deviceScaleFactor times too large — db.no and vg.no headlines overflowing the viewport while eve… |
+| 17 | `webkit-wpe-device-orientation.patch` | 12 | `WEBKIT_IS_WEB_VIEW` | make DeviceOrientation/DeviceMotion reachable on a non-Cocoa port. ENABLE_DEVICE_ORIENTATION is defined PRIVATE OFF and enabled by no port; even switched on, the controllers are only ever created unde… |
+| 18 | `webkit-bubblewrap-sfos-sandbox.patch` | 1 | `ATLANTIC_ENABLE_SANDBOX` | Re-enable the WPE bubblewrap process sandbox on SFOS / Android-4.14: --dev-bind / / (no pivot_root and no --dev masking of the GPU nodes), a shared network namespace for the Web and GPU processes (hyb… |
+| 19 | `webkit-seccomp-filter-no-namespace.patch` | 1 | `ATLANTIC_ENABLE_SECCOMP`<br>`WEBKIT_ENABLE_SECCOMP_FILTER` | install the bwrap seccomp syscall filter (BubblewrapLauncher::setupSeccomp's flatpak block list) directly in every auxiliary process via seccomp_load(), WITHOUT any namespace. The bwrap mount namespac… |
+| 20 | `webkit-composite-scroll-sync.patch` | 5 | `WEBKIT_COMPOSITE_SCROLL_SYNC` | Atomic scroll offset + fixed/sticky layer positions per composed frame. Merged from: webkit-sticky-scroll-composite-sync-env, webkit-composite-scroll-sync-stall-fix, webkit-composite-scroll-sync-lock-… |
+| 21 | `webkit-wpe-spellcheck-enchant.patch` | 8 | — | WPE has no TextChecker backend upstream (spellcheck is GTK-only); port the GTK enchant-backed implementation so ENABLE_SPELLCHECK builds/works. |
+| 22 | `webkit-load-responsiveness.patch` | 5 | `WEBKIT_LOADING_TIMER_ALIGNMENT_MS`<br>`WEBKIT_PARSER_TIME_LIMIT_MS`<br>`WEBKIT_TOUCH_ACK_TIMEOUT_MS` | Input and scrolling during a heavy page load. Merged from: webkit-loading-timer-alignment-env, webkit-parser-time-limit-env, webkit-touch-ack-timeout-env. |
+| 23 | `webkit-http-cache.patch` | 2 | `ATLANTIC_CACHE_MODEL`<br>`WEBKIT_SW_FALLBACK_HTTP_CACHE`<br>`WEBKIT_URL_CACHE_DISK_CAPACITY_MB` | A bounded on-flash HTTP cache that service-worker sites can also use. Merged from: webkit-url-cache-disk-capacity-env, webkit-sw-fallback-http-cache. |
+| 24 | `webkit-repaint-scope.patch` | 5 | `WEBKIT_PAINT_LOG`<br>`WEBKIT_REPAINT_ON_COMPOSITED_MOVE`<br>`WEBKIT_REPAINT_ON_LAYER_RESIZE` | Stop full-layer repaints that nothing asked for, plus the paint log that found them. Merged from: webkit-no-full-repaint-on-layer-grow, webkit-no-full-repaint-on-composited-move, webkit-paint-log-diag… |
+| 25 | `webkit-fling-throttle-env.patch` | 4 | `WEBKIT_FLING_THROTTLE_MS`<br>`WEBKIT_FLING_THROTTLE_SETTLE_MS`<br>`WEBKIT_FLING_THROTTLE_SPEED` | fling degradation for main-thread-bound pages (franceinfo/radiofrance scroll <1fps, 44% style resolution). While the scrolling thread reports a fast fling (velocity sampled in ScrollingTree::scrolling… |
+| 26 | `webkit-independent-scroll.patch` | 5 | `WEBKIT_FORCE_ASYNC_SCROLL`<br>`WEBKIT_FORCE_VBLANK_TIMER`<br>`WEBKIT_INDEPENDENT_SCROLL`<br>`WEBKIT_INDEPENDENT_SCROLL_TICK_MS` | Scrolling off the main thread (the APZ bargain), in four dependent parts. Merged from: webkit-force-async-scroll-env, webkit-independent-scroll-env, webkit-scrolling-thread-display-link-env, webkit-sc… |
+| 27 | `webkit-tile-upload.patch` | 10 | `WEBKIT_TILE_UPLOAD_BUDGET_MB`<br>`WEBKIT_TILE_UPLOAD_BUDGET_SCROLL_ONLY`<br>`WEBKIT_TILE_UPLOAD_REST_BUDGET_MB`<br>`WEBKIT_TILE_UPLOAD_SCROLL_SETTLE_MS` | Bound the tile work one composite may do, and make the fill-in look right. Merged from: webkit-tile-upload-budget-env, webkit-tile-upload-scroll-gate, webkit-tile-upload-nonblocking-settle. |
+| 28 | `webkit-no-fake-mouse-move-env.patch` | 1 | `WEBKIT_NO_FAKE_MOUSE_MOVE` | Touch devices: kill the fake mouse-move WebKit dispatches after every scroll at the stale synthetic-tap position, which :hover-highlights whatever link scrolls under the invisible cursor (WEBKIT_NO_FA… |
+| 29 | `webkit-video-proxy-target-unbind-guard.patch` | 3 | — | Video contents-buffer proxy: when the <video> element's backing layer is rebuilt (fullscreen enter/exit, navigation), the OLD GraphicsLayer's teardown unbound the shared buffer proxy AFTER the new lay… |
+| 30 | `webkit-damage-limited-composite-env.patch` | 1 | `WEBKIT_DAMAGE_COMPOSITING`<br>`WEBKIT_DAMAGE_UNIFY`<br>`WEBKIT_DAMAGE_USE_FOR_COMPOSITING` | Damage-limited compositing: enable WebKit's compiled-in-but-WPE-disabled damage subsystem so a composite is scissored to the region that actually changed instead of redrawing the whole scene (WEBKIT_D… |
+| 31 | `webkit-tile-buffer-skip-zero-env.patch` | 1 | `WEBKIT_TILE_BUFFER_SKIP_ZERO` | Skip the redundant main-thread memset of CPU tile buffers: the Skia worker clears+paints every tile before it is composited, so tryZeroedMalloc on the main thread is wasted work - device-measured as t… |
+| 32 | `webkit-frame-trace-env.patch` | 5 | `ATLANTIC_FRAME_TRACE`<br>`ATLANTIC_REPAINT_BT`<br>`WEBKIT_COVER_AREA_MULTIPLIER` | Frame-trace diagnostic (ATLANTIC_FRAME_TRACE=1, default OFF): CLOCK_MONOTONIC marker at each WebProcess composite, paired with the qt5-plugin ui recv/paint/ ack markers to localize the franceinfo free… |
+| 33 | `webkit-root-customprop-repaint-skip-env.patch` | 1 | `ATLANTIC_FRAME_TRACE`<br>`ATLANTIC_REPAINT_BT`<br>`WEBKIT_SKIP_ROOT_CUSTOMPROP_REPAINT` | THE franceinfo scroll-freeze fix: WEBKIT_SKIP_ROOT_CUSTOMPROP_REPAINT=1 (default ON) stops RenderBox::styleWillChange from repainting the whole page when a :root/<body> custom-property changes (the si… |
+| 34 | `webkit-drop-tiles-when-hidden-env.patch` | 4 | `WEBKIT_DROP_TILES_WHEN_HIDDEN` | WEBKIT_DROP_TILES_WHEN_HIDDEN=1 (default OFF, A/B) makes a backgrounded tab drop its tiled-backing tiles. Device-measured: a hidden tab pins ~1 GB of GPU tile textures forever (the cover rect in Coord… |
+| 35 | `webkit-composite-skip-locked-layers-env.patch` | 1 | `ATLANTIC_FRAME_TRACE`<br>`WEBKIT_COMPOSITE_SKIP_LOCKED_LAYERS` | WEBKIT_COMPOSITE_SKIP_LOCKED_- LAYERS=1 (default OFF) — the video fast path. CoordinatedPlatformLayer:: flushCompositingState() (compositor thread) blocks on the per-layer m_lock that the MAIN thread … |
+| 36 | `webkit-svg.patch` | 8 | `WEBKIT_SVG_FILTER_RESULTS_REUSE`<br>`WEBKIT_SVG_FILTER_SCALE_CAP`<br>`WEBKIT_SVG_RASTER_CACHE`<br>`WEBKIT_SVG_RASTER_CACHE_MAX_AREA_PX` | SVG: cache what can be cached, cap what cannot. Merged from: webkit-svg-raster-cache, webkit-svg-filter-results-reuse, webkit-svg-filter-scale-cap. Shipped 551-553, device-verified (2x AnTuTu). |
+| 37 | `webkit-clipboard-qt-hook.patch` | 1 | `ATLANTIC_DISABLE_CLIPBOARD_BRIDGE` | make web clipboard writes reach the SFOS system clipboard. The libwpe pasteboard singleton is an in-process std::map stub in this fdo build (no _wpe_pasteboard_interface exported), so navigator.clipbo… |
+| 38 | `webkit-viewport-unit-font-size-zoom.patch` | 1 | `WEBKIT_FONT_SIZE_UNIT_UNZOOM` | fix font-size resolved from viewport (vw/vh/...) or container (cqw/cqi/...) percentage units coming out deviceScaleFactor times too large — db.no and vg.no headlines overflowing the viewport while eve… |
+| 39 | `webkit-pointerdown-cancel-keeps-click.patch` | 2 | — | Canceling pointerdown must not eat the tap's click. |
 
 ## Portability / build fixes
 

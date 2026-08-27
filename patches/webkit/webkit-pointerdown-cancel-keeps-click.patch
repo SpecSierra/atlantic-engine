@@ -1,0 +1,125 @@
+# Canceling pointerdown must not eat the tap's click.
+#
+# Per the Pointer Events spec, canceling pointerdown suppresses the
+# COMPATIBILITY MOUSE EVENTS (mousedown/mouseup) and explicitly does NOT
+# suppress click:
+#   https://w3c.github.io/pointerevents/#suppressing-a-compatibility-mouse-event
+#
+# The WPE/GTK branch of EventHandler::handleTouchEvent implemented that
+# suppression by marking the whole touch event handled. That reaches the
+# UIProcess as doneWithTouchEvent(wasEventHandled=true), where
+# PageClientImpl::doneWithTouchEvent returns before TouchGestureController runs
+# -- so no tap is synthesized, and the click never happens either.
+#
+# The visible symptom: any overlay that cancels pointerdown to stop the
+# underlying field losing focus is permanently untappable on a touch screen.
+# Found with LanguageTool, whose suggestion card cancels pointerdown, pointerup
+# and mousedown: tapping a suggestion highlighted it (CSS :active fires on
+# touch) and then did nothing at all, while the same extension's menu -- which
+# does not sit over an editable field and does not cancel -- worked. Verified on
+# device by dispatching a synthetic pointerdown at the card and observing
+# defaultPrevented, and by watching window-capture listeners see touchstart and
+# touchend with no pointerdown, mousedown or click behind them.
+#
+# The fix records the suppression instead of swallowing the event, then drops
+# only the synthesized mousedown/mouseup when the tap comes back. The click
+# needs nothing but m_clickNode/m_clickCount, which are set before the mousedown
+# dispatch, so it still fires. Scoped to SyntheticClickType::OneFingerTap so a
+# real mouse is never affected.
+#
+# ---
+--- a/Source/WebCore/page/EventHandler.cpp	2026-08-27 18:56:55.322551384 +0000
++++ b/Source/WebCore/page/EventHandler.cpp	2026-08-27 18:56:55.352551544 +0000
+@@ -2125,7 +2125,11 @@
+ 
+     frame->selection().setCaretBlinkingSuspended(true);
+ 
+-    bool swallowEvent = !dispatchMouseEvent(eventNames().mousedownEvent, mouseEvent.protectedTargetNode().get(), m_clickCount, platformMouseEvent, FireMouseOverOut::Yes);
++    // m_clickNode/m_clickCount are already set above, which is all the click
++    // needs; only the mousedown dispatch is suppressed.
++    bool swallowEvent = shouldSuppressCompatibilityMouseEvent(platformMouseEvent)
++        ? false
++        : !dispatchMouseEvent(eventNames().mousedownEvent, mouseEvent.protectedTargetNode().get(), m_clickCount, platformMouseEvent, FireMouseOverOut::Yes);
+     if (!swallowEvent || mouseEvent.scrollbar())
+         m_capturesDragging = true;
+     else
+@@ -2186,8 +2190,12 @@
+         return true;
+ 
+     m_clickCount = platformMouseEvent.clickCount();
+-    bool swallowMouseUpEvent = !dispatchMouseEvent(eventNames().mouseupEvent, mouseEvent.protectedTargetNode().get(), m_clickCount, platformMouseEvent, FireMouseOverOut::Yes);
++    bool swallowMouseUpEvent = shouldSuppressCompatibilityMouseEvent(platformMouseEvent)
++        ? false
++        : !dispatchMouseEvent(eventNames().mouseupEvent, mouseEvent.protectedTargetNode().get(), m_clickCount, platformMouseEvent, FireMouseOverOut::Yes);
++    // The click is dispatched either way: it is not a compatibility mouse event.
+     bool swallowClickEvent = swallowAnyClickEvent(platformMouseEvent, mouseEvent, IgnoreAncestorNodesForClickEvent::Yes);
++    m_suppressCompatibilityMouseEventsForTap = false;
+ 
+     if (m_lastScrollbarUnderMouse)
+         swallowMouseUpEvent = m_lastScrollbarUnderMouse->mouseUp(platformMouseEvent);
+@@ -2471,6 +2479,15 @@
+     return nullptr;
+ }
+ 
++bool EventHandler::shouldSuppressCompatibilityMouseEvent(const PlatformMouseEvent& platformMouseEvent) const
++{
++    // Only the mouse events the UIProcess synthesizes for a tap; a real mouse,
++    // and any event from a pointer sequence that did not cancel pointerdown,
++    // is untouched.
++    return m_suppressCompatibilityMouseEventsForTap
++        && platformMouseEvent.syntheticClickType() == SyntheticClickType::OneFingerTap;
++}
++
+ bool EventHandler::swallowAnyClickEvent(const PlatformMouseEvent& platformMouseEvent, const MouseEventWithHitTestResults& mouseEvent, IgnoreAncestorNodesForClickEvent ignoreAncestorNodesForClickEvent)
+ {
+     if (!m_clickCount)
+@@ -5546,11 +5563,23 @@
+             *pointerTarget, event, index, !index, *document->windowProxy(), { 0, 0 });
+ 
+         // https://w3c.github.io/pointerevents/#suppressing-a-compatibility-mouse-event
+-        // If pointerdown was canceled via preventDefault(), suppress compatibility mouse events
+-        // by marking the touch event as handled. This propagates to the UIProcess via
+-        // doneWithTouchEvent(wasEventHandled=true), preventing gesture-based mouse synthesis.
+-        if (page->pointerCaptureController().preventsCompatibilityMouseEventsForIdentifier(PointerEvent::pointerIdForTouchPoint(point)))
+-            swallowedEvent = true;
++        // Canceling pointerdown suppresses the COMPATIBILITY MOUSE EVENTS
++        // (mousedown/mouseup). It does NOT suppress click, which the spec calls
++        // out explicitly.
++        //
++        // Marking the touch handled here did suppress click, and everything
++        // else: it reaches the UIProcess as doneWithTouchEvent(wasEventHandled
++        // = true), where PageClientImpl returns before TouchGestureController,
++        // so no tap is synthesized at all. Any overlay that cancels pointerdown
++        // to stop the field losing focus -- an extension's suggestion card, a
++        // custom menu -- became permanently untappable on a touch screen, while
++        // still highlighting under :active so it looked alive.
++        //
++        // Remember the suppression instead and drop only the mouse events when
++        // the synthesized tap comes back. Assigned rather than or'd so a
++        // sequence that does not cancel pointerdown clears it.
++        m_suppressCompatibilityMouseEventsForTap =
++            page->pointerCaptureController().preventsCompatibilityMouseEventsForIdentifier(PointerEvent::pointerIdForTouchPoint(point));
+ #endif
+ 
+         // pagePoint should always be relative to the target elements containing frame.
+--- a/Source/WebCore/page/EventHandler.h	2026-08-27 18:56:55.327551410 +0000
++++ b/Source/WebCore/page/EventHandler.h	2026-08-27 18:56:55.352551544 +0000
+@@ -496,6 +496,7 @@
+     bool dispatchMouseEvent(const AtomString& eventType, Node* target, int clickCount, const PlatformMouseEvent&, FireMouseOverOut);
+ 
+     enum class IgnoreAncestorNodesForClickEvent : bool { No, Yes };
++    bool shouldSuppressCompatibilityMouseEvent(const PlatformMouseEvent&) const;
+     bool swallowAnyClickEvent(const PlatformMouseEvent&, const MouseEventWithHitTestResults&, IgnoreAncestorNodesForClickEvent);
+ 
+ #if ENABLE(DRAG_SUPPORT)
+@@ -695,6 +696,10 @@
+     Cursor m_currentMouseCursor;
+ 
+     RefPtr<Node> m_lastTouchedNode;
++    // Set when a touch sequence cancels pointerdown: the tap's synthesized
++    // mousedown/mouseup are then not dispatched, per the Pointer Events spec,
++    // while the click still is. Cleared once that tap completes.
++    bool m_suppressCompatibilityMouseEventsForTap { false };
+     RefPtr<Node> m_clickNode;
+     RefPtr<Element> m_clickCaptureElement;
+     RefPtr<HTMLFrameSetElement> m_frameSetBeingResized;

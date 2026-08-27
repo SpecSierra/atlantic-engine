@@ -109,6 +109,8 @@ readonly WEBKIT_SOURCE_PATCHES=(
     "patches/webkit/webkit-svg.patch"
     "patches/webkit/webkit-clipboard-qt-hook.patch"
     "patches/webkit/webkit-viewport-unit-font-size-zoom.patch"
+    # AFTER no-fake-mouse-move (same file: page/EventHandler.cpp).
+    "patches/webkit/webkit-pointerdown-cancel-keeps-click.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(
