@@ -42,7 +42,7 @@ concludes, add a status header and move it here.
 |---|---|
 | [startup-splash-removal.md](startup-splash-removal.md) | shipped — the wrapper was forcing a 2 s runtime-load delay |
 | [adblock-rust-integration.md](adblock-rust-integration.md) | shipped (462) — design record for the Brave/Rust engine |
-| [webextensions.md](webextensions.md) | **implemented, not device-verified** — content scripts, `atlantic-extension://`, a JSC background context and the `browser.*` shim; `webRequest`/`declarativeNetRequest` are deliberately inert |
+| [webextensions.md](webextensions.md) | **implemented, not device-verified** — content scripts, `atlantic-extension://`, a JSC background context, the `browser.*` shim, and a curated catalog installing from AMO; `webRequest`/`declarativeNetRequest` are deliberately inert, which makes most popular extensions (uBO, Tampermonkey, Stylus) unusable |
 | [sandbox-bubblewrap.md](sandbox-bubblewrap.md) | **superseded** — concludes bwrap is unworkable; that was later reversed and bwrap ships default-ON |
 | [direct-composite-overlay.md](direct-composite-overlay.md) | parked — lipstick pins a Silica `ApplicationWindow` to the base layer |
 | [chrome-blur.md](chrome-blur.md) | shipped — screen-fixed blurred chrome via `gl_FragCoord` |

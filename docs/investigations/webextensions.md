@@ -24,6 +24,7 @@ lists them, toggles them, removes them and installs new ones from a file.
 | `browser.*` / `chrome.*` shim + background polyfills (JS) | `WebExtensionScripts.h` |
 | Tab APIs | `WPEWebContainer` implements `WebExtensionHost` |
 | UI | `apps/browser/qml/pages/ExtensionsPage.qml` |
+| Catalog + AMO client | `WebExtensionStore.h/.cpp`, `data/extension-catalog.json`, `qml/pages/ExtensionStorePage.qml` |
 
 ## 2. Why it looks like this
 
@@ -102,6 +103,45 @@ a hostile page could iframe one. Extensions that keep secrets in a popup are
 mis-designed anyway, but this is the trade we took rather than making every
 popup require a `web_accessible_resources` entry.
 
+## 2b. Where extensions come from
+
+A curated catalog ships in `data/extension-catalog.json` (installed to
+`/usr/share/atlantic-browser/`, overridable with `ATLANTIC_EXTENSION_CATALOG`).
+Nothing is mirrored: the catalog is a list of AMO slugs, and packages are
+downloaded from addons.mozilla.org over its public v5 read API — no key, no
+account. Search covers all of AMO, so the catalog recommends without
+restricting; `install()` has no verdict gate, by design.
+
+**Verdicts are derived, not guessed.** AMO reports each add-on's declared
+permissions *before* download, so `WebExtensionStore::verdictFor()` classifies
+every row — catalog and search result alike — against two tables:
+
+- **broken**: `webRequest`, `webRequestBlocking`, `declarativeNetRequest`,
+  `proxy`, `dns` — the add-on's whole point is something we do not do.
+- **partial**: `contextMenus`, `scripting`, `cookies`, `history`, … — it loses a
+  feature, not its purpose.
+
+Catalog entries carry a reviewed verdict plus a hand-written note; search results
+get the derived one. `verified: false` on every catalog entry today means nobody
+has run it on a device yet, and the UI says so rather than implying more
+confidence than we have.
+
+That derivation is also the sobering finding: the popular end of the extension
+ecosystem is built on `webRequest`. uBlock Origin, Tampermonkey, Violentmonkey,
+Stylus, To Google Translate and Search by Image all come out **broken**. uBO is
+in the catalog *as* a broken entry, so the answer is easy to find rather than
+discovered after an install.
+
+Integrity: AMO publishes `current_version.file.hash` as `sha256:<hex>`, checked
+before the package is handed to `WebExtensionManager::install()`. A mismatch
+refuses the install. The one path without that check is the deliberate escape
+hatch — pasting a direct `.xpi` URL — and the UI says so in the dialog.
+
+Verified against the live API while building this: `.xpi` is a plain `PK` zip
+with `manifest.json` at the root (so `QZipReader` handles it directly),
+`name`/`summary` come back as `{"en-US": …}` objects even with `lang=` set, and
+`current_version.file` is singular in v5 (older responses use `files[]`).
+
 ## 3. What is deliberately not supported
 
 These are inert rather than absent: calling a method rejects with a clear
@@ -164,3 +204,18 @@ Nothing here has run on the Xperia yet. The first pass should be, in order:
 exercises all five in one go; its README says what each observable proves.
 `node atlantic-browser/tests/webextension-shim.test.js` covers the JS shim and
 the background preamble on the host (32 assertions, no device needed).
+`python3 atlantic-browser/tests/test_extension_catalog.py` checks the catalog
+file; with `ATLANTIC_CATALOG_ONLINE=1` it re-derives every entry's verdict from
+AMO's current permissions, which is the guard against catalog rot — an add-on
+that picks up `webRequest` in a later release would otherwise go on being
+recommended. It parses the API tables out of `WebExtensionStore.cpp` rather than
+copying them, so the test cannot drift from the shipped rule.
+
+Store-specific device checks, on top of the five above:
+
+6. Open Settings → Extensions → Get extensions offline — the catalog should
+   still render from its shipped names and verdicts.
+7. Install a `works` entry from the catalog, then a `broken` one — the second
+   must warn and still install.
+8. Search for something not in the catalog and install it; then paste a direct
+   `.xpi` URL, which should install with the unverified-package warning.
