@@ -582,6 +582,9 @@ cp -a "${BROWSER_SRC}/apps/browser/qml/browser-silica-main-smoke.qml" "${S}/usr/
 cp -a "${BROWSER_SRC}/apps/browser/qml/browser-minimal.qml" "${S}/usr/share/atlantic-browser/"
 cp -a "${BROWSER_SRC}/apps/browser/qml/pages"        "${S}/usr/share/atlantic-browser/"
 cp -a "${BROWSER_SRC}/apps/browser/qml/cover"        "${S}/usr/share/atlantic-browser/"
+# Our own icon-m-* glyphs; the pages reach them as ../icons/, which resolves the
+# same in the source tree and in the installed layout.
+cp -a "${BROWSER_SRC}/apps/browser/qml/icons"        "${S}/usr/share/atlantic-browser/"
 mkdir -p "${S}/usr/share/atlantic-browser/shared"
 cp -a "${BROWSER_SRC}/apps/shared/"*.qml             "${S}/usr/share/atlantic-browser/shared/"
 cp -a "${BROWSER_SRC}/apps/shared/"*.js              "${S}/usr/share/atlantic-browser/shared/"
