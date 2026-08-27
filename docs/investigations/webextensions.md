@@ -3,7 +3,8 @@
 > **Status: IMPLEMENTED, not yet device-verified.** Landed in
 > `atlantic-browser/apps/wpe/WebExtension*` plus `qml/pages/ExtensionsPage.qml`.
 > Nothing in the engine repo changed — this is entirely UI-process work on top of
-> APIs WPE WebKit 2.52 already exposes.
+> APIs WPE WebKit 2.52 already exposes. `cookies`, `history` and `bookmarks`
+> landed later than the rest and are the least exercised part (§3d).
 
 **Date:** 2026-08-27
 
@@ -23,6 +24,8 @@ lists them, toggles them, removes them and installs new ones from a file.
 | Background context (JSC) | `WebExtensionBackground.h/.cpp` |
 | `browser.*` / `chrome.*` shim + background polyfills (JS) | `WebExtensionScripts.h` |
 | Tab APIs | `WPEWebContainer` implements `WebExtensionHost` |
+| `cookies` | `WebExtensionCookies.cpp` over the default session's `WebKitCookieManager` |
+| `history`, `bookmarks` | `WebExtensionBrowsingData.cpp` over `DBManager` and the live `DeclarativeBookmarkModel` |
 | UI | `apps/browser/qml/pages/ExtensionsPage.qml` |
 | Catalog + AMO client | `WebExtensionStore.h/.cpp`, `data/extension-catalog.json`, `qml/pages/ExtensionStorePage.qml` |
 
@@ -153,8 +156,10 @@ every row — catalog and search result alike — against two tables:
 
 - **broken**: `webRequest`, `webRequestBlocking`, `declarativeNetRequest`,
   `proxy`, `dns` — the add-on's whole point is something we do not do.
-- **partial**: `contextMenus`, `scripting`, `cookies`, `history`, … — it loses a
-  feature, not its purpose.
+- **partial**: `downloads`, `webNavigation`, `management`, `idle`, … — it loses
+  a feature, not its purpose. `contextMenus`, `scripting`, `cookies`, `history`
+  and `bookmarks` have been taken *out* of this table as they landed; the table
+  is the one the store reads, so it has to track what is actually implemented.
 
 Catalog entries carry a reviewed verdict plus a hand-written note; search results
 get the derived one. `verified: false` on every catalog entry today means nobody
@@ -210,7 +215,7 @@ the whole background script instead of degrading one feature.
 | API | Why |
 |---|---|
 | `webRequest`, `declarativeNetRequest` | Network blocking lives in the Rust adblock WebProcess extension (`web-extension/`), which sees every subresource. The UI process does not, and there is no supported way to hand a per-request veto to extension JS across that boundary. Re-opening this means designing an IPC path from the WebProcess extension into the UI process on the hot request path — measure before believing it is affordable. |
-| `cookies`, `downloads`, `history`, `bookmarks`, `proxy`, `idle` | Not wired to the corresponding Atlantic subsystems yet; each is a self-contained follow-up. `cookies` is the closest — `webkit_cookie_manager_get_cookies`/`add_cookie`/`delete_cookie` are all present and the manager is already set up. |
+| `downloads`, `proxy`, `idle` | Not wired to the corresponding Atlantic subsystems. `downloads` is the closest of the three: `DownloadManager` already drives every transfer, but it keeps no queryable record, so `search`/`erase` would need a store before `download` is worth having on its own. (`cookies`, `history` and `bookmarks` used to be in this row — see §3d.) |
 | `management` beyond `getSelf` | An extension may ask about itself; enumerating or disabling others is deliberately not offered. |
 | MV3 service-worker lifecycle | No worker, no `onInstalled` update reasons, no event-driven wake. `runtime.onStartup` fires on every launch. |
 | Anchored action popups | Popups open as an ordinary tab. |
@@ -280,6 +285,62 @@ indistinguishable, from the extension's side, from an API that silently does
 nothing. `action.setBadgeText` is still in that state — the state is stored, but
 there is no toolbar surface to draw a badge on.
 
+## 3d. cookies, history and bookmarks
+
+All three are implemented, each against the browser's own subsystem rather than
+a store of its own. Permission gating follows the real browsers: `cookies` needs
+the `cookies` permission *and* host access to the cookie's URL; `history` and
+`bookmarks` are covered by their permission alone.
+
+**`cookies`** (`WebExtensionCookies.cpp`) sits on the default network session's
+`WebKitCookieManager`. `get`/`getAll` come from
+`webkit_cookie_manager_get_cookies` (a URL was given) or `get_all_cookies` (it
+was not), and the results are filtered twice: by the caller's `details`, and by
+host access — a cookie the extension may not see is dropped from the list rather
+than failing the call. `set` builds a `SoupCookie`; `remove` reads the cookie
+first so it can hand back what it deleted, as the API promises.
+
+Three things are worth knowing before touching it:
+
+- **One store.** Private tabs run on an ephemeral session, and it is not
+  exposed: `getAllCookieStores` reports `"0"` only, and any other `storeId` is
+  an error rather than a silent read of the wrong jar.
+- **`onChanged` is not the browser's.** WebKit emits no cookie-change signal, so
+  the event fires for mutations that went through this API and never for a
+  cookie a page set. An extension that watches for third-party cookies being
+  written will see nothing.
+- **`add_cookie`/`delete_cookie` copy into a `WebCore::Cookie` before they
+  return**, so the `SoupCookie` is ours to free straight after the call; the
+  async callback must not touch it.
+
+**`history`** goes through `DBManager`. The existing `getHistory()` was no use:
+it hard-limits to 20 rows, drops `visited_count`, keeps only a `QDate`, and
+answers on a **broadcast** signal that the history page also consumes, so
+replies could not be told apart. `DBWorker::searchHistory()` was added instead —
+tagged with a request id, ranged, with a caller-chosen limit, returning
+`lastVisitTime` in ms and `visitCount` — plus `deleteHistoryRange()`.
+
+The shape that does not survive: Atlantic stores **one row per URL**, not one
+row per visit. `getVisits()` therefore reports a single visit (the last one)
+with the real count alongside, instead of inventing timestamps for the visits in
+between. `onVisited` is fired from the load-finished handler in `WPEWebPage`,
+which is when the visit is actually recorded — and never for a private tab,
+which records nothing.
+
+**`bookmarks`** writes through the live `DeclarativeBookmarkModel`, not through
+`BookmarkManager::save()`. Saving the file directly would have been simpler and
+wrong: the QML model holds its own copy of the list and saves over it on the
+next change, so an extension's bookmark would vanish at the next edit.
+`DeclarativeBookmarkModel::primaryInstance()` (first model created wins) is how
+the host reaches it.
+
+Bookmarks are a flat list, so the tree is synthesised: a root with one folder
+(`toolbar_____`) holding everything. `create` refuses to make folders rather
+than quietly making a bookmark instead, `move` is unsupported, and ids are
+opaque `atl-bm-N` strings that stay stable for the session. There are no
+creation timestamps in the store, so `dateAdded` is 0 and `getRecent` answers in
+list order — honest, and not what a real bookmark store would say.
+
 ## 4. Things that bit, worth not rediscovering
 
 - **`signals`.** Any header that pulls in GLib after Qt has to be wrapped in
@@ -342,6 +403,20 @@ AMO's current permissions, which is the guard against catalog rot — an add-on
 that picks up `webRequest` in a later release would otherwise go on being
 recommended. It parses the API tables out of `WebExtensionStore.cpp` rather than
 copying them, so the test cannot drift from the shipped rule.
+
+`cookies`, `history` and `bookmarks` need their own pass — nothing about them
+has run on the device:
+
+9. From a background page with `cookies` + a host permission: `getAll` for that
+   host, `set` a cookie, read it back with `get`, `remove` it, and check that
+   `onChanged` fired twice. Then `getAll` with no `url` and confirm hosts the
+   extension has no permission for are absent from the list.
+10. With `history`: browse two pages, then `search({text})` and check the visit
+    counts and `lastVisitTime`; `deleteUrl` one of them and confirm it leaves
+    the history page too. Browse in a private tab and confirm no `onVisited`.
+11. With `bookmarks`: `create`, then check the bookmark appears in the UI
+    *without* a restart (that is the whole reason it writes through the model),
+    `update` it, `remove` it.
 
 Store-specific device checks, on top of the five above:
 

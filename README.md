@@ -40,6 +40,12 @@ repo `SpecSierra/atlantic-browser`; the two ship together.
 
 Full layout: [docs/BUILD.md](docs/BUILD.md).
 
+`web-extension/` is the **WebProcess** extension that runs the network blocker — not
+WebExtensions support. Browser add-ons (MV2 / MV3 subset, installed from
+addons.mozilla.org) are entirely UI-process work in `atlantic-browser/apps/wpe/WebExtension*`;
+nothing in this repo implements them. Design, limits and the device-verification plan:
+[docs/investigations/webextensions.md](docs/investigations/webextensions.md).
+
 ## Working rules
 
 - **Reproduce on device before changing behaviour** — no behaviour change on a theory.
