@@ -137,10 +137,33 @@ before the package is handed to `WebExtensionManager::install()`. A mismatch
 refuses the install. The one path without that check is the deliberate escape
 hatch — pasting a direct `.xpi` URL — and the UI says so in the dialog.
 
-Verified against the live API while building this: `.xpi` is a plain `PK` zip
-with `manifest.json` at the root (so `QZipReader` handles it directly),
-`name`/`summary` come back as `{"en-US": …}` objects even with `lang=` set, and
-`current_version.file` is singular in v5 (older responses use `files[]`).
+Verified against the live API while building this: `name`/`summary` come back as
+`{"en-US": …}` objects even with `lang=` set, and `current_version.file` is
+singular in v5 (older responses use `files[]`).
+
+**AMO packages need their own extractor — `QZipReader` cannot read them.** This
+cost a device round trip. Mozilla's signing pipeline repacks add-ons as
+*streamed* zips: general-purpose flag bit 3 is set on every entry, so each local
+file header carries `crc = 0`, `compressed size = 0`, `uncompressed size = 0`,
+with the real values in a data descriptor after the data and in the central
+directory. Qt 5.6's `QZipReader` takes its sizes from the local header, so it
+reports the right entry count, extracts exactly one file and then fails the
+archive — surfacing as "darkreader.xpi is not a readable extension archive".
+
+The check that missed it was mine: I confirmed the format with Python's
+`zipfile`, which reads the central directory and therefore sails through. **A
+format check has to be run with the reader that will actually do the reading.**
+`WebExtensionArchive` takes everything from the central directory, which is
+correct for streamed and ordinary zips alike, and rebases every offset on the
+delta between where the central directory claims to be and where it is — which
+also makes a `Cr24`-prefixed `.crx` work, so the `*.crx` file filter is no
+longer a claim we cannot back.
+
+Measured after the fix, running the real extractor over real packages: Dark
+Reader 93 files / 3.1 MB, uBlock Origin 659 files / 15.6 MB, a `.crx`-prefixed
+copy, and a `../../../../etc/pwned` archive refused outright. The old path on
+the same Dark Reader package: `isReadable=1`, `entries=93`, `extractAll=0`, one
+file written.
 
 ## 3. What is deliberately not supported
 
