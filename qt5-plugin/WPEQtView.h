@@ -80,8 +80,8 @@ public:
 
     WebKitWebView* webView() const;
 
-    void setUserAgent(const QString& userAgent);
-    void setDeviceScaleFactor(qreal scale);
+    Q_INVOKABLE void setUserAgent(const QString& userAgent);
+    Q_INVOKABLE void setDeviceScaleFactor(qreal scale);
 
     // Drives the WPE activity state (visible+focused) so WebKit throttles
     // hidden pages: rAF stops and DOM timers align once the page is no longer
