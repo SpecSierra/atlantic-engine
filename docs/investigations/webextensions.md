@@ -45,7 +45,42 @@ That is the same isolation the password-autofill bridge already relies on
 `run_at: document_idle` has no WebKit equivalent and is mapped to
 document-end, which is what the other WebKit ports do.
 
-### The background context is JavaScriptCore, not a hidden web view
+### The background context is a hidden web view (with a JSC fallback)
+
+**This reverses the original decision below, and the reversal was earned on the
+device.** Background scripts first ran in a bare `JSCContext`. That is enough for
+service-worker-shaped extensions — the smoke-test extension round-trips content
+script to background and back under it — and it is not enough for the many
+Firefox extensions whose background is an MV3 *event page*: a real document with
+DOM, `localStorage`, `Blob`, `Worker`, `XMLHttpRequest` and IndexedDB.
+LanguageTool is one, reaching for `document` 52 times.
+
+How that failure looked, which is worth knowing because none of it says "no
+DOM": the background script ran to completion, registered its listener, received
+`CHECK_TEXT` with the right text, returned a promise — and that promise never
+settled. No exception, no rejection, no network call, and a recording Proxy
+showed it touching no DOM global at all during the check. It had simply settled
+into a permanent not-ready state during initialisation, and every check queued
+behind it in silence.
+
+So a background page now gets a genuine `WebKitWebView` that is never displayed,
+built on a **non-EGL** `wpe_view_backend_exportable_fdo` whose exported frames
+are released and acknowledged immediately. WebKit believes it has a compositor
+and lays out and paints as usual; the pixels go nowhere. Every frame must be
+acked or painting stops after the first one and anything gated on rendering
+stalls — the same trap in a different costume.
+
+`background.scripts` extensions get a synthesised
+`_generated_background_page.html` from the scheme handler, exactly as Chrome and
+Firefox do. The page runs the same API shim as any extension page, posting over
+`window.webkit.messageHandlers`, so the manager's routing did not change: a null
+page still means "the background context".
+
+Cost: a WebProcess per background page. That is the price of running an
+extension the way it was written. The JSC host stays as the fallback for when an
+offscreen backend cannot be created, and its polyfills below still apply there.
+
+### Why it was JavaScriptCore first
 
 The obvious design — an offscreen `WebKitWebView` loading a generated background
 page — needs a real `wpe_view_backend`, which on this platform means a working
