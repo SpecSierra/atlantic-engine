@@ -175,8 +175,8 @@ the whole background script instead of degrading one feature.
 | API | Why |
 |---|---|
 | `webRequest`, `declarativeNetRequest` | Network blocking lives in the Rust adblock WebProcess extension (`web-extension/`), which sees every subresource. The UI process does not, and there is no supported way to hand a per-request veto to extension JS across that boundary. Re-opening this means designing an IPC path from the WebProcess extension into the UI process on the hot request path — measure before believing it is affordable. |
-| `webNavigation` | Would need per-frame navigation signals we do not surface. |
-| `cookies`, `downloads`, `history`, `bookmarks`, `management`, `proxy`, `idle` | Not wired to the corresponding Atlantic subsystems yet; each is a self-contained follow-up. |
+| `cookies`, `downloads`, `history`, `bookmarks`, `proxy`, `idle` | Not wired to the corresponding Atlantic subsystems yet; each is a self-contained follow-up. `cookies` is the closest — `webkit_cookie_manager_get_cookies`/`add_cookie`/`delete_cookie` are all present and the manager is already set up. |
+| `management` beyond `getSelf` | An extension may ask about itself; enumerating or disabling others is deliberately not offered. |
 | MV3 service-worker lifecycle | No worker, no `onInstalled` update reasons, no event-driven wake. `runtime.onStartup` fires on every launch. |
 | Anchored action popups | Popups open as an ordinary tab. |
 
@@ -220,6 +220,31 @@ only, as in Chrome.
 Not covered: submenus are flattened (`parentId` is recorded and reported in
 `info`, but the panel is one level), and `onShown`/`onHidden` stay inert.
 
+## 3c. Later additions
+
+- **`runtime.onInstalled`** now fires. The registry records each extension's
+  version, so a first sighting reports `install` and a version change reports
+  `update` with `previousVersion`. Both are emitted only after every background
+  context is up and its listeners registered, then the registry is written so
+  the same event is not replayed next launch. `onStartup` moved out of
+  `WebExtensionBackground::start()` to the manager for that ordering — leaving
+  it in place would have fired it twice.
+- **`webNavigation`** rides the load-changed states already connected on each
+  view: `onBeforeNavigate`, `onCommitted`, `onCompleted`. Main frame only, and
+  the frame-scoped calls answer for frame 0 — WebKit gives us no per-subframe
+  signal here, and inventing frame ids would be worse than reporting none.
+  Delivered only to extensions with host access or the `webNavigation`
+  permission.
+- **`management.getSelf`**; the rest of that namespace stays refused on purpose.
+- **`notifications.create`** actually shows something. It had been resolving
+  with an id and emitting `notificationRequested` into thin air — nothing was
+  connected. `BrowserPage.qml` now publishes a Nemo notification.
+
+The last one is worth generalising into a habit: a signal with no consumer is
+indistinguishable, from the extension's side, from an API that silently does
+nothing. `action.setBadgeText` is still in that state — the state is stored, but
+there is no toolbar surface to draw a badge on.
+
 ## 4. Things that bit, worth not rediscovering
 
 - **`signals`.** Any header that pulls in GLib after Qt has to be wrapped in
@@ -230,6 +255,15 @@ Not covered: submenus are flattened (`parentId` is recorded and reported in
 - **Qt 5.6.3, not 5.15.** No `QString::chopped`, no `qAsConst`, and
   `QNetworkAccessManager::sendCustomRequest` has no `QByteArray` overload — it
   needs a `QIODevice` that outlives the call.
+- **The upstream WebExtensions API is present but hollow.** WPE 2.52 installs
+  `WebKitWebExtension.h` and `WebKitWebExtensionMatchPattern.h`, and the symbols
+  are in `libWPEWebKit-2.0.so` — but `ENABLE_WK_WEB_EXTENSIONS` defaults OFF and
+  the `#else` branch compiles every entry point as `return nullptr`. Measure the
+  symbol sizes before believing it: ours are 8 and 12 bytes, and there are zero
+  `WebExtensionMatchPattern` implementation symbols in the library. Even with
+  the flag on, `UIProcess/Extensions/API/glib` and `API/wpe` are empty
+  directories — there is no controller API, so the extension engine itself is
+  not reachable from this port and the browser has to be it.
 - **`QByteArray + gchar*` is ambiguous**, and one of the candidates is pointer
   arithmetic. `QByteArray("[") + json + "]"` compiles with a warning and could
   have silently produced garbage; build it with explicit `append()` calls.
