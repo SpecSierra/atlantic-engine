@@ -132,6 +132,10 @@ async def _select(targets, prefer_visible, match):
     match: substring to require in the tab URL.  prefer_visible: pick the tab
     whose document is not hidden (the foreground one), else the first.
     """
+    # WebExtension background pages are offscreen views that always report
+    # document.hidden=false, so they would win the visible-tab race.
+    if not match:
+        targets = [t for t in targets if not t["url"].startswith("atlantic-extension://")] or targets
     cands = [t for t in targets if (match.lower() in t["url"].lower())] if match else targets
     if not cands:
         raise RuntimeError(f"no inspectable tab matches {match!r}; tabs: "
