@@ -1,6 +1,6 @@
 # Hardware video decode on the Jolla Phone 2 — plan
 
-Status: **PLAN** (2026-09-25). Today the Jolla runs software decode, set
+Status: **PLAN, phase 0 DONE: hypothesis DISPROVEN** (2026-09-25). Today the Jolla runs software decode, set
 automatically by the Codec2-only detection (engine `f5bd9de`, browser `8811ff52`).
 The Xperia 10 II must keep working through every step below: it is still a
 shipping target.
@@ -36,7 +36,31 @@ own apps never exercise. **Hypothesis: the no-surface copy mode is what hangs.**
 
 ## Phases
 
-### 0. Confirm the hypothesis outside the browser (1 day, low risk)
+### 0 — RESULT (2026-09-25): the decoder works in every setup outside Atlantic
+
+1080p H.264 10 s clip from `/tmp`, `gst-launch-1.0` (gstreamer1.0-tools), no hang in any run:
+
+| Run | Result |
+|---|---|
+| B: `droidvdec ! video/x-raw(memory:DroidMediaQueueBuffer) ! fakesink` | 300 frames in 3.1 s, EOS. `hal_format 0x7f000789` (opaque, so option 2a is a dead end) |
+| A: `droidvdec ! video/x-raw,format=I420 ! fakesink` (copy mode, what WebKit gets) | 300 frames in 3.0 s, EOS. Codec reports colour 19 (planar I420), plain memcpy, no convert library needed |
+| A + Atlantic's full env (3 LD_PRELOAD shims, wpe-compat LD_LIBRARY_PATH, all exports, Atlantic ranks) | 300 frames in 3.0 s, EOS |
+| `playbin3 uri=file://… video-sink="fakesink sync=true"` + Atlantic env/ranks | autoplugs `droidvdec0`, plays in real time (10 s), EOS |
+
+The `mapper.mediatek.so … not accessible` and `libandroidicu` linker warnings show
+up in every one of these working runs too, so they're noise.
+
+**So the hang is inside the WebProcess, not in droidvdec/droidmedia/Codec2, the
+output mode, the preloads, or playbin3 autoplugging.** What's left: WebKit's
+own elements (`webkitwebsrc` HTTP source, WebKit's video sink/appsink and buffer
+pool), in-process state (hybris EGL + the Mali driver already live in the process;
+the seccomp filter is already ruled out), or the browser's memory cgroup. Phase 2
+(native buffers) is therefore **not needed** for correctness, and the real fix is
+likely much smaller. Next step: one hang inside Atlantic with gdb, interrupt it
+and take `thread apply all bt` of the stuck codec threads (instead of waiting for
+the ~10 s crash), then `file://` vs `https://` to split the source.
+
+### 0 (original). Confirm the hypothesis outside the browser (1 day, low risk)
 Install `gstreamer1.0-tools` (jolla repo, 335 KB; ask first) and run, one at a
 time, with `timeout 20`, a local 10 s H.264 file from `/tmp`:
 

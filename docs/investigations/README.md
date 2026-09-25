@@ -27,7 +27,7 @@ concludes, add a status header and move it here.
 | [video-fullscreen-choppiness.md](video-fullscreen-choppiness.md) | resolved (607) — compositor futex-blocked on a main-thread-held layer lock; 8 other theories ruled out |
 | [video-presentation-decoupling.md](video-presentation-decoupling.md) | shipped — handover for the same work |
 | [video-playback.md](video-playback.md) | shipped — `droidvdec` hardware decode |
-| [jolla-hw-video-decode.md](jolla-hw-video-decode.md) | plan — HW decode on the Jolla Phone 2 (Codec2; droidvdec hangs in copy mode) |
+| [jolla-hw-video-decode.md](jolla-hw-video-decode.md) | plan — HW decode on the Jolla Phone 2 (droidvdec works standalone; hangs only inside the WebProcess) |
 
 ## Layout / input
 
