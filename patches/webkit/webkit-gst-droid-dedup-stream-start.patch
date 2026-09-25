@@ -1,0 +1,83 @@
+# droidvdec (gst-droid) drain deadlock on a duplicate STREAM_START.
+#
+# GstVideoDecoder drains on STREAM_START while holding its stream lock;
+# gst_droidvdec_drain() takes it again and gst_droidvdec_finish() releases it only
+# once before waiting for the codec's EOS, so the codec's data_available() callback
+# blocks on the lock forever. Legacy playbin (decodebin2) delivers the SAME
+# stream-start event twice (same pointer, same seqnum), the second time right after
+# caps have created the codec. On OMX vendors (Xperia 10 II) that drain finishes
+# without output and nothing happens; on Codec2 vendors (Jolla Phone 2, Android 16)
+# every regular <video> hangs at HAVE_NOTHING and the WebProcess dies ~10 s later.
+# playbin3 (MSE/blob/MediaStream) doesn't send the duplicate.
+#
+# A sink-pad probe on droidvdec drops a stream-start identical to the one already
+# stored on the pad (same event, or same stream-id and group-id). Device-verified
+# with a standalone playbin harness on the Jolla: no probe = hang, probe = EOS with
+# all 600 frames HW-decoded and a clean teardown.
+# WEBKIT_GST_DROID_KEEP_DUPLICATE_STREAM_START=1 disables the probe.
+#
+# ---
+diff --git a/Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp b/Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp
+--- a/Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp
++++ b/Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp
+@@ -3775,6 +3775,47 @@
+         configureMediaStreamAudioDecoder(decoder);
+ }
+ 
++// gst-droid's droidvdec deadlocks when a STREAM_START reaches it after its codec
++// has been created: GstVideoDecoder drains with the stream lock held,
++// gst_droidvdec_drain() takes that lock again, and gst_droidvdec_finish() releases
++// it only once before waiting for the codec's EOS. The codec's data_available()
++// callback then blocks on the lock forever. Legacy playbin (decodebin2) delivers
++// the SAME stream-start event twice (same event, same seqnum), the second time
++// right after caps have created the codec. On OMX vendors (Xperia 10 II) the
++// drain completes without output, so nothing happens. On Codec2 vendors (Jolla
++// Phone 2) every regular <video> hangs, and the WebProcess dies ~10 s later.
++// Dropping a stream-start identical to the one already stored on the pad changes
++// nothing else. WEBKIT_GST_DROID_KEEP_DUPLICATE_STREAM_START=1 disables this.
++static GstPadProbeReturn dropDuplicateStreamStartProbe(GstPad* pad, GstPadProbeInfo* info, gpointer)
++{
++    auto* event = GST_PAD_PROBE_INFO_EVENT(info);
++    if (GST_EVENT_TYPE(event) != GST_EVENT_STREAM_START)
++        return GST_PAD_PROBE_OK;
++
++    GRefPtr<GstEvent> current = adoptGRef(gst_pad_get_sticky_event(pad, GST_EVENT_STREAM_START, 0));
++    if (!current)
++        return GST_PAD_PROBE_OK;
++
++    if (current.get() != event) {
++        const gchar* currentStreamId = nullptr;
++        const gchar* streamId = nullptr;
++        gst_event_parse_stream_start(current.get(), &currentStreamId);
++        gst_event_parse_stream_start(event, &streamId);
++        if (g_strcmp0(currentStreamId, streamId))
++            return GST_PAD_PROBE_OK;
++
++        guint currentGroupId = 0;
++        guint groupId = 0;
++        bool currentHasGroupId = gst_event_parse_group_id(current.get(), &currentGroupId);
++        bool hasGroupId = gst_event_parse_group_id(event, &groupId);
++        if (currentHasGroupId != hasGroupId || currentGroupId != groupId)
++            return GST_PAD_PROBE_OK;
++    }
++
++    GST_DEBUG_OBJECT(pad, "Dropping duplicate stream-start to avoid the droidvdec drain deadlock");
++    return GST_PAD_PROBE_DROP;
++}
++
+ void MediaPlayerPrivateGStreamer::configureVideoDecoder(GstElement* decoder)
+ {
+     auto name = GMallocString::unsafeAdoptFromUTF8(gst_element_get_name(decoder));
+@@ -3796,6 +3837,12 @@
+     if (gstObjectHasProperty(decoder, "max-errors"_s))
+         g_object_set(decoder, "max-errors", 0, nullptr);
+ 
++    if (gstElementFactoryEquals(decoder, "droidvdec"_s) && g_strcmp0(g_getenv("WEBKIT_GST_DROID_KEEP_DUPLICATE_STREAM_START"), "1")) {
++        GRefPtr sinkPad = adoptGRef(gst_element_get_static_pad(decoder, "sink"));
++        if (sinkPad)
++            gst_pad_add_probe(sinkPad.get(), GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, dropDuplicateStreamStartProbe, nullptr, nullptr);
++    }
++
+ #if USE(TEXTURE_MAPPER)
+     updateTextureMapperFlags();
+ #endif

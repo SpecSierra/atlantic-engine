@@ -59,6 +59,8 @@ readonly WEBKIT_SOURCE_PATCHES=(
     "patches/webkit/webkit-kinetic-fling.patch"
     "patches/webkit/webkit-scrollbar.patch"
     "patches/webkit/webkit-gst-media.patch"
+    # AFTER gst-media (MediaPlayerPrivateGStreamer.cpp).
+    "patches/webkit/webkit-gst-droid-dedup-stream-start.patch"
     "patches/webkit/webkit-wpe-dark-mode-runtime.patch"
     "patches/webkit/webkit-wpe-page-scale-api.patch"
     # AFTER page-scale-api: both append to the end of WebKitWebView.cpp.

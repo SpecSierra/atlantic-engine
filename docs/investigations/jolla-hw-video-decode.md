@@ -1,6 +1,6 @@
 # Hardware video decode on the Jolla Phone 2 — plan
 
-Status: **PLAN, phase 0 DONE: hypothesis DISPROVEN** (2026-09-25). Today the Jolla runs software decode, set
+Status: **ROOT-CAUSED + FIX IN CI** (2026-09-25): gst-droid drain deadlock on a duplicate STREAM_START from legacy playbin. Fix = `patches/webkit/webkit-gst-droid-dedup-stream-start.patch`. The Codec2 auto-SW fallback stays until the fix is device-verified in Atlantic. Today the Jolla runs software decode, set
 automatically by the Codec2-only detection (engine `f5bd9de`, browser `8811ff52`).
 The Xperia 10 II must keep working through every step below: it is still a
 shipping target.
@@ -35,6 +35,32 @@ without the convert library, and a Codec2 codec with no surface is a path Jolla'
 own apps never exercise. **Hypothesis: the no-surface copy mode is what hangs.**
 
 ## Phases
+
+### Root cause (2026-09-25)
+
+A gdb snapshot of the hung WebProcess shows a deadlock inside gst-droid:
+`multiqueue0:src` is inside droidvdec handling an event from h264parse,
+waiting on `state_cond`, and the codec's output thread `droidvdec0:src` is
+stuck in `pthread_mutex_lock`. The GStreamer log (GST_DEBUG_FILE via `atldbg
+launch --env`) shows `stream-start` → caps (codec created) → a **second
+`stream-start`**, which is the SAME event (same pointer, seqnum 60, same
+stream-id). GstVideoDecoder drains on STREAM_START with its stream lock held.
+`gst_droidvdec_drain()` locks it again, and `gst_droidvdec_finish()` unlocks only
+once, then waits for EOS. `data_available()` needs the lock, so it's a deadlock.
+
+- WebKit uses **legacy `playbin`** for regular `<video src>` (playbin3 only for
+  MSE/blob/MediaStream or `WEBKIT_GST_USE_PLAYBIN3=1`). Legacy playbin sends the
+  duplicate; playbin3 does not.
+- Reproduced outside Atlantic: `gst-launch-1.0 playbin uri=file://…` hangs.
+  `playbin3` plays.
+- `WEBKIT_GST_USE_PLAYBIN3=1` makes HW decode work in Atlantic (575 frames, 0
+  dropped) but **breaks HLS** (MEDIA_ERR_SRC_NOT_SUPPORTED, even with software
+  decode), so it isn't the fix.
+- Fix: a droidvdec sink-pad probe drops a stream-start identical to the stored
+  one. Standalone harness (playbin + GMainLoop + the same probe) on the Jolla: no
+  probe = hang; probe = EOS, 600/600 frames HW-decoded, clean teardown. The
+  harness MUST run a GMainLoop: without one, even playbin3 hangs and teardown
+  segfaults in a binder thread (a harness artefact, not a bug).
 
 ### 0 — RESULT (2026-09-25): the decoder works in every setup outside Atlantic
 
