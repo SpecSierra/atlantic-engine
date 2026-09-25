@@ -154,7 +154,7 @@ Brave Search. Static, only needs touching if the endpoint changes.
 
 | Component | Ours | Upstream | Action |
 |---|---|---|---|
-| WPE WebKit | 2.54.0 | 2.54.0 | ✅ current — bumped 2026-09-25 (unbuilt, not device-verified) |
+| WPE WebKit | 2.54.0 | 2.54.0 | ✅ current — bumped 2026-09-25, CI green (run 36134457003), not yet device-verified |
 | libwpe | 1.17.0 @ `445a0b55` | main; latest tag 1.16.3 | ✅ pinned 2026-08-18 |
 | WPEBackend-fdo | 1.17.0 @ `84492327` | main; latest tag 1.16.1 | ✅ pinned 2026-08-18 |
 | libepoxy | 1.5.11 @ `1b6d7db1` | main; latest tag 1.5.10 | ✅ pinned 2026-08-18 |
