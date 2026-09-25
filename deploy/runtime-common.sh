@@ -39,7 +39,32 @@ ATLANTIC_GSTREAMER_PLUGIN_DIR="${ATLANTIC_GSTREAMER_PLUGIN_DIR:-${ATLANTIC_RUNTI
 # droidadec. Software audio decode (avdec_aac via libgstlibav) is cheap and
 # device-verified working.
 #
-# Set ATLANTIC_DISABLE_HW_DECODER=1 to force the all-software decode path.
+# droidmedia only drives OMX codecs. Vendors on Android 13+ (the Jolla Phone 2:
+# MT6858, Android 16 vendor, SFOS 5.2) list Codec2 decoders only, and there
+# droidvdec crashes the WebProcess on ANY <video> page right after libmedia.so
+# loads (missing libandroidicu / apexcodecs). Device-verified: with droidvdec:0
+# there are no crashes and 1080p H.264 plays in software with 0 dropped frames.
+# So when ATLANTIC_DISABLE_HW_DECODER is unset, turn HW decode off automatically
+# if the vendor lists no OMX video decoder. Only <MediaCodec> names count: the
+# Codec2 list keeps OMX names as <Alias> entries (OMX.MTK.VIDEO.DECODER.AVC under
+# c2.mtk.avc.decoder), and droidmedia can't use those. If no codec list can be read, keep HW
+# decode as before, which is what the Xperia 10 II (Qualcomm OMX) relies on.
+#
+# Set ATLANTIC_DISABLE_HW_DECODER=1 to force the all-software decode path, or =0
+# to force HW decode past the auto-detection.
+atlantic_vendor_lacks_omx_video() {
+    set -- /vendor/etc/media_codecs*.xml /odm/etc/media_codecs*.xml
+    found_list=0
+    for f in "$@"; do
+        [ -r "${f}" ] || continue
+        found_list=1
+        grep -qiE '<MediaCodec[^>]*name="OMX\.[^"]*video[^"]*decoder' "${f}" && return 1
+    done
+    [ "${found_list}" = "1" ]
+}
+if [ -z "${ATLANTIC_DISABLE_HW_DECODER:-}" ] && atlantic_vendor_lacks_omx_video; then
+    ATLANTIC_DISABLE_HW_DECODER=1
+fi
 if [ "${ATLANTIC_DISABLE_HW_DECODER:-0}" = "1" ]; then
     ATLANTIC_GST_PLUGIN_FEATURE_RANK="${ATLANTIC_GST_PLUGIN_FEATURE_RANK:-droidvdec:0,droidvenc:0,droidadec:0}"
 else

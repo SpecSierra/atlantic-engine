@@ -33,6 +33,13 @@ Key facts:
 `atlantic-engine/deploy/runtime-common.sh`:
 - Default flipped to **enable `droidvdec` (rank 300)**, `droidvenc` off, software
   as automatic fallback. Kill-switch: `ATLANTIC_DISABLE_HW_DECODER=1`.
+- **Codec2-only vendors (Jolla Phone 2, Android 16):** droidvdec crashes the
+  WebProcess on any `<video>` page, because droidmedia only drives OMX codecs.
+  When `ATLANTIC_DISABLE_HW_DECODER` is unset, both launch paths (wrapper in
+  `runtime-common.sh`, icon launch in the browser's `main.cpp`) turn HW decode off
+  if no `<MediaCodec name="OMX.*video*decoder">` exists in `/vendor/etc` or
+  `/odm/etc` `media_codecs*.xml` (Codec2 `<Alias>` OMX names don't count).
+  `=0` forces HW decode back on.
 - Added `WEBKIT_GST_VIDEO_DECODING_LIMIT=1920x1080@60` — blocks pathological 4K
   *software* VP9 (OOM risk) while leaving HW H.264/H.265 1080p60 in range.
 
