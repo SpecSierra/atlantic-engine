@@ -1,0 +1,168 @@
+# WEBKIT_TILE_RESET_LOG=1 (default OFF): diagnostic for black tiles under GPU
+# painting.
+#
+# On the Jolla Phone 2 (Mali-G610) with GPU tile painting, root-layer tiles show
+# black mid-fling while the page is still loading (Wikimedia Commons: black in
+# 3 of 6 cold runs, 0 of 6 once every image had loaded; never with CPU
+# painting). The compositor-side tile grid is intact, so the tiles exist but
+# their textures hold no painted content. Suspect: a PARTIAL update (dirty
+# sub-rect only) landing on a texture whose previous contents were just
+# discarded -- freshly acquired because the tile had none or a low-res one of
+# another size, reset on an alpha flip, or dropped by a tile-rect change.
+# Only the dirty rect is then written and the rest of the tile shows whatever
+# the pool texture held.
+#
+# Logs, to the WebProcess stderr:
+#   [tilereset] gpu|cpu partial reason=no-texture|size|alpha rect_reset=0|1 was_lowres=0|1 src=... tile=...
+#   [tilereset] skip-no-texture tiles=N of M   (tiles skipped at composite for lack of a texture)
+# Nothing is logged, and nothing changes, when the variable is unset.
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp	2026-09-25 23:40:18.470424886 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp	2026-09-25 23:40:49.432599617 +0000
+@@ -27,6 +27,8 @@
+ #include "TextureMapper.h"
+ #include "TextureMapperFlags.h"
+ #include <algorithm>
++#include <cstdio>
++#include <ctime>
+ #include <wtf/SystemTracing.h>
+ 
+ namespace WebCore {
+@@ -137,6 +139,7 @@
+     }();
+ #endif
+ 
++    unsigned skippedTiles = 0;
+     for (const auto& tile : m_tiles.values()) {
+         ASSERT(tile.scale() == m_scale);
+         // With the tile upload budget (WEBKIT_TILE_UPLOAD_BUDGET_MB) a freshly
+@@ -146,8 +149,11 @@
+         // texture unconditionally, which crashed the compositor thread (device
+         // core: drawTexture <- paintToTextureMapper, build 498). Skip such tiles;
+         // the gap shows the layer background until the deferred update drains.
+-        if (!tile.canBePainted())
++        if (!tile.canBePainted()) {
++            if (TileResetLog::enabled())
++                skippedTiles++;
+             continue;
++        }
+         const auto allEdgesExposed = allTileEdgesExposed(layerRect, tile.rect()) ? TextureMapper::AllEdgesExposed::Yes : TextureMapper::AllEdgesExposed::No;
+ 
+ #if ENABLE(DAMAGE_TRACKING)
+@@ -166,6 +172,12 @@
+ #endif
+         textureMapper.drawTexture(tile.texture(), tile.rect(), adjustedTransform, opacity, allEdgesExposed);
+     }
++
++    if (skippedTiles) {
++        struct timespec ts;
++        clock_gettime(CLOCK_MONOTONIC, &ts);
++        fprintf(stderr, "[tilereset] skip-no-texture tiles=%u of %u t=%.1f\n", skippedTiles, m_tiles.size(), ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6);
++    }
+ }
+ 
+ void CoordinatedBackingStore::drawBorder(TextureMapper& textureMapper, const Color& borderColor, float borderWidth, const FloatRect& targetRect, const TransformationMatrix& transform)
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp	2026-09-25 23:40:18.470424886 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp	2026-09-25 23:40:49.431599611 +0000
+@@ -28,6 +28,8 @@
+ #include <atomic>
+ #include <cstdlib>
+ #include <cstring>
++#include <ctime>
++#include <cstdio>
+ #include <wtf/MonotonicTime.h>
+ #include <wtf/SystemTracing.h>
+ 
+@@ -38,6 +40,47 @@
+ 
+ namespace WebCore {
+ 
++// WEBKIT_TILE_RESET_LOG=1 (default OFF, diagnostic): log every PARTIAL tile
++// update that lands on a texture whose previous contents were just discarded
++// (freshly acquired, reset, or dropped by a tile-rect change). Only the dirty
++// sub-rect is written into such a texture, so the rest of the tile shows
++// whatever the pool texture held -- the black root-layer tiles seen under GPU
++// painting on the Mali while a page is still loading.
++namespace TileResetLog {
++
++bool enabled()
++{
++    static const bool on = [] {
++        const char* env = getenv("WEBKIT_TILE_RESET_LOG");
++        return env && atoi(env);
++    }();
++    return on;
++}
++
++static const char* lossReason(const RefPtr<BitmapTexture>& texture, const IntSize& size, bool supportsAlpha)
++{
++    if (!texture)
++        return "no-texture";
++    if (texture->size() != size)
++        return "size";
++    if (supportsAlpha == texture->isOpaque())
++        return "alpha";
++    return nullptr;
++}
++
++static void logPartialOnLostTexture(const char* path, const char* reason, bool rectReset, bool wasLowRes, const IntRect& sourceRect, const IntRect& tileRect)
++{
++    struct timespec ts;
++    clock_gettime(CLOCK_MONOTONIC, &ts);
++    fprintf(stderr, "[tilereset] %s partial reason=%s rect_reset=%d was_lowres=%d src=%dx%d+%d+%d tile=%dx%d+%d+%d t=%.1f\n",
++        path, reason, rectReset ? 1 : 0, wasLowRes ? 1 : 0,
++        sourceRect.width(), sourceRect.height(), sourceRect.x(), sourceRect.y(),
++        tileRect.width(), tileRect.height(), tileRect.x(), tileRect.y(),
++        ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6);
++}
++
++} // namespace TileResetLog
++
+ namespace TileUploadBudget {
+ 
+ // Compositor-thread only (renderLayerTree -> flushCompositingState ->
+@@ -308,6 +351,8 @@
+         FloatRect unscaledTileRect(update.tileRect);
+         unscaledTileRect.scale(1. / m_scale);
+ 
++        const bool rectReset = unscaledTileRect != m_rect && m_texture;
++        const bool wasLowRes = m_isLowRes;
+         if (unscaledTileRect != m_rect) {
+             m_rect = unscaledTileRect;
+             m_texture = nullptr;
+@@ -332,6 +377,10 @@
+                 else
+                     m_texture = WTF::move(texture);
+             } else {
++                if (TileResetLog::enabled()) {
++                    if (auto* reason = TileResetLog::lossReason(m_texture, update.tileRect.size(), buffer.supportsAlpha()))
++                        TileResetLog::logPartialOnLostTexture("gpu", reason, rectReset, wasLowRes, update.sourceRect, update.tileRect);
++                }
+                 ensureTexture(update.tileRect.size(), buffer);
+                 m_texture->copyFromExternalTexture(texture->id(), update.sourceRect, toIntSize(update.bufferOffset));
+             }
+@@ -354,6 +403,10 @@
+         // copied into it 1:1.
+         const IntSize bufferSize = update.buffer->size();
+         bool lowResUpdate = update.sourceRect.size() == update.tileRect.size() && bufferSize != update.sourceRect.size();
++        if (TileResetLog::enabled() && !lowResUpdate && update.sourceRect.size() != update.tileRect.size()) {
++            if (auto* reason = TileResetLog::lossReason(m_texture, update.tileRect.size(), buffer.supportsAlpha()))
++                TileResetLog::logPartialOnLostTexture("cpu", reason, rectReset, wasLowRes, update.sourceRect, update.tileRect);
++        }
+         ensureTexture(lowResUpdate ? bufferSize : update.tileRect.size(), buffer);
+         m_isLowRes = lowResUpdate;
+ 
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h	2026-09-25 23:40:56.261638187 +0000
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h	2026-09-25 23:41:02.113671248 +0000
+@@ -97,6 +97,12 @@
+ void noteDeferred();
+ } // namespace TileUploadBudget
+ 
++// WEBKIT_TILE_RESET_LOG=1: diagnostic log of partial tile updates landing on a
++// discarded texture, and of tiles skipped at composite for lack of one.
++namespace TileResetLog {
++bool enabled();
++} // namespace TileResetLog
++
+ } // namespace WebCore
+ 
+ #endif // USE(COORDINATED_GRAPHICS)

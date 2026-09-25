@@ -10,11 +10,11 @@ Each patch carries its own rationale as a header comment at the top of the patch
 
 | | Count |
 |---|---|
-| Patches | 43 |
+| Patches | 44 |
 | …portability / build fixes | 4 |
-| …behaviour | 39 |
+| …behaviour | 40 |
 | Distinct source files touched | 1293 |
-| Env flags introduced | 97 |
+| Env flags introduced | 98 |
 
 ## Hot files
 
@@ -27,6 +27,9 @@ Files edited by more than one patch — every one is an ordering constraint.
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp` | 4 |
 | `Source/WebCore/page/scrolling/ScrollingTree.cpp` | 3 |
 | `Source/WebCore/page/scrolling/ScrollingTree.h` | 3 |
+| `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp` | 3 |
+| `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp` | 3 |
+| `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h` | 3 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp` | 3 |
 | `Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp` | 3 |
 | `Source/WebCore/page/EventHandler.cpp` | 2 |
@@ -34,10 +37,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | `Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp` | 2 |
 | `Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h` | 2 |
 | `Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h` | 2 |
-| `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp` | 2 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h` | 2 |
-| `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp` | 2 |
-| `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h` | 2 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp` | 2 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp` | 2 |
 | `Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.cpp` | 2 |
@@ -85,6 +85,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | 37 | `webkit-clipboard-qt-hook.patch` | 1 | `ATLANTIC_DISABLE_CLIPBOARD_BRIDGE` | make web clipboard writes reach the SFOS system clipboard. The libwpe pasteboard singleton is an in-process std::map stub in this fdo build (no _wpe_pasteboard_interface exported), so navigator.clipbo… |
 | 38 | `webkit-viewport-unit-font-size-zoom.patch` | 1 | `WEBKIT_FONT_SIZE_UNIT_UNZOOM` | fix font-size resolved from viewport (vw/vh/...) or container (cqw/cqi/...) percentage units coming out deviceScaleFactor times too large — db.no and vg.no headlines overflowing the viewport while eve… |
 | 39 | `webkit-pointerdown-cancel-keeps-click.patch` | 2 | — | Canceling pointerdown must not eat the tap's click. |
+| 40 | `webkit-tile-reset-log-env.patch` | 3 | `WEBKIT_TILE_RESET_LOG`<br>`WEBKIT_TILE_UPLOAD_BUDGET_MB` | WEBKIT_TILE_RESET_LOG=1 (default OFF): diagnostic for black tiles under GPU painting. |
 
 ## Portability / build fixes
 

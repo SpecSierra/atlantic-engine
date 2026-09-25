@@ -116,6 +116,11 @@ readonly WEBKIT_SOURCE_PATCHES=(
     "patches/webkit/webkit-viewport-unit-font-size-zoom.patch"
     # AFTER no-fake-mouse-move (same file: page/EventHandler.cpp).
     "patches/webkit/webkit-pointerdown-cancel-keeps-click.patch"
+
+    # --- Diagnostics -------------------------------------------------------
+    # AFTER tile-upload and scroll-degradation (CoordinatedBackingStoreTile.*,
+    # CoordinatedBackingStore.cpp).
+    "patches/webkit/webkit-tile-reset-log-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(
