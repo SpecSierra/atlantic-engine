@@ -112,6 +112,14 @@ diff --git a/Source/WebCore/Headers.cmake b/Source/WebCore/Headers.cmake
      dom/DeviceOrientationData.h
      dom/DeviceOrientationOrMotionPermissionState.h
      dom/Document.h
+@@ -1987,6 +1991,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
+     page/DebugPageOverlays.h
+     page/DeprecatedGlobalSettings.h
+     page/DeviceClient.h
++    page/DeviceController.h
+     page/DiagnosticLoggingClient.h
+     page/DiagnosticLoggingDomain.h
+     page/DiagnosticLoggingKeys.h
 diff --git a/Source/WebCore/dom/DeviceMotionController.cpp b/Source/WebCore/dom/DeviceMotionController.cpp
 --- a/Source/WebCore/dom/DeviceMotionController.cpp
 +++ b/Source/WebCore/dom/DeviceMotionController.cpp

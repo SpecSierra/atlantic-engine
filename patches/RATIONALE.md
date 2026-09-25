@@ -90,7 +90,7 @@ Any future merge or removal should be proven, not argued —
    intended patches and nothing else.
 
 Current stack hash (41 patches, 2.54.0):
-`459fd57818bc3077d84a14051c59a39e1806a0c11d1129d9a25a98fd6d1a0886`
+`a857c43c6e7667e6fa640cdcabfdecc7e02a703027728ff2ac27ecbced71f275`
 
 Hashes recorded before 2.54 are not comparable with this one: the script used to
 hash the `diff -ruN <base> <tree>` header lines, which carry absolute WORKDIR
