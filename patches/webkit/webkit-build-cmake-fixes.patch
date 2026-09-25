@@ -91,10 +91,10 @@ diff -ruN --no-dereference sq-A/Source/JavaScriptCore/CMakeLists.txt sq-B/Source
  add_dependencies(LowLevelInterpreterLib Bytecodes JSCBuiltins JSCWebPreferenceOptions)
  if (TARGET WTF_CopyHeaders)
      add_dependencies(LowLevelInterpreterLib WTF_CopyHeaders)
-diff -ruN --no-dereference sq-A/Source/JavaScriptCore/shell/CMakeLists.txt sq-B/Source/JavaScriptCore/shell/CMakeLists.txt
+diff --git a/Source/JavaScriptCore/shell/CMakeLists.txt b/Source/JavaScriptCore/shell/CMakeLists.txt
 --- a/Source/JavaScriptCore/shell/CMakeLists.txt
 +++ b/Source/JavaScriptCore/shell/CMakeLists.txt
-@@ -26,6 +26,16 @@
+@@ -24,6 +24,22 @@ endif ()
  
  WEBKIT_EXECUTABLE_DECLARE(jsc)
  
@@ -103,6 +103,12 @@ diff -ruN --no-dereference sq-A/Source/JavaScriptCore/shell/CMakeLists.txt sq-B/
 +        $<TARGET_OBJECTS:JavaScriptCore>
 +        $<TARGET_OBJECTS:LowLevelInterpreterLib>
 +    )
++    # 2.54 splits jit/dfg/ftl/bytecode/... into a JavaScriptCoreJIT object
++    # subtarget whose objects reach consumers only through JavaScriptCore's
++    # INTERFACE link, which this archive bypasses; archive them too.
++    if (TARGET JavaScriptCoreJIT)
++        target_sources(JavaScriptCoreShellArchive PRIVATE "$<FILTER:$<TARGET_OBJECTS:JavaScriptCoreJIT>,EXCLUDE,\\.(g|p)ch$>")
++    endif ()
 +    list(REMOVE_ITEM jsc_FRAMEWORKS JavaScriptCore)
 +    list(APPEND jsc_DEPENDENCIES JavaScriptCoreShellArchive)
 +    list(PREPEND jsc_LIBRARIES "-Wl,--whole-archive" JavaScriptCoreShellArchive "-Wl,--no-whole-archive")
