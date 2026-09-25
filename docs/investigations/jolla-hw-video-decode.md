@@ -1,6 +1,6 @@
 # Hardware video decode on the Jolla Phone 2 — plan
 
-Status: **ROOT-CAUSED + FIX IN CI** (2026-09-25): gst-droid drain deadlock on a duplicate STREAM_START from legacy playbin. Fix = `patches/webkit/webkit-gst-droid-dedup-stream-start.patch`. The Codec2 auto-SW fallback stays until the fix is device-verified in Atlantic. Today the Jolla runs software decode, set
+Status: **FIXED, verified on 712** (2026-09-25): gst-droid drain deadlock on a duplicate STREAM_START from legacy playbin, fixed by `patches/webkit/webkit-gst-droid-dedup-stream-start.patch`. HW decode is on for the Jolla; the Codec2 auto-software fallback has been removed.
 automatically by the Codec2-only detection (engine `f5bd9de`, browser `8811ff52`).
 The Xperia 10 II must keep working through every step below: it is still a
 shipping target.

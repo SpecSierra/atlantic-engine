@@ -39,33 +39,11 @@ ATLANTIC_GSTREAMER_PLUGIN_DIR="${ATLANTIC_GSTREAMER_PLUGIN_DIR:-${ATLANTIC_RUNTI
 # droidadec. Software audio decode (avdec_aac via libgstlibav) is cheap and
 # device-verified working.
 #
-# On vendors that list Codec2 decoders only (the Jolla Phone 2: MT6858, Android
-# 16 vendor, SFOS 5.2), droidvdec crashes the WebProcess on ANY <video> page right
-# after libmedia.so loads. droidmedia goes through android::MediaCodec, so Codec2
-# itself is reachable; the crash's root cause is still unknown (no backtrace yet).
-# Device-verified: with droidvdec:0 there are no crashes and 1080p H.264 plays in
-# software with 0 dropped frames. So when ATLANTIC_DISABLE_HW_DECODER is unset,
-# turn HW decode off automatically if the vendor lists no OMX video decoder. Only
-# <MediaCodec> names count: the Codec2 list keeps OMX names as <Alias> entries
-# (OMX.MTK.VIDEO.DECODER.AVC under c2.mtk.avc.decoder). If no codec list can be
-# read, keep HW decode as before, which is what the Xperia 10 II (Qualcomm OMX)
-# relies on.
+# The Jolla Phone 2 (Codec2-only vendor) needs no fallback: its droidvdec hang
+# was a gst-droid drain deadlock on a duplicate stream-start, fixed in WebKit by
+# patches/webkit/webkit-gst-droid-dedup-stream-start.patch.
 #
-# Set ATLANTIC_DISABLE_HW_DECODER=1 to force the all-software decode path, or =0
-# to force HW decode past the auto-detection.
-atlantic_vendor_lacks_omx_video() {
-    set -- /vendor/etc/media_codecs*.xml /odm/etc/media_codecs*.xml
-    found_list=0
-    for f in "$@"; do
-        [ -r "${f}" ] || continue
-        found_list=1
-        grep -qiE '<MediaCodec[^>]*name="OMX\.[^"]*video[^"]*decoder' "${f}" && return 1
-    done
-    [ "${found_list}" = "1" ]
-}
-if [ -z "${ATLANTIC_DISABLE_HW_DECODER:-}" ] && atlantic_vendor_lacks_omx_video; then
-    ATLANTIC_DISABLE_HW_DECODER=1
-fi
+# Set ATLANTIC_DISABLE_HW_DECODER=1 to force the all-software decode path.
 if [ "${ATLANTIC_DISABLE_HW_DECODER:-0}" = "1" ]; then
     ATLANTIC_GST_PLUGIN_FEATURE_RANK="${ATLANTIC_GST_PLUGIN_FEATURE_RANK:-droidvdec:0,droidvenc:0,droidadec:0}"
 else
