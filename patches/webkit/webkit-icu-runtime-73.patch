@@ -1,0 +1,43 @@
+# The build compiles against the build HOST's ICU headers (Ubuntu 24.04: ICU 74;
+# the SFOS sysroot ships ICU 73.2 libraries but no headers) and links the
+# sysroot's libraries with U_DISABLE_RENAMING=1. So any `U_ICU_VERSION_MAJOR_NUM
+# >= 74` branch compiles in a call the device's ICU does not have.
+#
+# 2.54 added one: toPrimaryIanaTimeZoneIdentifier() calls ucal_getIanaTimeZoneID
+# (ICU 74). bin/jsc fails to link on it; libWPEWebKit links with
+# --allow-shlib-undefined, so there it would have linked and then failed at
+# runtime on the device the first time Intl/Temporal canonicalized a time zone.
+# Take the pre-74 fallback (ucal_getCanonicalTimeZoneID, CLDR canonical names),
+# which is what 2.52 did.
+#
+# Drop when the device ships ICU >= 74 (then define ATLANTIC_ICU_RUNTIME_BELOW_74=0
+# or remove this patch). On every bump, grep the new tree for
+# `U_ICU_VERSION_MAJOR_NUM >= 7[4-9]` outside Source/WTF/icu/.
+#
+# ---
+--- a/Source/JavaScriptCore/runtime/IntlObject.cpp
++++ b/Source/JavaScriptCore/runtime/IntlObject.cpp
+@@ -29,6 +29,10 @@
+ #include "config.h"
+ #include "IntlObject.h"
+ 
++#ifndef ATLANTIC_ICU_RUNTIME_BELOW_74
++#define ATLANTIC_ICU_RUNTIME_BELOW_74 1
++#endif
++
+ #include "Error.h"
+ #include "FunctionPrototype.h"
+ #include "GlobalObjectMethodTable.h"
+@@ -2015,7 +2019,11 @@
+ String toPrimaryIanaTimeZoneIdentifier(std::span<const char16_t> timeZone)
+ {
+     Vector<char16_t, 32> buffer;
+-#if U_ICU_VERSION_MAJOR_NUM >= 74
++    // Atlantic: the headers are the build host's ICU 74, but the device (and the
++    // sysroot we link against, with U_DISABLE_RENAMING) is ICU 73, which lacks
++    // ucal_getIanaTimeZoneID. Take the pre-74 path; see
++    // webkit-icu-runtime-73.patch.
++#if U_ICU_VERSION_MAJOR_NUM >= 74 && !ATLANTIC_ICU_RUNTIME_BELOW_74
+     if (U_SUCCESS(callBufferProducingFunction(ucal_getIanaTimeZoneID, timeZone.data(), static_cast<int32_t>(timeZone.size()), buffer))) {
+         if (isUTCEquivalent(StringView(buffer.span())))
+             return "UTC"_s;

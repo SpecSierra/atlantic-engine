@@ -1240,7 +1240,7 @@ diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBack
                      m_texture->swapTexture(*texture);
                  else
                      m_texture = WTF::move(texture);
-@@ -113,17 +118,32 @@ void CoordinatedBackingStoreTile::processPendingUpdates()
+@@ -113,17 +118,33 @@ void CoordinatedBackingStoreTile::processPendingUpdates()
                  m_texture->copyFromExternalTexture(texture->id(), update.sourceRect, toIntSize(update.bufferOffset));
              }
  
@@ -1261,15 +1261,16 @@ diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBack
 +        // dimensions); paintToTextureMapper upscales it to the tile rect. Partial
 +        // updates always keep a full-size texture, since the source sub-rect is
 +        // copied into it 1:1.
-+        bool lowResUpdate = update.sourceRect.size() == update.tileRect.size() && buffer.size() != update.sourceRect.size();
-+        ensureTexture(lowResUpdate ? buffer.size() : update.tileRect.size(), buffer);
++        const IntSize bufferSize = update.buffer->size();
++        bool lowResUpdate = update.sourceRect.size() == update.tileRect.size() && bufferSize != update.sourceRect.size();
++        ensureTexture(lowResUpdate ? bufferSize : update.tileRect.size(), buffer);
 +        m_isLowRes = lowResUpdate;
  
          WTFBeginSignpost(this, CopyTextureCPUToGPU);
          ASSERT(!update.buffer->isBackedByOpenGL());
 -        m_texture->updateContents(buffer.data(), update.sourceRect, update.bufferOffset, buffer.stride(), update.buffer->pixelFormat());
 +        if (lowResUpdate)
-+            m_texture->updateContents(buffer.data(), IntRect(IntPoint::zero(), buffer.size()), IntPoint::zero(), buffer.stride(), update.buffer->pixelFormat());
++            m_texture->updateContents(buffer.data(), IntRect(IntPoint::zero(), bufferSize), IntPoint::zero(), buffer.stride(), update.buffer->pixelFormat());
 +        else
 +            m_texture->updateContents(buffer.data(), update.sourceRect, update.bufferOffset, buffer.stride(), update.buffer->pixelFormat());
          WTFEndSignpost(this, CopyTextureCPUToGPU);

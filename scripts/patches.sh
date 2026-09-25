@@ -27,6 +27,8 @@ readonly WEBKIT_SOURCE_PATCHES=(
     "patches/webkit/webkit-portability-wtf-pal.patch"
     "patches/webkit/webkit-portability-jsc.patch"
     "patches/webkit/webkit-portability-webcore.patch"
+    # Host ICU 74 headers vs device ICU 73 runtime: keep ICU-74-only calls out.
+    "patches/webkit/webkit-icu-runtime-73.patch"
 
     # --- Compositing, raster and scroll ------------------------------------
     # Order within this block is the ordering constraint that matters most:

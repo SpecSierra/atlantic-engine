@@ -13,76 +13,10 @@
 # catches up.
 #
 # ---
-diff -ruN --no-dereference sq-A/Source/cmake/OptionsJSCOnly.cmake sq-B/Source/cmake/OptionsJSCOnly.cmake
---- a/Source/cmake/OptionsJSCOnly.cmake
-+++ b/Source/cmake/OptionsJSCOnly.cmake
-@@ -115,6 +115,29 @@
- endif ()
- 
- find_package(ICU 70.1 REQUIRED COMPONENTS data i18n uc)
-+if (ICU_FOUND)
-+    foreach(_icu_component data i18n uc)
-+        string(TOUPPER "${_icu_component}" _ICU_COMPONENT_UPPER)
-+        set(_icu_library "${ICU_${_ICU_COMPONENT_UPPER}_LIBRARY}")
-+        set(_icu_library_release "${ICU_${_ICU_COMPONENT_UPPER}_LIBRARY_RELEASE}")
-+        if (TARGET ICU::${_icu_component})
-+            if (_icu_library)
-+                set_target_properties(ICU::${_icu_component} PROPERTIES
-+                    IMPORTED_LOCATION "${_icu_library}"
-+                    IMPORTED_LINK_INTERFACE_LANGUAGES "CXX"
-+                )
-+            endif ()
-+            if (_icu_library_release)
-+                set_property(TARGET ICU::${_icu_component} APPEND PROPERTY IMPORTED_CONFIGURATIONS RELEASE)
-+                set_target_properties(ICU::${_icu_component} PROPERTIES
-+                    IMPORTED_LOCATION_RELEASE "${_icu_library_release}"
-+                    IMPORTED_LINK_INTERFACE_LANGUAGES_RELEASE "CXX"
-+                )
-+            endif ()
-+        endif ()
-+    endforeach ()
-+endif ()
-+
- if (APPLE)
-     add_definitions(-DU_DISABLE_RENAMING=1)
- endif ()
-diff -ruN --no-dereference sq-A/Source/cmake/OptionsWPE.cmake sq-B/Source/cmake/OptionsWPE.cmake
---- a/Source/cmake/OptionsWPE.cmake
-+++ b/Source/cmake/OptionsWPE.cmake
-@@ -12,6 +12,29 @@
- find_package(GLib 2.70.0 REQUIRED COMPONENTS GioUnix Thread Module)
- find_package(HarfBuzz 2.7.4 REQUIRED COMPONENTS ICU)
- find_package(ICU 70.1 REQUIRED COMPONENTS data i18n uc)
-+if (ICU_FOUND)
-+    foreach(_icu_component data i18n uc)
-+        string(TOUPPER "${_icu_component}" _ICU_COMPONENT_UPPER)
-+        set(_icu_library "${ICU_${_ICU_COMPONENT_UPPER}_LIBRARY}")
-+        set(_icu_library_release "${ICU_${_ICU_COMPONENT_UPPER}_LIBRARY_RELEASE}")
-+        if (TARGET ICU::${_icu_component})
-+            if (_icu_library)
-+                set_target_properties(ICU::${_icu_component} PROPERTIES
-+                    IMPORTED_LOCATION "${_icu_library}"
-+                    IMPORTED_LINK_INTERFACE_LANGUAGES "CXX"
-+                )
-+            endif ()
-+            if (_icu_library_release)
-+                set_property(TARGET ICU::${_icu_component} APPEND PROPERTY IMPORTED_CONFIGURATIONS RELEASE)
-+                set_target_properties(ICU::${_icu_component} PROPERTIES
-+                    IMPORTED_LOCATION_RELEASE "${_icu_library_release}"
-+                    IMPORTED_LINK_INTERFACE_LANGUAGES_RELEASE "CXX"
-+                )
-+            endif ()
-+        endif ()
-+    endforeach ()
-+endif ()
-+
- find_package(JPEG REQUIRED)
- find_package(Epoxy 1.5.4 REQUIRED)
- find_package(LibGcrypt 1.7.0 REQUIRED)
-diff -ruN --no-dereference sq-A/Source/JavaScriptCore/CMakeLists.txt sq-B/Source/JavaScriptCore/CMakeLists.txt
+diff --git a/Source/JavaScriptCore/CMakeLists.txt b/Source/JavaScriptCore/CMakeLists.txt
 --- a/Source/JavaScriptCore/CMakeLists.txt
 +++ b/Source/JavaScriptCore/CMakeLists.txt
-@@ -1799,6 +1799,8 @@
+@@ -1799,6 +1799,8 @@ add_dependencies(JavaScriptCore_CopyPrivateHeaders Bytecodes JSCBuiltins JSCWebP
  
  target_include_directories(LowLevelInterpreterLib
      PRIVATE "$<TARGET_PROPERTY:JavaScriptCore,INCLUDE_DIRECTORIES>" "${JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS_DIR}/JavaScriptCore")
@@ -117,3 +51,69 @@ diff --git a/Source/JavaScriptCore/shell/CMakeLists.txt b/Source/JavaScriptCore/
  if (DEVELOPER_MODE)
      set(testapi_SOURCES
          ../API/tests/CompareAndSwapTest.cpp
+diff --git a/Source/cmake/OptionsJSCOnly.cmake b/Source/cmake/OptionsJSCOnly.cmake
+--- a/Source/cmake/OptionsJSCOnly.cmake
++++ b/Source/cmake/OptionsJSCOnly.cmake
+@@ -115,6 +115,29 @@ else ()
+ endif ()
+ 
+ find_package(ICU 70.1 REQUIRED COMPONENTS data i18n uc)
++if (ICU_FOUND)
++    foreach(_icu_component data i18n uc)
++        string(TOUPPER "${_icu_component}" _ICU_COMPONENT_UPPER)
++        set(_icu_library "${ICU_${_ICU_COMPONENT_UPPER}_LIBRARY}")
++        set(_icu_library_release "${ICU_${_ICU_COMPONENT_UPPER}_LIBRARY_RELEASE}")
++        if (TARGET ICU::${_icu_component})
++            if (_icu_library)
++                set_target_properties(ICU::${_icu_component} PROPERTIES
++                    IMPORTED_LOCATION "${_icu_library}"
++                    IMPORTED_LINK_INTERFACE_LANGUAGES "CXX"
++                )
++            endif ()
++            if (_icu_library_release)
++                set_property(TARGET ICU::${_icu_component} APPEND PROPERTY IMPORTED_CONFIGURATIONS RELEASE)
++                set_target_properties(ICU::${_icu_component} PROPERTIES
++                    IMPORTED_LOCATION_RELEASE "${_icu_library_release}"
++                    IMPORTED_LINK_INTERFACE_LANGUAGES_RELEASE "CXX"
++                )
++            endif ()
++        endif ()
++    endforeach ()
++endif ()
++
+ if (APPLE)
+     add_definitions(-DU_DISABLE_RENAMING=1)
+ endif ()
+diff --git a/Source/cmake/OptionsWPE.cmake b/Source/cmake/OptionsWPE.cmake
+--- a/Source/cmake/OptionsWPE.cmake
++++ b/Source/cmake/OptionsWPE.cmake
+@@ -12,6 +12,29 @@ list(APPEND WEBKIT_UNSAFE_BUFFER_WARNING_FLAGS -Wno-unsafe-buffer-usage-in-forma
+ find_package(GLib 2.70.0 REQUIRED COMPONENTS GioUnix Thread Module)
+ find_package(HarfBuzz 2.7.4 REQUIRED COMPONENTS ICU)
+ find_package(ICU 70.1 REQUIRED COMPONENTS data i18n uc)
++if (ICU_FOUND)
++    foreach(_icu_component data i18n uc)
++        string(TOUPPER "${_icu_component}" _ICU_COMPONENT_UPPER)
++        set(_icu_library "${ICU_${_ICU_COMPONENT_UPPER}_LIBRARY}")
++        set(_icu_library_release "${ICU_${_ICU_COMPONENT_UPPER}_LIBRARY_RELEASE}")
++        if (TARGET ICU::${_icu_component})
++            if (_icu_library)
++                set_target_properties(ICU::${_icu_component} PROPERTIES
++                    IMPORTED_LOCATION "${_icu_library}"
++                    IMPORTED_LINK_INTERFACE_LANGUAGES "CXX"
++                )
++            endif ()
++            if (_icu_library_release)
++                set_property(TARGET ICU::${_icu_component} APPEND PROPERTY IMPORTED_CONFIGURATIONS RELEASE)
++                set_target_properties(ICU::${_icu_component} PROPERTIES
++                    IMPORTED_LOCATION_RELEASE "${_icu_library_release}"
++                    IMPORTED_LINK_INTERFACE_LANGUAGES_RELEASE "CXX"
++                )
++            endif ()
++        endif ()
++    endforeach ()
++endif ()
++
+ find_package(JPEG REQUIRED)
+ find_package(Epoxy 1.5.4 REQUIRED)
+ find_package(LibGcrypt 1.7.0 REQUIRED)
