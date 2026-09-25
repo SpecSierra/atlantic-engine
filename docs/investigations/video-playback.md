@@ -34,7 +34,8 @@ Key facts:
 - Default flipped to **enable `droidvdec` (rank 300)**, `droidvenc` off, software
   as automatic fallback. Kill-switch: `ATLANTIC_DISABLE_HW_DECODER=1`.
 - **Codec2-only vendors (Jolla Phone 2, Android 16):** droidvdec crashes the
-  WebProcess on any `<video>` page, because droidmedia only drives OMX codecs.
+  WebProcess on any `<video>` page. Root cause unknown: droidmedia uses
+  `android::MediaCodec`, so Codec2 is reachable; needs a backtrace.
   When `ATLANTIC_DISABLE_HW_DECODER` is unset, both launch paths (wrapper in
   `runtime-common.sh`, icon launch in the browser's `main.cpp`) turn HW decode off
   if no `<MediaCodec name="OMX.*video*decoder">` exists in `/vendor/etc` or
