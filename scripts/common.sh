@@ -16,6 +16,10 @@ export CCACHE_DIR="${CCACHE_DIR:-/opt/github-runner/cache/ccache}"
 export CCACHE_MAXSIZE="${CCACHE_MAXSIZE:-40G}"
 export CCACHE_BASEDIR="${CCACHE_BASEDIR:-${CI_CACHE_ROOT:-${CI_ROOT:-${WORK}}}}"
 export CCACHE_NOHASHDIR="${CCACHE_NOHASHDIR:-1}"
+# WebCore/WebKit compile against CMake precompiled headers. Without this
+# ccache refuses every one of them ("Could not use precompiled header",
+# ~1560 objects, ~34 min per run) while still hitting everything else.
+export CCACHE_SLOPPINESS="${CCACHE_SLOPPINESS:-pch_defines,time_macros}"
 
 if [ -d /usr/lib/ccache ]; then
     export PATH="/usr/lib/ccache:${PATH}"

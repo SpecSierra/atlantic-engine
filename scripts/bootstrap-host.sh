@@ -174,6 +174,7 @@ if command -v ccache >/dev/null 2>&1; then
     fi
     ccache --set-config=compression=true >/dev/null
     ccache --set-config=compiler_check=content >/dev/null
+    ccache --set-config=sloppiness=pch_defines,time_macros >/dev/null
 fi
 
 echo "Build tools ready."

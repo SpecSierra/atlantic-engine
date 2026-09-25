@@ -68,7 +68,10 @@ STAGING=$CI_ROOT/wpe-sfos-stage
 The WebKit source and install prefix live under a stable cache root
 (`/opt/github-runner/cache/atlantic-build`) so ccache sees consistent paths between
 runs; the wrapper runs a smoke test that must record a cache hit before the full
-build starts. Release/iteration tracks the CI run (`RPM_ITERATION=<run>.<attempt>`)
+build starts. WebCore and WebKit build with CMake precompiled headers, which
+ccache only caches under `sloppiness=pch_defines,time_macros` (set in
+`scripts/common.sh`); without it ~1560 objects show up as "Could not use
+precompiled header" and every run recompiles them. Release/iteration tracks the CI run (`RPM_ITERATION=<run>.<attempt>`)
 so `zypper up` always sees a newer version.
 
 Artifacts per run: `build.log`, `summary.txt`, `rpms/*.rpm`, a signed
