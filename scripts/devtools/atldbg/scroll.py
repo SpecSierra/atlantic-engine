@@ -237,12 +237,12 @@ _TOUCH_HELPERS = ("/root/swipe.py", "/root/evtouch.py")
 
 def ensure_touch_helpers() -> None:
     """Copy swipe.py/evtouch.py to the device if they are not already there."""
-    r = device.ssh("test -f /home/defaultuser/swipe.py && "
-                   "test -f /home/defaultuser/evtouch.py && echo yes")
+    r = device.ssh("test -f /tmp/swipe.py && "
+                   "test -f /tmp/evtouch.py && echo yes")
     if "yes" in r.stdout:
         return
     for f in _TOUCH_HELPERS:
-        device.scp_to(f, f"/home/{device.USER}/")
+        device.scp_to(f, "/tmp/")
 
 
 def drive_touch(seconds: float, *, x: int = 540, y1: int = 1900, y2: int = 700,
@@ -257,7 +257,7 @@ def drive_touch(seconds: float, *, x: int = 540, y1: int = 1900, y2: int = 700,
     n = 0
     while time.monotonic() < deadline:
         device.ssh(
-            f"echo root | devel-su -p python3 /home/{device.USER}/swipe.py "
+            f"echo root | devel-su -p python3 /tmp/swipe.py "
             f"{x} {y1} {x} {y2}",
             session_env=True, timeout=30)
         n += 1

@@ -210,12 +210,16 @@ def log_tail(n: int = 60, logfile: str = "/tmp/atl.log") -> str:
 # ── Screenshot ───────────────────────────────────────────────────────────────
 def screenshot(local_path: str = "/tmp/atldbg-shot.png") -> str:
     """Capture the device screen via lipstick's session D-Bus, pull it locally."""
-    remote = f"/home/{USER}/atldbg-ss.png"
+    # lipstick only accepts paths under $HOME, but personal phones must not keep
+    # scratch files there: save, then move the file to /tmp straight away.
+    shot = f"/home/{USER}/atldbg-ss.png"  # lipstick rejects hidden names
+    remote = "/tmp/atldbg-ss.png"
     ssh(
-        f"rm -f {remote}; "
+        f"rm -f {shot} {remote}; "
         "echo root | devel-su -p dbus-send --session --print-reply "
         "--dest=org.nemomobile.lipstick /org/nemomobile/lipstick/screenshot "
-        f"org.nemomobile.lipstick.saveScreenshot string:{remote}",
+        f"org.nemomobile.lipstick.saveScreenshot string:{shot}; "
+        f"mv -f {shot} {remote}",
         session_env=True,
     )
     scp_from(remote, local_path)
