@@ -43,6 +43,13 @@ set(ENABLE_GEOLOCATION ON CACHE BOOL "" FORCE)
 # method being absent, which is what a page feature-detecting it should see.
 # A Bluetooth controller is a real use case on this device.
 set(ENABLE_GAMEPAD ON CACHE BOOL "" FORCE)
+# WPEPlatform: OFF. We drive WebKit through the legacy libwpe API
+# (WPEBackend-fdo + the Qt5 plugin). Up to 2.52 WPEPlatform defaulted to
+# ENABLE_DEVELOPER_MODE, i.e. off; 2.54 defaults it ON, which builds
+# libWPEPlatform (xkbcommon, libdrm, ...) and makes the public wpe-webkit-2.0
+# headers include wpe-platform/, so the Qt5 plugin stopped compiling
+# (WPEKeymapXKB.h -> xkbcommon/xkbcommon.h). Pin the 2.52 configuration.
+set(ENABLE_WPE_PLATFORM OFF CACHE BOOL "" FORCE)
 # DeviceOrientation / DeviceMotion. Defined PRIVATE OFF in WebKitFeatures.cmake
 # and turned on by no port, so window.DeviceOrientationEvent does not exist and
 # every sensor-aware page takes its no-sensor path. Everything behind the flag in
