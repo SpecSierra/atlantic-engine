@@ -47,12 +47,13 @@ Two exported entry points, mirroring the wpe_sfos_set_dark_mode() convention:
 
 Browser side: apps/wpe/WPEWebPage.cpp drives these from the fallback pinch
 gesture (the one used when the page itself does not consume the touches).
+diff --git a/Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp b/Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp
 --- a/Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp
 +++ b/Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp
-@@ -5997,3 +5997,52 @@
-         xrSystem->invalidate(PlatformXRSystem::InvalidationReason::Client);
- #endif
+@@ -6146,3 +6146,52 @@ WebKitImageList* webkit_web_view_get_page_icons(WebKitWebView* webView)
+     return webView->priv->pageIcons.get();
  }
+ #endif
 +
 +// SFOS: visual-viewport zoom. The public API only exposes page zoom
 +// (webkit_web_view_set_zoom_level -> setPageZoomFactor), which relayouts the

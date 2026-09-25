@@ -20,10 +20,48 @@
 # are kept. WEBKIT_PURGE_STYLE_ON_MEMORY_PRESSURE=1 restores upstream.
 #
 # ---
-diff -ruN --no-dereference sq-A/Source/WebCore/page/MemoryRelease.cpp sq-B/Source/WebCore/page/MemoryRelease.cpp
+diff --git a/Source/WTF/wtf/MemoryPressureHandler.cpp b/Source/WTF/wtf/MemoryPressureHandler.cpp
+--- a/Source/WTF/wtf/MemoryPressureHandler.cpp
++++ b/Source/WTF/wtf/MemoryPressureHandler.cpp
+@@ -28,6 +28,7 @@
+ 
+ #include <algorithm>
+ #include <atomic>
++#include <cstdlib>
+ #include <functional>
+ #include <wtf/Logging.h>
+ #include <wtf/MathExtras.h>
+@@ -378,6 +379,26 @@ MemoryPressureHandlerConfiguration::MemoryPressureHandlerConfiguration()
+     , killThresholdFraction(s_killThresholdFraction)
+     , pollInterval(s_pollInterval)
+ {
++    // Atlantic: on a memory-constrained device (3.5 GB, most of it held by
++    // lipstick/system) the upstream defaults purge caches far too late - only at
++    // ~1 GB footprint (conservative) / ~1.5 GB (strict), re-checked every 30 s -
++    // while the WebProcess footprint that actually drives the SYSTEM into the
++    // kernel lowmemorykiller (and multi-second major-fault thrashing during
++    // scroll) is only ~700 MB. WebKit therefore never releases its
++    // decoded-image / page / tile caches before the kernel starts reaping. Allow
++    // the device to set a realistic budget so the handler purges early and often.
++    // Only the purge thresholds move; the kill threshold is derived from
++    // ramSize(), not baseThreshold, so the process is not killed any earlier.
++    // Defaults are unchanged when the env vars are unset. See
++    // webkit-memory-pressure-threshold-env.patch.
++    if (const char* baseMB = getenv("WEBKIT_MEMORY_BASE_THRESHOLD_MB")) {
++        if (long mb = atol(baseMB); mb > 0)
++            baseThreshold = static_cast<uint64_t>(mb) * MB;
++    }
++    if (const char* intervalMS = getenv("WEBKIT_MEMORY_POLL_INTERVAL_MS")) {
++        if (long ms = atol(intervalMS); ms > 0)
++            pollInterval = Seconds::fromMilliseconds(ms);
++    }
+ }
+ 
+ MemoryPressureHandlerConfiguration::MemoryPressureHandlerConfiguration(uint64_t base, double conservative, double strict, std::optional<double> kill, Seconds interval)
+diff --git a/Source/WebCore/page/MemoryRelease.cpp b/Source/WebCore/page/MemoryRelease.cpp
 --- a/Source/WebCore/page/MemoryRelease.cpp
 +++ b/Source/WebCore/page/MemoryRelease.cpp
-@@ -65,6 +65,8 @@
+@@ -67,6 +67,8 @@
  #include "WorkerGlobalScope.h"
  #include "WorkerThread.h"
  #include <JavaScriptCore/VM.h>
@@ -32,7 +70,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/MemoryRelease.cpp sq-B/Sourc
  #include <wtf/ResourceUsage.h>
  #include <wtf/SystemTracing.h>
  #include <wtf/text/MakeString.h>
-@@ -115,6 +117,28 @@
+@@ -119,6 +121,28 @@ static void releaseNoncriticalMemory(MaintainMemoryCache maintainMemoryCache)
  #endif
  }
  
@@ -61,7 +99,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/MemoryRelease.cpp sq-B/Sourc
  static void releaseCriticalMemory(Synchronous synchronous, MaintainBackForwardCache maintainBackForwardCache, MaintainMemoryCache maintainMemoryCache)
  {
      // Right now, the only reason we call release critical memory while not under memory pressure is if the process is about to be suspended.
-@@ -143,7 +167,8 @@
+@@ -148,7 +172,8 @@ static void releaseCriticalMemory(Synchronous synchronous, MaintainBackForwardCa
      });
      for (auto& document : protectedDocuments) {
          document->clearQuerySelectorAllResults();
@@ -70,42 +108,4 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/MemoryRelease.cpp sq-B/Sourc
 +            document->styleScope().releaseMemory();
          if (RefPtr fontSelector = document->fontSelectorIfExists())
              fontSelector->emptyCaches();
-         document->protectedCachedResourceLoader()->garbageCollectDocumentResources();
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/MemoryPressureHandler.cpp sq-B/Source/WTF/wtf/MemoryPressureHandler.cpp
---- a/Source/WTF/wtf/MemoryPressureHandler.cpp
-+++ b/Source/WTF/wtf/MemoryPressureHandler.cpp
-@@ -28,6 +28,7 @@
- 
- #include <algorithm>
- #include <atomic>
-+#include <cstdlib>
- #include <functional>
- #include <ranges>
- #include <wtf/Logging.h>
-@@ -373,6 +374,26 @@
-     , killThresholdFraction(s_killThresholdFraction)
-     , pollInterval(s_pollInterval)
- {
-+    // Atlantic: on a memory-constrained device (3.5 GB, most of it held by
-+    // lipstick/system) the upstream defaults purge caches far too late - only at
-+    // ~1 GB footprint (conservative) / ~1.5 GB (strict), re-checked every 30 s -
-+    // while the WebProcess footprint that actually drives the SYSTEM into the
-+    // kernel lowmemorykiller (and multi-second major-fault thrashing during
-+    // scroll) is only ~700 MB. WebKit therefore never releases its
-+    // decoded-image / page / tile caches before the kernel starts reaping. Allow
-+    // the device to set a realistic budget so the handler purges early and often.
-+    // Only the purge thresholds move; the kill threshold is derived from
-+    // ramSize(), not baseThreshold, so the process is not killed any earlier.
-+    // Defaults are unchanged when the env vars are unset. See
-+    // webkit-memory-pressure-threshold-env.patch.
-+    if (const char* baseMB = getenv("WEBKIT_MEMORY_BASE_THRESHOLD_MB")) {
-+        if (long mb = atol(baseMB); mb > 0)
-+            baseThreshold = static_cast<uint64_t>(mb) * MB;
-+    }
-+    if (const char* intervalMS = getenv("WEBKIT_MEMORY_POLL_INTERVAL_MS")) {
-+        if (long ms = atol(intervalMS); ms > 0)
-+            pollInterval = Seconds::fromMilliseconds(ms);
-+    }
- }
- 
- MemoryPressureHandlerConfiguration::MemoryPressureHandlerConfiguration(uint64_t base, double conservative, double strict, std::optional<double> kill, Seconds interval)
+         protect(document->cachedResourceLoader())->garbageCollectDocumentResources();

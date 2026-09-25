@@ -14,7 +14,7 @@
 # video-less configurations. Behaviour-neutral.
 #
 # ---
-diff -ruN wc-A/Source/WebCore/dom/ContextDestructionObserver.h wc-B/Source/WebCore/dom/ContextDestructionObserver.h
+diff --git a/Source/WebCore/dom/ContextDestructionObserver.h b/Source/WebCore/dom/ContextDestructionObserver.h
 --- a/Source/WebCore/dom/ContextDestructionObserver.h
 +++ b/Source/WebCore/dom/ContextDestructionObserver.h
 @@ -26,6 +26,7 @@
@@ -25,10 +25,10 @@ diff -ruN wc-A/Source/WebCore/dom/ContextDestructionObserver.h wc-B/Source/WebCo
  #include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
  #include <wtf/Forward.h>
  #include <wtf/WeakPtr.h>
-diff -ruN wc-A/Source/WebCore/page/Quirks.cpp wc-B/Source/WebCore/page/Quirks.cpp
+diff --git a/Source/WebCore/page/Quirks.cpp b/Source/WebCore/page/Quirks.cpp
 --- a/Source/WebCore/page/Quirks.cpp
 +++ b/Source/WebCore/page/Quirks.cpp
-@@ -52,7 +52,9 @@
+@@ -55,7 +55,9 @@
  #include "HTMLObjectElement.h"
  #include "HTMLScriptElement.h"
  #include "HTMLTextAreaElement.h"
@@ -38,7 +38,7 @@ diff -ruN wc-A/Source/WebCore/page/Quirks.cpp wc-B/Source/WebCore/page/Quirks.cp
  #include "JSEventListener.h"
  #include "KeyframeEffect.h"
  #include "LayoutUnit.h"
-diff -ruN wc-A/Source/WebCore/page/UserMessageHandlersNamespace.h wc-B/Source/WebCore/page/UserMessageHandlersNamespace.h
+diff --git a/Source/WebCore/page/UserMessageHandlersNamespace.h b/Source/WebCore/page/UserMessageHandlersNamespace.h
 --- a/Source/WebCore/page/UserMessageHandlersNamespace.h
 +++ b/Source/WebCore/page/UserMessageHandlersNamespace.h
 @@ -25,6 +25,8 @@
@@ -50,7 +50,7 @@ diff -ruN wc-A/Source/WebCore/page/UserMessageHandlersNamespace.h wc-B/Source/We
  #if ENABLE(USER_MESSAGE_HANDLERS)
  
  #include <WebCore/FrameDestructionObserver.h>
-diff -ruN wc-A/Source/WebCore/page/WebKitNamespace.h wc-B/Source/WebCore/page/WebKitNamespace.h
+diff --git a/Source/WebCore/page/WebKitNamespace.h b/Source/WebCore/page/WebKitNamespace.h
 --- a/Source/WebCore/page/WebKitNamespace.h
 +++ b/Source/WebCore/page/WebKitNamespace.h
 @@ -25,6 +25,8 @@
@@ -62,18 +62,21 @@ diff -ruN wc-A/Source/WebCore/page/WebKitNamespace.h wc-B/Source/WebCore/page/We
  #if ENABLE(USER_MESSAGE_HANDLERS)
  
  #include "LocalDOMWindowProperty.h"
-diff -ruN wc-A/Source/WebCore/platform/graphics/ColorConversion.h wc-B/Source/WebCore/platform/graphics/ColorConversion.h
---- a/Source/WebCore/platform/graphics/ColorConversion.h
-+++ b/Source/WebCore/platform/graphics/ColorConversion.h
-@@ -26,6 +26,7 @@
- #pragma once
+diff --git a/Source/WebCore/platform/ScrollAnimationKeyboard.cpp b/Source/WebCore/platform/ScrollAnimationKeyboard.cpp
+--- a/Source/WebCore/platform/ScrollAnimationKeyboard.cpp
++++ b/Source/WebCore/platform/ScrollAnimationKeyboard.cpp
+@@ -135,8 +135,8 @@ void ScrollAnimationKeyboard::stopKeyboardScrollAnimation()
+     // x = sqrt(v^2 * m / k)
+     auto displacementMagnitudeSquared = (m_velocity * m_velocity).scaled(params.springMass / params.springStiffness);
+     FloatPoint displacement = {
+-        std::copysign(sqrt(displacementMagnitudeSquared.width()), m_velocity.width()),
+-        std::copysign(sqrt(displacementMagnitudeSquared.height()), m_velocity.height())
++        (float)std::copysign(sqrt(displacementMagnitudeSquared.width()), m_velocity.width()),
++        (float)std::copysign(sqrt(displacementMagnitudeSquared.height()), m_velocity.height())
+     };
  
- #include <WebCore/ColorTypes.h>
-+#include <WebCore/PlatformExportMacros.h>
- #include <numeric>
- #include <wtf/MathExtras.h>
- 
-diff -ruN wc-A/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h wc-B/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h
+     // If the spring would settle before the minimum travel distance
+diff --git a/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h b/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h
 --- a/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h
 +++ b/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h
 @@ -26,6 +26,9 @@
@@ -86,7 +89,7 @@ diff -ruN wc-A/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h wc-B/
  #if USE(TEXTURE_MAPPER)
  
  #include "BitmapTexture.h"
-diff -ruN wc-A/Source/WebCore/platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.h wc-B/Source/WebCore/platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.h
+diff --git a/Source/WebCore/platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.h b/Source/WebCore/platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.h
 --- a/Source/WebCore/platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.h
 +++ b/Source/WebCore/platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.h
 @@ -23,6 +23,9 @@
@@ -99,32 +102,7 @@ diff -ruN wc-A/Source/WebCore/platform/graphics/texmap/GraphicsContextGLTextureM
  #pragma once
  
  #if ENABLE(WEBGL) && USE(TEXTURE_MAPPER)
-diff -ruN wc-A/Source/WebCore/platform/graphics/texmap/TextureMapperAnimation.h wc-B/Source/WebCore/platform/graphics/texmap/TextureMapperAnimation.h
---- a/Source/WebCore/platform/graphics/texmap/TextureMapperAnimation.h
-+++ b/Source/WebCore/platform/graphics/texmap/TextureMapperAnimation.h
-@@ -17,6 +17,9 @@
-  * Boston, MA 02110-1301, USA.
-  */
- 
-+#include <WebCore/PlatformExportMacros.h>
-+#include <wtf/Platform.h>
-+
- #pragma once
- 
- #if USE(TEXTURE_MAPPER)
-diff -ruN wc-A/Source/WebCore/platform/graphics/texmap/TextureMapperDamageVisualizer.h wc-B/Source/WebCore/platform/graphics/texmap/TextureMapperDamageVisualizer.h
---- a/Source/WebCore/platform/graphics/texmap/TextureMapperDamageVisualizer.h
-+++ b/Source/WebCore/platform/graphics/texmap/TextureMapperDamageVisualizer.h
-@@ -23,6 +23,8 @@
-  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-  */
- 
-+#include <wtf/Platform.h>
-+
- #pragma once
- 
- #if ENABLE(DAMAGE_TRACKING)
-diff -ruN wc-A/Source/WebCore/platform/graphics/texmap/TextureMapper.h wc-B/Source/WebCore/platform/graphics/texmap/TextureMapper.h
+diff --git a/Source/WebCore/platform/graphics/texmap/TextureMapper.h b/Source/WebCore/platform/graphics/texmap/TextureMapper.h
 --- a/Source/WebCore/platform/graphics/texmap/TextureMapper.h
 +++ b/Source/WebCore/platform/graphics/texmap/TextureMapper.h
 @@ -17,6 +17,9 @@
@@ -137,7 +115,32 @@ diff -ruN wc-A/Source/WebCore/platform/graphics/texmap/TextureMapper.h wc-B/Sour
  #pragma once
  
  #if USE(TEXTURE_MAPPER)
-diff -ruN wc-A/Source/WebCore/platform/graphics/texmap/TextureMapperPlatformLayer.h wc-B/Source/WebCore/platform/graphics/texmap/TextureMapperPlatformLayer.h
+diff --git a/Source/WebCore/platform/graphics/texmap/TextureMapperAnimation.h b/Source/WebCore/platform/graphics/texmap/TextureMapperAnimation.h
+--- a/Source/WebCore/platform/graphics/texmap/TextureMapperAnimation.h
++++ b/Source/WebCore/platform/graphics/texmap/TextureMapperAnimation.h
+@@ -17,6 +17,9 @@
+  * Boston, MA 02110-1301, USA.
+  */
+ 
++#include <WebCore/PlatformExportMacros.h>
++#include <wtf/Platform.h>
++
+ #pragma once
+ 
+ #if USE(TEXTURE_MAPPER)
+diff --git a/Source/WebCore/platform/graphics/texmap/TextureMapperDamageVisualizer.h b/Source/WebCore/platform/graphics/texmap/TextureMapperDamageVisualizer.h
+--- a/Source/WebCore/platform/graphics/texmap/TextureMapperDamageVisualizer.h
++++ b/Source/WebCore/platform/graphics/texmap/TextureMapperDamageVisualizer.h
+@@ -23,6 +23,8 @@
+  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  */
+ 
++#include <wtf/Platform.h>
++
+ #pragma once
+ 
+ #if ENABLE(DAMAGE_TRACKING)
+diff --git a/Source/WebCore/platform/graphics/texmap/TextureMapperPlatformLayer.h b/Source/WebCore/platform/graphics/texmap/TextureMapperPlatformLayer.h
 --- a/Source/WebCore/platform/graphics/texmap/TextureMapperPlatformLayer.h
 +++ b/Source/WebCore/platform/graphics/texmap/TextureMapperPlatformLayer.h
 @@ -17,6 +17,9 @@
@@ -150,7 +153,7 @@ diff -ruN wc-A/Source/WebCore/platform/graphics/texmap/TextureMapperPlatformLaye
  #pragma once
  
  #if USE(TEXTURE_MAPPER)
-diff -ruN wc-A/Source/WebCore/platform/image-decoders/avif/AVIFImageDecoder.cpp wc-B/Source/WebCore/platform/image-decoders/avif/AVIFImageDecoder.cpp
+diff --git a/Source/WebCore/platform/image-decoders/avif/AVIFImageDecoder.cpp b/Source/WebCore/platform/image-decoders/avif/AVIFImageDecoder.cpp
 --- a/Source/WebCore/platform/image-decoders/avif/AVIFImageDecoder.cpp
 +++ b/Source/WebCore/platform/image-decoders/avif/AVIFImageDecoder.cpp
 @@ -24,6 +24,7 @@
@@ -161,7 +164,7 @@ diff -ruN wc-A/Source/WebCore/platform/image-decoders/avif/AVIFImageDecoder.cpp 
  
  #if USE(AVIF)
  
-diff -ruN wc-A/Source/WebCore/platform/image-decoders/avif/AVIFImageReader.cpp wc-B/Source/WebCore/platform/image-decoders/avif/AVIFImageReader.cpp
+diff --git a/Source/WebCore/platform/image-decoders/avif/AVIFImageReader.cpp b/Source/WebCore/platform/image-decoders/avif/AVIFImageReader.cpp
 --- a/Source/WebCore/platform/image-decoders/avif/AVIFImageReader.cpp
 +++ b/Source/WebCore/platform/image-decoders/avif/AVIFImageReader.cpp
 @@ -25,6 +25,7 @@
@@ -172,24 +175,10 @@ diff -ruN wc-A/Source/WebCore/platform/image-decoders/avif/AVIFImageReader.cpp w
  
  #if USE(AVIF)
  
-diff -ruN wc-A/Source/WebCore/platform/ScrollAnimationKeyboard.cpp wc-B/Source/WebCore/platform/ScrollAnimationKeyboard.cpp
---- a/Source/WebCore/platform/ScrollAnimationKeyboard.cpp
-+++ b/Source/WebCore/platform/ScrollAnimationKeyboard.cpp
-@@ -135,8 +135,8 @@
-     // x = sqrt(v^2 * m / k)
-     auto displacementMagnitudeSquared = (m_velocity * m_velocity).scaled(params.springMass / params.springStiffness);
-     FloatPoint displacement = {
--        std::copysign(sqrt(displacementMagnitudeSquared.width()), m_velocity.width()),
--        std::copysign(sqrt(displacementMagnitudeSquared.height()), m_velocity.height())
-+        (float)std::copysign(sqrt(displacementMagnitudeSquared.width()), m_velocity.width()),
-+        (float)std::copysign(sqrt(displacementMagnitudeSquared.height()), m_velocity.height())
-     };
- 
-     // If the spring would settle before the minimum travel distance
-diff -ruN wc-A/Source/WebCore/rendering/RenderBox.h wc-B/Source/WebCore/rendering/RenderBox.h
+diff --git a/Source/WebCore/rendering/RenderBox.h b/Source/WebCore/rendering/RenderBox.h
 --- a/Source/WebCore/rendering/RenderBox.h
 +++ b/Source/WebCore/rendering/RenderBox.h
-@@ -35,6 +35,8 @@
+@@ -34,6 +34,8 @@
  #include <WebCore/StyleUnevaluatedCalculation.h>
  #include <wtf/TypeCasts.h>
  
@@ -198,16 +187,16 @@ diff -ruN wc-A/Source/WebCore/rendering/RenderBox.h wc-B/Source/WebCore/renderin
  namespace WebCore {
  
  class LayoutRoundedRectRadii;
-@@ -699,7 +701,7 @@
+@@ -661,7 +663,7 @@ protected:
  
-     void computePreferredLogicalWidths(const Style::MinimumSize& minLogicalWidth, const Style::MaximumSize& maxLogicalWidth, LayoutUnit borderAndPaddingLogicalWidth);
+     void constrainIntrinsicLogicalWidthsByMinMax(LayoutUnit& minIntrinsicLogicalWidth, LayoutUnit& maxIntrinsicLogicalWidth) const;
  
 -    bool isAspectRatioDegenerate(double aspectRatio) const { return !aspectRatio || isnan(aspectRatio); }
 +    bool isAspectRatioDegenerate(double aspectRatio) const { return !aspectRatio || std::isnan(aspectRatio); }
  
-     bool overflowChangesMayAffectLayout() const final;
- 
-diff -ruN wc-A/Source/WebCore/rendering/shapes/ShapeOutsideInfo.cpp wc-B/Source/WebCore/rendering/shapes/ShapeOutsideInfo.cpp
+     LayoutUnit fillAvailableMeasure(LayoutUnit availableLogicalWidth) const;
+     LayoutUnit fillAvailableMeasure(LayoutUnit availableLogicalWidth, LayoutUnit& marginStart, LayoutUnit& marginEnd) const;
+diff --git a/Source/WebCore/rendering/shapes/ShapeOutsideInfo.cpp b/Source/WebCore/rendering/shapes/ShapeOutsideInfo.cpp
 --- a/Source/WebCore/rendering/shapes/ShapeOutsideInfo.cpp
 +++ b/Source/WebCore/rendering/shapes/ShapeOutsideInfo.cpp
 @@ -38,6 +38,8 @@
@@ -217,12 +206,12 @@ diff -ruN wc-A/Source/WebCore/rendering/shapes/ShapeOutsideInfo.cpp wc-B/Source/
 +
 +#include <cmath>
  #include "RenderView.h"
- #include <JavaScriptCore/ConsoleTypes.h>
- #include <wtf/TZoneMallocInlines.h>
-@@ -257,7 +259,7 @@
+ #include "StyleImage.h"
+ #include "StylePrimitiveNumericTypes+Evaluation.h"
+@@ -251,7 +253,7 @@ Ref<const LayoutShape> makeShapeForShapeOutside(const RenderBox& renderer)
  
      auto logicalMargin = [&] {
-         auto shapeMargin = Style::evaluate<LayoutUnit>(style.shapeMargin(), containingBlock.contentBoxLogicalWidth(), Style::ZoomNeeded { }).toFloat();
+         auto shapeMargin = Style::evaluate<LayoutUnit>(style.shapeMargin(), containingBlock.contentBoxLogicalWidth(), zoom).toFloat();
 -        return isnan(shapeMargin) ? 0.0f : shapeMargin;
 +        return std::isnan(shapeMargin) ? 0.0f : shapeMargin;
      }();

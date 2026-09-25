@@ -41,11 +41,11 @@
 # See docs/investigations/ and memory franceinfo-load-slowness-analysis.
 #
 # ---
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp sq-B/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
+diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
 --- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
 +++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
-@@ -30,6 +30,16 @@
- 
+@@ -33,6 +33,16 @@
+ #include <cmath>
  #include <cstdlib>
  #include <cstring>
 +#include <cstdio>
@@ -61,7 +61,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordina
  #include <wtf/MemoryPressureHandler.h>
  #include <wtf/SystemTracing.h>
  #include <wtf/TZoneMallocInlines.h>
-@@ -290,6 +300,8 @@
+@@ -717,6 +727,8 @@ OptionSet<CoordinatedBackingStoreProxy::UpdateResult> CoordinatedBackingStorePro
  
      Vector<Update::TileUpdate> tilesToUpdate;
      if (dirtyTilesCount) {
@@ -69,8 +69,8 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordina
 +            fprintf(stderr, "[paintlog] proxy %p PAINT dirtyTiles=%u union=%d,%d %dx%d contents=%dx%d newTiles=%u\n", this, dirtyTilesCount, tileDirtyRectUnion.x(), tileDirtyRectUnion.y(), tileDirtyRectUnion.width(), tileDirtyRectUnion.height(), m_contentsRect.width(), m_contentsRect.height(), static_cast<unsigned>(tilesToCreate.size()));
          WTFBeginSignpost(this, UpdateTiles, "dirty tiles: %u", dirtyTilesCount);
  
- #if USE(SKIA)
-@@ -357,6 +369,10 @@
+         auto& paintingEngine = layer.client().paintingEngine();
+@@ -796,6 +808,10 @@ OptionSet<CoordinatedBackingStoreProxy::UpdateResult> CoordinatedBackingStorePro
  
  void CoordinatedBackingStoreProxy::invalidateRegion(const Vector<IntRect, 1>& dirtyRegion)
  {
@@ -81,7 +81,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordina
      for (const auto& contentsDirtyRect : dirtyRegion) {
          IntRect dirtyRect(mapFromContents(contentsDirtyRect));
          IntRect keepRectFitToTileSize = tileRectForPosition(tilePositionForPoint(m_keepRect.minXMinYCorner()));
-@@ -450,6 +466,8 @@
+@@ -906,6 +922,8 @@ void CoordinatedBackingStoreProxy::createOrDestroyTiles(const IntRect& unscaledV
              m_coverRect = { };
              m_keepRect = { };
              if (!m_tiles.isEmpty()) {
@@ -90,7 +90,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordina
                  for (const auto& tile : m_tiles.values())
                      tilesToRemove.append(tile.id);
                  m_tiles.clear();
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp sq-B/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp
+diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp
 --- a/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp
 +++ b/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp
 @@ -44,6 +44,17 @@
@@ -111,7 +111,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordina
  #include <wtf/Locker.h>
  
  namespace WebCore {
-@@ -81,6 +92,19 @@
+@@ -97,6 +108,19 @@ std::optional<PlatformLayerIdentifier> GraphicsLayerCoordinated::primaryLayerID(
      return m_platformLayer->id();
  }
  
@@ -131,7 +131,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordina
  void GraphicsLayerCoordinated::setNeedsDisplay()
  {
      if (!m_drawsContent || !m_contentsVisible || m_size.isEmpty())
-@@ -94,6 +118,9 @@
+@@ -110,6 +134,9 @@ void GraphicsLayerCoordinated::setNeedsDisplay()
      } else
          m_dirtyRegion = Damage(m_size, Damage::Mode::Full);
  
@@ -141,7 +141,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordina
      noteLayerPropertyChanged(Change::DirtyRegion, ScheduleFlush::Yes);
      addRepaintRect({ { }, m_size });
  }
-@@ -118,6 +145,9 @@
+@@ -134,6 +161,9 @@ void GraphicsLayerCoordinated::setNeedsDisplayInRect(const FloatRect& initialRec
      if (!m_dirtyRegion)
          m_dirtyRegion = Damage(m_size, Damage::Mode::Rectangles, s_maxDamageRectanglesForHighResolutionDamage);
  
@@ -151,10 +151,10 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordina
      if (m_dirtyRegion->add(rect))
          noteLayerPropertyChanged(Change::DirtyRegion, ScheduleFlush::Yes);
  }
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.h sq-B/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.h
+diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.h b/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.h
 --- a/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.h
 +++ b/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.h
-@@ -119,6 +119,7 @@
+@@ -125,6 +125,7 @@ private:
  
      void setNeedsDisplay() override;
      void setNeedsDisplayInRect(const FloatRect&, ShouldClipToLayer = ShouldClipToLayer::Clip) override;
@@ -162,26 +162,26 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordina
  
      FloatSize pixelAlignmentOffset() const override { return m_pixelAlignmentOffset; }
  
-diff -ruN --no-dereference sq-A/Source/WebCore/rendering/RenderElement.cpp sq-B/Source/WebCore/rendering/RenderElement.cpp
+diff --git a/Source/WebCore/rendering/RenderElement.cpp b/Source/WebCore/rendering/RenderElement.cpp
 --- a/Source/WebCore/rendering/RenderElement.cpp
 +++ b/Source/WebCore/rendering/RenderElement.cpp
-@@ -74,6 +74,7 @@
+@@ -76,6 +76,7 @@
  #include "RenderInline.h"
  #include "RenderIterator.h"
  #include "RenderLayer.h"
 +#include "RenderLayerBacking.h"
  #include "RenderLayerCompositor.h"
  #include "RenderLayerInlines.h"
- #include "RenderLayerScrollableArea.h"
-@@ -109,6 +110,7 @@
- #include "Styleable.h"
+ #include "RenderLayerSVGAdditionsInlines.h"
+@@ -114,6 +115,7 @@
  #include "TextAutoSizing.h"
+ #include "TextManipulationController.h"
  #include "ViewTransition.h"
 +#include <cstdlib>
  #include <wtf/MathExtras.h>
  #include <wtf/StackStats.h>
  #include <wtf/TZoneMallocInlines.h>
-@@ -1465,6 +1467,41 @@
+@@ -1566,6 +1568,41 @@ bool RenderElement::repaintAfterLayoutIfNeeded(SingleThreadWeakPtr<const RenderL
      if (!repaintContainer)
          repaintContainer = &view();
  
@@ -223,11 +223,11 @@ diff -ruN --no-dereference sq-A/Source/WebCore/rendering/RenderElement.cpp sq-B/
      if (fullRepaint) {
          if (newClippedOverflowRect.contains(oldClippedOverflowRect))
              repaintUsingContainer(WeakPtr { repaintContainer }, newClippedOverflowRect);
-diff -ruN --no-dereference sq-A/Source/WebCore/rendering/RenderLayerBacking.cpp sq-B/Source/WebCore/rendering/RenderLayerBacking.cpp
+diff --git a/Source/WebCore/rendering/RenderLayerBacking.cpp b/Source/WebCore/rendering/RenderLayerBacking.cpp
 --- a/Source/WebCore/rendering/RenderLayerBacking.cpp
 +++ b/Source/WebCore/rendering/RenderLayerBacking.cpp
-@@ -126,6 +126,10 @@
- #include "ModelContext.h"
+@@ -138,6 +138,10 @@
+ #include "ARKitBadgeSystemImage.h"
  #endif
  
 +#if USE(COORDINATED_GRAPHICS)
@@ -237,7 +237,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/rendering/RenderLayerBacking.cpp 
  namespace WebCore {
  
  WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderLayerBacking);
-@@ -1689,7 +1693,22 @@
+@@ -1741,7 +1745,22 @@ void RenderLayerBacking::updateGeometry(const RenderLayer* compositedAncestor)
          IntSize scrollSize;
          if (scrollableArea)
              scrollSize = IntSize(scrollableArea->scrollWidth(), scrollableArea->scrollHeight());

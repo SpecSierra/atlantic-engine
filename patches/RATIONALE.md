@@ -89,8 +89,13 @@ Any future merge or removal should be proven, not argued —
    the hash returns to the old one — that proves the delta is exactly the
    intended patches and nothing else.
 
-Current stack hash (39 patches, 2.52.6):
-`dc84ed3e34bebed57f061b5d4715c328eaa8c7ae077ae62af1ee0a42e1c7baf6`
+Current stack hash (40 patches, 2.54.0):
+`1fc4f39229db28c2a2b523561a01bb6be2fc27ba109681528d5763d1530ef3d5`
+
+Hashes recorded before 2.54 are not comparable with this one: the script used to
+hash the `diff -ruN <base> <tree>` header lines, which carry absolute WORKDIR
+paths, so the value also moved with the work directory. Those lines are now
+dropped.
 
 Cheap (minutes, no compiler) and it catches every ordering and context mistake
 that would otherwise surface as a CI build failure or, worse, as a silently

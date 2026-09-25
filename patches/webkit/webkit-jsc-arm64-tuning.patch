@@ -6,11 +6,11 @@
 # count and memory rather than desktop Linux defaults.
 #
 # ---
-diff -ruN --no-dereference sq-A/Source/JavaScriptCore/runtime/Options.cpp sq-B/Source/JavaScriptCore/runtime/Options.cpp
+diff --git a/Source/JavaScriptCore/runtime/Options.cpp b/Source/JavaScriptCore/runtime/Options.cpp
 --- a/Source/JavaScriptCore/runtime/Options.cpp
 +++ b/Source/JavaScriptCore/runtime/Options.cpp
-@@ -596,6 +596,65 @@
-     Options::worklistFTLLoadWeight() = 20;
+@@ -635,6 +635,65 @@ static void overrideDefaults()
+     }
  #endif
  
 +#if OS(LINUX) && CPU(ARM64)

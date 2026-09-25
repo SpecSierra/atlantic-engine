@@ -7,42 +7,7 @@
 # in the diff carry the details.
 #
 # ---
---- a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h
-+++ b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h
-@@ -27,6 +27,7 @@
- 
- #if USE(COORDINATED_GRAPHICS) && USE(SKIA)
- #include <wtf/RefPtr.h>
-+#include <wtf/RunLoop.h>
- #include <wtf/TZoneMalloc.h>
- #include <wtf/WorkerPool.h>
- 
-@@ -55,6 +56,17 @@
-     static bool shouldUseLinearTileTextures();
-     static bool shouldUseVivanteSuperTiledTileTextures();
- 
-+    // When WEBKIT_RASTER_ON_COMPOSITOR_THREAD=1, threaded-mode tile GPU
-+    // rasterization (replay) is dispatched to the compositor thread's run loop
-+    // instead of the GPU worker pool, so paint and composite submit to one
-+    // thread's GL command stream in program order. This sidesteps unreliable
-+    // cross-context GPU fence synchronization on drivers such as the
-+    // libhybris-wrapped Adreno on Sailfish OS (which advertises EGL fences but
-+    // does not order GPU work across contexts on a server wait, and exposes no
-+    // EGL_ANDROID_native_fence_sync to use instead).
-+    static bool rasterOnCompositorThread();
-+    void setCompositorRunLoop(RunLoop* runLoop) { m_compositorRunLoop = runLoop; }
-+
-     bool useThreadedRendering() const { return m_workerPool; }
- 
-     Ref<CoordinatedTileBuffer> paint(const GraphicsLayerCoordinated&, const IntRect& dirtyRect, bool contentsOpaque, float contentsScale);
-@@ -66,6 +78,7 @@
-     void paintIntoGraphicsContext(const GraphicsLayer&, GraphicsContext&, const IntRect&, bool contentsOpaque, float contentsScale) const;
- 
-     RefPtr<WorkerPool> m_workerPool;
-+    RunLoop* m_compositorRunLoop { nullptr };
- };
- 
- } // namespace WebCore
+diff --git a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
 --- a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
 +++ b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
 @@ -26,6 +26,9 @@
@@ -55,16 +20,16 @@
  #if USE(COORDINATED_GRAPHICS) && USE(SKIA)
  #include "BitmapTexturePool.h"
  #include "CoordinatedBackingStoreProxy.h"
-@@ -180,7 +183,7 @@
-     auto buffer = createBuffer(renderingMode, dirtyRect.size(), recording->contentsOpaque());
+@@ -257,7 +260,7 @@ Ref<CoordinatedTileBuffer> SkiaPaintingEngine::replay(const GraphicsLayerCoordin
+     auto buffer = createBuffer(renderingMode, bufferSize, recording->contentsOpaque());
      buffer->beginPainting();
  
--    m_workerPool->postTask([platformLayer = WTF::move(platformLayer), buffer = Ref { buffer }, dirtyRect, recording = RefPtr { recording }]() mutable {
-+    auto rasterTask = [platformLayer = WTF::move(platformLayer), buffer = Ref { buffer }, dirtyRect, recording = RefPtr { recording }]() mutable {
+-    m_paintingWorkerPool->postTask([platformLayer = WTF::move(platformLayer), buffer = Ref { buffer }, tileRect, dirtyRect, recording = WTF::move(recording), threadSafeGrContext = WTF::move(threadSafeGrContext)]() mutable {
++    auto rasterTask = [platformLayer = WTF::move(platformLayer), buffer = Ref { buffer }, tileRect, dirtyRect, recording = WTF::move(recording), threadSafeGrContext = WTF::move(threadSafeGrContext)]() mutable {
          if (auto* canvas = buffer->canvas()) {
-             auto replayPicture = [](const sk_sp<SkPicture>& picture, SkCanvas* canvas, const IntRect& recordRect, const IntRect& paintRect) {
+             auto replayPicture = [](const sk_sp<SkPicture>& picture, SkCanvas* canvas, const IntRect& recordRect, const IntRect& tileRect, const IntRect& dirtyRect, bool isDDLBuffer) {
                  canvas->save();
-@@ -204,11 +207,34 @@
+@@ -288,11 +291,34 @@ Ref<CoordinatedTileBuffer> SkiaPaintingEngine::replay(const GraphicsLayerCoordin
  
          buffer->completePainting();
          platformLayer->didPaintTile();
@@ -79,7 +44,7 @@
 +    if (rasterOnCompositorThread() && m_compositorRunLoop)
 +        m_compositorRunLoop->dispatch(WTF::move(rasterTask));
 +    else
-+        m_workerPool->postTask(WTF::move(rasterTask));
++        m_paintingWorkerPool->postTask(WTF::move(rasterTask));
  
      return buffer;
  }
@@ -100,12 +65,50 @@
  unsigned SkiaPaintingEngine::numberOfCPUPaintingThreads()
  {
      static std::once_flag onceFlag;
+diff --git a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h
+--- a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h
++++ b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h
+@@ -30,6 +30,7 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+ #include <skia/gpu/ganesh/GrContextThreadSafeProxy.h>
+ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
+ #include <wtf/RefPtr.h>
++#include <wtf/RunLoop.h>
+ #include <wtf/TZoneMalloc.h>
+ #include <wtf/WorkQueue.h>
+ #include <wtf/WorkerPool.h>
+@@ -64,6 +65,17 @@ public:
+     static bool shouldUseVivanteSuperTiledTileTextures();
+     static bool isDDLEnabled();
+ 
++    // When WEBKIT_RASTER_ON_COMPOSITOR_THREAD=1, threaded-mode tile GPU
++    // rasterization (replay) is dispatched to the compositor thread's run loop
++    // instead of the GPU worker pool, so paint and composite submit to one
++    // thread's GL command stream in program order. This sidesteps unreliable
++    // cross-context GPU fence synchronization on drivers such as the
++    // libhybris-wrapped Adreno on Sailfish OS (which advertises EGL fences but
++    // does not order GPU work across contexts on a server wait, and exposes no
++    // EGL_ANDROID_native_fence_sync to use instead).
++    static bool rasterOnCompositorThread();
++    void setCompositorRunLoop(RunLoop* runLoop) { m_compositorRunLoop = runLoop; }
++
+     const sk_sp<GrContextThreadSafeProxy>& threadSafeGrContext() const { return m_threadSafeGrContext; }
+ 
+     Ref<SkiaRecordingResult> record(const GraphicsLayerCoordinated&, const IntRect& recordRect, bool contentsOpaque, float contentsScale, unsigned dirtyTilesCount);
+@@ -78,6 +90,7 @@ private:
+ 
+     sk_sp<GrContextThreadSafeProxy> m_threadSafeGrContext;
+     RefPtr<WorkerPool> m_paintingWorkerPool;
++    RunLoop* m_compositorRunLoop { nullptr };
+     RefPtr<WorkQueue> m_uploadWorkQueue;
+     unsigned m_cachedImageFingerprint { 0 };
+     Vector<Ref<SkiaGPUAtlas>> m_cachedGPUAtlases;
+diff --git a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
 --- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
 +++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
-@@ -110,6 +110,14 @@
-     m_compositor->setDamagePropagationFlags(damagePropagationFlags);
+@@ -121,6 +121,14 @@ LayerTreeHost::LayerTreeHost(WebPage& webPage)
+     }
+     m_compositor->setDamagePropagationSettings(damagePropagationFlags, settings.damageRectangleThreshold());
  #endif
-     m_layerTreeContext.contextID = m_compositor->surfaceID();
 +
 +#if USE(SKIA)
 +    // Give the Skia painting engine the compositor thread's run loop so it can
@@ -117,9 +120,10 @@
  }
  
  LayerTreeHost::~LayerTreeHost()
+diff --git a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
 --- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
 +++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
-@@ -85,6 +85,20 @@
+@@ -98,6 +98,20 @@ ThreadedCompositor::ThreadedCompositor(WebPage& webPage, LayerTreeHost& layerTre
          this->didCompositeRunLoopObserverFired();
      });
  
@@ -139,4 +143,4 @@
 +
      initializeFPSCounter();
  #if ENABLE(DAMAGE_TRACKING)
-     m_damage.visualizer = TextureMapperDamageVisualizer::create();
+     if (m_useSkia) {

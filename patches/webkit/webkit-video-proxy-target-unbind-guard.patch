@@ -28,19 +28,10 @@ keep the rendering-update rate at display cadence.
 Fix: clearing paths go through clearTargetLayerIfEqual(expected), which
 unbinds only if the proxy still points at the caller's platform layer.
 
---- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferProxy.h
-+++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferProxy.h
-@@ -43,6 +43,7 @@
-     ~CoordinatedPlatformLayerBufferProxy();
- 
-     void setTargetLayer(CoordinatedPlatformLayer*);
-+    void clearTargetLayerIfEqual(CoordinatedPlatformLayer*);
-     void consumePendingBufferIfNeeded();
-     void setDisplayBuffer(std::unique_ptr<CoordinatedPlatformLayerBuffer>&&);
- 
+diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferProxy.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferProxy.cpp
 --- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferProxy.cpp
 +++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferProxy.cpp
-@@ -68,6 +68,19 @@
+@@ -68,6 +68,19 @@ void CoordinatedPlatformLayerBufferProxy::setTargetLayer(CoordinatedPlatformLaye
      }
  }
  
@@ -60,9 +51,21 @@ unbinds only if the proxy still points at the caller's platform layer.
  void CoordinatedPlatformLayerBufferProxy::consumePendingBufferIfNeeded()
  {
      ASSERT(RunLoop::isMain());
+diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferProxy.h b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferProxy.h
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferProxy.h
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayerBufferProxy.h
+@@ -43,6 +43,7 @@ public:
+     ~CoordinatedPlatformLayerBufferProxy();
+ 
+     void setTargetLayer(CoordinatedPlatformLayer*);
++    void clearTargetLayerIfEqual(CoordinatedPlatformLayer*);
+     void consumePendingBufferIfNeeded();
+     void setDisplayBuffer(std::unique_ptr<CoordinatedPlatformLayerBuffer>&&);
+ 
+diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp
 --- a/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp
 +++ b/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp
-@@ -82,7 +82,7 @@
+@@ -96,7 +96,7 @@ GraphicsLayerCoordinated::GraphicsLayerCoordinated(Type layerType, GraphicsLayer
  GraphicsLayerCoordinated::~GraphicsLayerCoordinated()
  {
      if (m_contentsBufferProxy)
@@ -71,7 +74,7 @@ unbinds only if the proxy still points at the caller's platform layer.
      m_platformLayer->setOwner(nullptr);
      if (m_parent)
          downcast<GraphicsLayerCoordinated>(*m_parent).noteLayerPropertyChanged(Change::Children, ScheduleFlush::Yes);
-@@ -415,7 +415,7 @@
+@@ -416,7 +416,7 @@ void GraphicsLayerCoordinated::setContentsToPlatformLayer(PlatformLayer* content
          return;
  
      if (m_contentsBufferProxy)
@@ -80,9 +83,9 @@ unbinds only if the proxy still points at the caller's platform layer.
  
      m_contentsBufferProxy = contentsLayer;
  
-@@ -438,7 +438,7 @@
-     OptionSet<Change> change = { Change::ContentsBuffer };
-     if (m_contentsDisplayDelegate) {
+@@ -442,7 +442,7 @@ void GraphicsLayerCoordinated::setContentsDisplayDelegate(RefPtr<GraphicsLayerCo
+         m_contentsDisplayDelegate->setThreadSafeGrContext(m_platformLayer->threadSafeGrContext());
+ #endif
          if (m_contentsBufferProxy) {
 -            m_contentsBufferProxy->setTargetLayer(nullptr);
 +            m_contentsBufferProxy->clearTargetLayerIfEqual(m_platformLayer.ptr());

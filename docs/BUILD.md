@@ -13,7 +13,7 @@ All pins live in `versions.env`; nothing should hard-code a version.
 | Item | Pin |
 |---|---|
 | SFOS sysroot / target | `5.1.0.11` |
-| WPE WebKit | `2.52.6` |
+| WPE WebKit | `2.54.0` |
 | libwpe | `1.17.0` |
 | WPEBackend-fdo | `1.17.0` |
 | libepoxy | `1.5.11` (patched) |
@@ -97,9 +97,9 @@ updates ([DEVICE.md](DEVICE.md)).
   stack **sequentially** — isolated dry-runs give false failures. Triple-check
   sonames: the triple lives in `Source/cmake/OptionsWPE.cmake`
   (`CALCULATE_LIBRARY_VERSIONS_FROM_LIBTOOL_TRIPLE`, `(current-age).age.revision`).
-  2.52.6 = `10 10 9` → `libWPEWebKit-2.0.so.1.9.10`; the `.so.1` soname that
-  dependents bind to is unchanged, and nothing in packaging hardcodes the
-  versioned filename.
+  2.54.0 = `12 3 11` → `libWPEWebKit-2.0.so.1.11.3` (2.52.6 was `10 10 9` →
+  `.so.1.9.10`); the `.so.1` soname that dependents bind to is unchanged, and
+  nothing in packaging hardcodes the versioned filename.
 
 ## Open packaging questions
 

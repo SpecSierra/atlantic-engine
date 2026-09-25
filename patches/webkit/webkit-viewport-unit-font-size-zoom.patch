@@ -81,10 +81,11 @@ headline 164.12px -> 54.71px, and every length/px/rem/em control is unchanged.
 Zero spread within each arm -- these are deterministic computed-style values,
 so this is a correctness check, not a perf measurement.
 
+diff --git a/Source/WebCore/style/values/primitives/StyleLengthResolution.cpp b/Source/WebCore/style/values/primitives/StyleLengthResolution.cpp
 --- a/Source/WebCore/style/values/primitives/StyleLengthResolution.cpp
 +++ b/Source/WebCore/style/values/primitives/StyleLengthResolution.cpp
-@@ -43,12 +43,64 @@
- #include "RenderView.h"
+@@ -44,12 +44,67 @@
+ #include "StyleLineHeight.h"
  #include "StylePrimitiveNumericTypes+Conversions.h"
  #include "StylePrimitiveNumericTypes+Evaluation.h"
 +#include <stdlib.h>
@@ -121,8 +122,11 @@ so this is a correctness check, not a perf measurement.
 +// WEBKIT_FONT_SIZE_UNIT_UNZOOM=0 restores the old double-zoomed behaviour.
 +//
 +// This is deliberately independent of the rangeZoomOption /
-+// evaluationTimeZoomEnabled path below, which is inert on this port
-+// (EvaluationTimeZoomEnabled defaults to false off Cocoa).
++// evaluationTimeZoomEnabled path below. That path was inert on 2.52
++// (EvaluationTimeZoomEnabled defaulted to false off Cocoa); 2.54 turns it on
++// for every port, so whether upstream now unzooms these units itself is
++// UNVERIFIED -- re-check vg.no / dagbladet.no on device after the bump, and set
++// WEBKIT_FONT_SIZE_UNIT_UNZOOM=0 if text comes out deviceScaleFactor too small.
 +static bool unzoomFontSizeUnits()
 +{
 +    static const bool enabled = [] {
@@ -132,7 +136,7 @@ so this is a correctness check, not a perf measurement.
 +    return enabled;
 +}
 +
- static double adjustValueForPageZoom(double dimension, const CSSToLengthConversionData& conversionData)
+ static double NODELETE adjustValueForPageZoom(double dimension, const CSSToLengthConversionData& conversionData)
  {
 +    if (unzoomFontSizeUnits() && conversionData.computingFontSize()) {
 +        // Divide by the same factor computedFontSizeFromSpecifiedSize() will
@@ -148,7 +152,7 @@ so this is a correctness check, not a perf measurement.
      if (conversionData.rangeZoomOption() != CSS::RangeZoomOptions::Unzoomed)
          return dimension;
  
-@@ -257,7 +309,10 @@
+@@ -282,7 +337,10 @@ double computeNonCalcLengthDouble(double value, CSS::LengthUnit lengthUnit, cons
                  auto widthOrHeight = physicalAxis == CQ::Axis::Width ? containerRenderer->contentBoxWidth() : containerRenderer->contentBoxHeight();
                  auto adjustedWidthOrHeight = widthOrHeight.toDouble();
  

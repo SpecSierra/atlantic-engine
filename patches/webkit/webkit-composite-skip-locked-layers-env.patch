@@ -23,10 +23,20 @@
 #  disproven on device by its own schedupd marker (wt=0). Verify with a 5x5 A/B
 #  before flipping the default, and see INVESTIGATION.md for the levers already
 #  ruled out.
+#  2.54 rebase: the compositor now also takes m_lock in flushPositionChanges()
+#  and in hasPendingBackingStoreTileUpdates()/processPendingBackingStoreTile-
+#  Updates(), the tile-drain pair CoordinatedSceneState runs for EVERY layer on
+#  EVERY composite (VideoFrame included). Guarding only flushCompositingState()
+#  would have silently reintroduced the judder, so all four sites tryLock. The
+#  drain pair has no reasons argument and skips even in RenderingUpdate
+#  composites; that is safe because a contended lock means the main thread is
+#  mid-update and will request another composite, and the store keeps its
+#  pending flag. RE-MEASURE the 1080p fullscreen A/B on 2.54 before trusting it.
 #
 # ---
---- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp	2026-07-23 13:49:09.848210465 +0000
-+++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp	2026-07-23 13:49:50.334468273 +0000
+diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp
 @@ -31,6 +31,7 @@
  #include "CoordinatedBackingStore.h"
  #include "CoordinatedBackingStoreProxy.h"
@@ -35,7 +45,7 @@
  #include "CoordinatedImageBackingStore.h"
  #include "CoordinatedPlatformLayerBuffer.h"
  #include "CoordinatedPlatformLayerBufferHolePunch.h"
-@@ -54,6 +55,18 @@
+@@ -49,6 +50,18 @@
  
  namespace WebCore {
  
@@ -54,8 +64,25 @@
  Ref<CoordinatedPlatformLayer> CoordinatedPlatformLayer::create(Client& client)
  {
      return adoptRef(*new CoordinatedPlatformLayer(&client));
-@@ -908,7 +921,36 @@
- void CoordinatedPlatformLayer::flushCompositingState(const OptionSet<CompositionReason>& reasons)
+@@ -1034,7 +1047,15 @@ void CoordinatedPlatformLayer::flushPositionChanges(const OptionSet<CompositionR
+     if (!reasons.containsAny({ CompositionReason::RenderingUpdate, CompositionReason::AsyncScrolling }))
+         return;
+ 
+-    Locker locker { m_lock };
++    // WEBKIT_COMPOSITE_SKIP_LOCKED_LAYERS: an AsyncScrolling-only composite does
++    // not wait for a layer the main thread holds; its position change stays
++    // pending (see flushCompositingState()).
++    if (atlSkipLockedLayers() && !reasons.contains(CompositionReason::RenderingUpdate)) {
++        if (!m_lock.tryLock())
++            return;
++    } else
++        m_lock.lock();
++    Locker locker { AdoptLock, m_lock };
+     if (!m_pendingChanges.containsAny({ Change::Position, Change::BoundsOrigin }))
+         return;
+ 
+@@ -1066,7 +1087,41 @@ void CoordinatedPlatformLayer::flushPositionChanges(const OptionSet<CompositionR
+ void CoordinatedPlatformLayer::flushCompositingState(const OptionSet<CompositionReason>& reasons, bool useSkiaTarget)
  {
      ASSERT(!isMainThread());
 -    Locker locker { m_lock };
@@ -83,12 +110,52 @@
 +    // A RenderingUpdate composite still blocks, deliberately: it is the one that
 +    // must commit the flush and report it, so skipping layers there would tell
 +    // the main thread its update landed when it did not.
++    //
++    // 2.54: the compositor also takes m_lock in flushPositionChanges() and in the
++    // tile-drain pair hasPendingBackingStoreTileUpdates() /
++    // processPendingBackingStoreTileUpdates(), the latter on EVERY composite for
++    // every layer; all three follow the same rule (see those functions).
 +    if (atlSkipLockedLayers() && !reasons.contains(CompositionReason::RenderingUpdate)) {
 +        if (!m_lock.tryLock())
 +            return;
 +    } else
 +        m_lock.lock();
 +    Locker locker { AdoptLock, m_lock };
-     if (m_pendingChanges.isEmpty() && (!reasons.containsAny({ CompositionReason::RenderingUpdate, CompositionReason::TileDrain }) || !m_backingStoreProxy))
+     if (m_pendingChanges.isEmpty() && (!reasons.contains(CompositionReason::RenderingUpdate) || !m_backingStoreProxy))
          return;
  
+@@ -1469,7 +1524,17 @@ bool CoordinatedPlatformLayer::hasPendingBackingStoreTileUpdates() const
+         return m_skiaTarget->hasPendingBackingStoreTileUpdates();
+ #endif
+ 
+-    Locker locker { m_lock };
++    // WEBKIT_COMPOSITE_SKIP_LOCKED_LAYERS: called for every layer on every
++    // composite, so it must not block on a layer the main thread holds (see
++    // flushCompositingState()). A contended lock means the main thread is mid
++    // rendering update and will request a RenderingUpdate composite when done;
++    // the store keeps its pending flag, so the drain just moves to that frame.
++    if (atlSkipLockedLayers()) {
++        if (!m_lock.tryLock())
++            return false;
++    } else
++        m_lock.lock();
++    Locker locker { AdoptLock, m_lock };
+     if (m_backingStore)
+         return m_backingStore->hasPendingUpdates();
+ 
+@@ -1487,7 +1552,14 @@ void CoordinatedPlatformLayer::processPendingBackingStoreTileUpdates()
+     }
+ #endif
+ 
+-    Locker locker { m_lock };
++    // Same rule as hasPendingBackingStoreTileUpdates(): the lock may have been
++    // taken by the main thread since that check.
++    if (atlSkipLockedLayers()) {
++        if (!m_lock.tryLock())
++            return;
++    } else
++        m_lock.lock();
++    Locker locker { AdoptLock, m_lock };
+     if (m_backingStore)
+         m_backingStore->processPendingUpdates();
+ }

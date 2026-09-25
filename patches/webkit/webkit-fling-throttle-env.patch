@@ -13,11 +13,18 @@
 #  loops. Unset/0 = bit-for-bit stock scheduling. Must apply AFTER the
 #  composite-scroll-sync patches (contexts overlap in LayerTreeHost.cpp).
 #
+#  2.54 rebase: the observer moved into the new FrameRenderer base and became
+#  one-shot (invalidated before every canUpdateRendering() check), so "leave it
+#  polling" no longer exists. The gate now lives in LayerTreeHost::
+#  canUpdateRendering() and the wakeup timer is what re-schedules the observer.
+#  Re-verify on device before turning it on — the deadlock reasoning above was
+#  about the 2.52 scheduler.
+#
 # ---
-diff -ur a/Source/WebCore/page/scrolling/ScrollingTree.cpp b/Source/WebCore/page/scrolling/ScrollingTree.cpp
---- a/Source/WebCore/page/scrolling/ScrollingTree.cpp	2026-07-12 11:58:14.369873814 +0000
-+++ b/Source/WebCore/page/scrolling/ScrollingTree.cpp	2026-07-12 11:59:57.546601015 +0000
-@@ -42,6 +42,9 @@
+diff --git a/Source/WebCore/page/scrolling/ScrollingTree.cpp b/Source/WebCore/page/scrolling/ScrollingTree.cpp
+--- a/Source/WebCore/page/scrolling/ScrollingTree.cpp
++++ b/Source/WebCore/page/scrolling/ScrollingTree.cpp
+@@ -43,6 +43,9 @@
  #include "ScrollingTreeOverflowScrollingNode.h"
  #include "ScrollingTreePositionedNode.h"
  #include "ScrollingTreeScrollingNode.h"
@@ -27,7 +34,7 @@ diff -ur a/Source/WebCore/page/scrolling/ScrollingTree.cpp b/Source/WebCore/page
  #include <wtf/SetForScope.h>
  #include <wtf/TZoneMallocInlines.h>
  #include <wtf/text/TextStream.h>
-@@ -299,8 +302,87 @@
+@@ -300,8 +303,87 @@ void ScrollingTree::traverseScrollingTreeRecursive(ScrollingTreeNode& node, NOES
          traverseScrollingTreeRecursive(child.get(), visitorFunction);
  }
  
@@ -112,13 +119,13 @@ diff -ur a/Source/WebCore/page/scrolling/ScrollingTree.cpp b/Source/WebCore/page
 +    if (flingThrottleEnabled())
 +        noteScrollForFlingThrottle(node);
 +
+     setNeedsApplyLayerPositions();
      if (node.isRootNode())
          setMainFrameScrollPosition(node.currentScrollPosition());
- }
-diff -ur a/Source/WebCore/page/scrolling/ScrollingTree.h b/Source/WebCore/page/scrolling/ScrollingTree.h
---- a/Source/WebCore/page/scrolling/ScrollingTree.h	2026-07-12 11:58:14.369873814 +0000
-+++ b/Source/WebCore/page/scrolling/ScrollingTree.h	2026-07-12 12:03:05.774942751 +0000
-@@ -41,6 +41,7 @@
+diff --git a/Source/WebCore/page/scrolling/ScrollingTree.h b/Source/WebCore/page/scrolling/ScrollingTree.h
+--- a/Source/WebCore/page/scrolling/ScrollingTree.h
++++ b/Source/WebCore/page/scrolling/ScrollingTree.h
+@@ -42,6 +42,7 @@
  #include <WebCore/ScrollingTreeGestureState.h>
  #include <WebCore/ScrollingTreeLatchingController.h>
  #include <WebCore/WheelEventTestMonitor.h>
@@ -126,7 +133,7 @@ diff -ur a/Source/WebCore/page/scrolling/ScrollingTree.h b/Source/WebCore/page/s
  #include <wtf/HashMap.h>
  #include <wtf/Lock.h>
  #include <wtf/MonotonicTime.h>
-@@ -108,6 +109,13 @@
+@@ -121,6 +122,13 @@ public:
  
      WEBCORE_EXPORT bool hasNodeWithActiveScrollAnimations();
  
@@ -140,7 +147,7 @@ diff -ur a/Source/WebCore/page/scrolling/ScrollingTree.h b/Source/WebCore/page/s
      virtual void invalidate() { }
      WEBCORE_EXPORT bool commitTreeState(std::unique_ptr<ScrollingStateTree>&&, std::optional<LayerHostingContextIdentifier> = std::nullopt);
      bool commitTreeStateInternal(std::unique_ptr<ScrollingStateTree>&&, std::optional<LayerHostingContextIdentifier>) WTF_REQUIRES_LOCK(m_treeLock);
-@@ -289,6 +297,17 @@
+@@ -336,6 +344,17 @@ protected:
      mutable Lock m_treeLock; // Protects the scrolling tree.
  
  private:
@@ -158,20 +165,20 @@ diff -ur a/Source/WebCore/page/scrolling/ScrollingTree.h b/Source/WebCore/page/s
      bool updateTreeFromStateNodeRecursive(const ScrollingStateNode*, struct CommitTreeState&) WTF_REQUIRES_LOCK(m_treeLock);
      virtual void propagateSynchronousScrollingReasons(const HashSet<ScrollingNodeID>&) WTF_REQUIRES_LOCK(m_treeLock) { }
  
-diff -ur a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
---- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp	2026-07-12 11:58:14.372873835 +0000
-+++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp	2026-07-12 13:56:53.843649697 +0000
-@@ -52,6 +52,7 @@
- #include <WebCore/Settings.h>
+diff --git a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
+@@ -53,6 +53,7 @@
+ #include <WebCore/SkiaPaintingEngine.h>
  #include <WebCore/ThreadedScrollingTree.h>
  #include <WebCore/WindowEventLoop.h>
 +#include <cstdlib>
  #include <wtf/SetForScope.h>
  #include <wtf/SystemTracing.h>
  #include <wtf/TZoneMallocInlines.h>
-@@ -69,6 +70,39 @@
- 
- WTF_MAKE_TZONE_ALLOCATED_IMPL(LayerTreeHost);
+@@ -87,6 +88,39 @@ std::unique_ptr<LayerTreeHost> LayerTreeHost::create(WebPage& webPage)
+     return makeUnique<LayerTreeHost>(webPage);
+ }
  
 +// Fling-throttle: while the scrolling thread reports a fast fling (see
 +// ScrollingTree::flingThrottleActive), cap main-thread rendering updates to at most
@@ -209,7 +216,35 @@ diff -ur a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cp
  LayerTreeHost::LayerTreeHost(WebPage& webPage)
      : m_webPage(webPage)
      , m_sceneState(CoordinatedSceneState::create())
-@@ -266,6 +300,35 @@
+@@ -171,7 +205,26 @@ void LayerTreeHost::scheduleRenderingUpdateRunLoopObserver()
+ 
+ bool LayerTreeHost::canUpdateRendering() const
+ {
+-    return !m_isWaitingForRenderer;
++    if (m_isWaitingForRenderer)
++        return false;
++
++    // Fling-throttle. FrameRenderer invalidates its (one-shot) rendering-update
++    // observer before asking this, so a throttled pass must re-arm scheduling
++    // itself: the one-shot wakeup timer re-schedules the observer once the
++    // interval has elapsed, and the next pass gets through. Unset/0 = stock.
++    if (double intervalMs = flingThrottleIntervalMs()) {
++        auto interval = Seconds::fromMilliseconds(intervalMs);
++        auto elapsed = MonotonicTime::now() - m_lastRenderingUpdateTimeForFlingThrottle;
++        if (elapsed < interval && isFlingActiveForThrottle()) {
++            if (!m_flingThrottleWakeupTimer)
++                m_flingThrottleWakeupTimer = makeUnique<RunLoop::Timer>(RunLoop::mainSingleton(), "LayerTreeHost::FlingThrottleWakeup"_s, const_cast<LayerTreeHost*>(this), &LayerTreeHost::flingThrottleWakeupTimerFired);
++            if (!m_flingThrottleWakeupTimer->isActive())
++                m_flingThrottleWakeupTimer->startOneShot(interval - elapsed);
++            return false;
++        }
++    }
++
++    return true;
+ }
+ 
+ void LayerTreeHost::updateRendering()
+@@ -252,6 +305,35 @@ void LayerTreeHost::updateRendering()
          m_sceneState->waitUntilPaintingComplete();
          m_waitUntilPaintingComplete = false;
      }
@@ -226,7 +261,7 @@ diff -ur a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cp
 +bool LayerTreeHost::isFlingActiveForThrottle() const
 +{
 +#if ENABLE(SCROLLING_THREAD)
-+    if (auto* scrollingCoordinator = m_webPage.corePage()->scrollingCoordinator()) {
++    if (auto* scrollingCoordinator = m_webPage->corePage()->scrollingCoordinator()) {
 +        if (is<AsyncScrollingCoordinator>(*scrollingCoordinator)) {
 +            if (RefPtr scrollingTree = downcast<AsyncScrollingCoordinator>(*scrollingCoordinator).scrollingTree())
 +                return scrollingTree->flingThrottleActive();
@@ -244,57 +279,38 @@ diff -ur a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cp
 +    scheduleRenderingUpdateRunLoopObserver();
  }
  
- void LayerTreeHost::renderingUpdateRunLoopObserverFired()
-@@ -278,6 +341,20 @@
-     if (m_isWaitingForRenderer)
-         return;
- 
-+    if (double intervalMs = flingThrottleIntervalMs()) {
-+        auto interval = Seconds::fromMilliseconds(intervalMs);
-+        auto elapsed = MonotonicTime::now() - m_lastRenderingUpdateTimeForFlingThrottle;
-+        if (elapsed < interval && isFlingActiveForThrottle()) {
-+            // Throttled: leave the observer scheduled (it keeps polling every loop
-+            // iteration) and make sure a quiet loop wakes up for the remainder.
-+            if (!m_flingThrottleWakeupTimer)
-+                m_flingThrottleWakeupTimer = makeUnique<RunLoop::Timer>(RunLoop::mainSingleton(), "LayerTreeHost::FlingThrottleWakeup"_s, this, &LayerTreeHost::flingThrottleWakeupTimerFired);
-+            if (!m_flingThrottleWakeupTimer->isActive())
-+                m_flingThrottleWakeupTimer->startOneShot(interval - elapsed);
-+            return;
-+        }
-+    }
-+
-     updateRendering();
- }
- 
-diff -ur a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.h b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.h
---- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.h	2026-07-12 11:58:14.371873828 +0000
-+++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.h	2026-07-12 12:00:32.319847551 +0000
+ void LayerTreeHost::updateRootLayer()
+diff --git a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.h b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.h
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.h
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.h
 @@ -40,6 +40,7 @@
- #include <wtf/CheckedRef.h>
+ #include <wtf/CompletionHandler.h>
  #include <wtf/Forward.h>
  #include <wtf/Lock.h>
 +#include <wtf/MonotonicTime.h>
  #include <wtf/OptionSet.h>
  #include <wtf/RunLoop.h>
  #include <wtf/TZoneMalloc.h>
-@@ -128,6 +129,11 @@
-     void updateRendering();
+@@ -86,6 +87,11 @@ private:
+ 
      void requestCompositionForRenderingUpdate();
  
 +    // Fling-throttle (WEBKIT_FLING_THROTTLE_MS): cap rendering updates while the
-+    // scrolling thread reports a fast fling. See renderingUpdateRunLoopObserverFired.
++    // scrolling thread reports a fast fling. See canUpdateRendering().
 +    bool isFlingActiveForThrottle() const;
 +    void flingThrottleWakeupTimerFired();
 +
      // CoordinatedPlatformLayer::Client
- #if USE(CAIRO)
-     WebCore::Cairo::PaintingEngine& paintingEngine() override;
-@@ -179,6 +185,8 @@
-         std::optional<uint32_t> compositionRequestID;
-     } m_forceRepaintAsync;
-     std::unique_ptr<WebCore::RunLoopObserver> m_renderingUpdateRunLoopObserver;
+     WebCore::SkiaPaintingEngine& paintingEngine() const LIFETIME_BOUND override { return *m_skiaPaintingEngine.get(); }
+     Ref<WebCore::CoordinatedImageBackingStore> imageBackingStore(Ref<WebCore::NativeImage>&&) override;
+@@ -145,6 +151,10 @@ private:
+     bool m_waitUntilPaintingComplete { false };
+     bool m_isWaitingForRenderer { false };
+     bool m_scheduledWhileWaitingForRenderer { false };
 +    MonotonicTime m_lastRenderingUpdateTimeForFlingThrottle;
-+    std::unique_ptr<RunLoop::Timer> m_flingThrottleWakeupTimer;
- #if USE(CAIRO)
-     std::unique_ptr<WebCore::Cairo::PaintingEngine> m_paintingEngine;
- #elif USE(SKIA)
++    // Mutable: armed from canUpdateRendering() const, the FrameRenderer hook
++    // the throttle gates through.
++    mutable std::unique_ptr<RunLoop::Timer> m_flingThrottleWakeupTimer;
+     bool m_forceFrameSync { false };
+     bool m_compositionRequired { false };
+ #if ENABLE(SCROLLING_THREAD)

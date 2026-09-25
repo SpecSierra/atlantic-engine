@@ -9,9 +9,10 @@
 #  "patches/webkit/webkit-gpu-process-by-default-wpe.patch"
 #
 # ---
+diff --git a/Source/WebCore/platform/graphics/PlatformDisplay.h b/Source/WebCore/platform/graphics/PlatformDisplay.h
 --- a/Source/WebCore/platform/graphics/PlatformDisplay.h
 +++ b/Source/WebCore/platform/graphics/PlatformDisplay.h
-@@ -77,7 +77,7 @@
+@@ -81,7 +81,7 @@ public:
  #if OS(ANDROID)
          Android,
  #endif
@@ -20,23 +21,7 @@
          Default,
  #endif
      };
---- a/Source/WebCore/platform/graphics/egl/PlatformDisplayDefault.h
-+++ b/Source/WebCore/platform/graphics/egl/PlatformDisplayDefault.h
-@@ -25,7 +25,7 @@
- 
- #pragma once
- 
--#if PLATFORM(GTK) || OS(ANDROID)
-+#if PLATFORM(GTK) || PLATFORM(WPE) || OS(ANDROID)
- 
- #include "PlatformDisplay.h"
- 
-@@ -44,4 +44,4 @@
- 
- } // namespace WebCore
- 
--#endif // PLATFORM(GTK) || OS(ANDROID)
-+#endif // PLATFORM(GTK) || PLATFORM(WPE) || OS(ANDROID)
+diff --git a/Source/WebCore/platform/graphics/egl/PlatformDisplayDefault.cpp b/Source/WebCore/platform/graphics/egl/PlatformDisplayDefault.cpp
 --- a/Source/WebCore/platform/graphics/egl/PlatformDisplayDefault.cpp
 +++ b/Source/WebCore/platform/graphics/egl/PlatformDisplayDefault.cpp
 @@ -26,7 +26,7 @@
@@ -48,12 +33,31 @@
  
  #include "GLContext.h"
  #include <epoxy/egl.h>
-@@ -59,4 +59,4 @@
+@@ -57,4 +57,4 @@ PlatformDisplayDefault::~PlatformDisplayDefault() = default;
  
  } // namespace WebCore
  
 -#endif // PLATFORM(GTK) || OS(ANDROID)
 +#endif // PLATFORM(GTK) || PLATFORM(WPE) || OS(ANDROID)
+diff --git a/Source/WebCore/platform/graphics/egl/PlatformDisplayDefault.h b/Source/WebCore/platform/graphics/egl/PlatformDisplayDefault.h
+--- a/Source/WebCore/platform/graphics/egl/PlatformDisplayDefault.h
++++ b/Source/WebCore/platform/graphics/egl/PlatformDisplayDefault.h
+@@ -25,7 +25,7 @@
+ 
+ #pragma once
+ 
+-#if PLATFORM(GTK) || OS(ANDROID)
++#if PLATFORM(GTK) || PLATFORM(WPE) || OS(ANDROID)
+ 
+ #include "PlatformDisplay.h"
+ 
+@@ -44,4 +44,4 @@ private:
+ 
+ } // namespace WebCore
+ 
+-#endif // PLATFORM(GTK) || OS(ANDROID)
++#endif // PLATFORM(GTK) || PLATFORM(WPE) || OS(ANDROID)
+diff --git a/Source/WebKit/GPUProcess/glib/GPUProcessGLib.cpp b/Source/WebKit/GPUProcess/glib/GPUProcessGLib.cpp
 --- a/Source/WebKit/GPUProcess/glib/GPUProcessGLib.cpp
 +++ b/Source/WebKit/GPUProcess/glib/GPUProcessGLib.cpp
 @@ -36,6 +36,9 @@
@@ -63,17 +67,17 @@
 +#if PLATFORM(WPE)
 +#include <WebCore/PlatformDisplayDefault.h>
 +#endif
+ #include <WebCore/PlatformDisplaySurfaceless.h>
+ #include <wtf/text/CStringView.h>
  
- namespace WebKit {
- 
-@@ -48,8 +51,19 @@
+@@ -50,9 +53,20 @@ void GPUProcess::platformInitializeGPUProcess(GPUProcessCreationParameters& para
          WebCore::PlatformDisplay::setSharedDisplay(WebCore::PlatformDisplayGBM::create(device->device()));
          return;
      }
 +    WTFLogAlways("GPU process: GBM device unavailable, trying EGL default display fallback...");
  #else
      UNUSED_PARAM(parameters);
-+#endif
+ #endif
 +
 +#if PLATFORM(WPE)
 +    // On SFOS/hybris there is no DRM/GBM device. Fall back to
@@ -83,6 +87,7 @@
 +        WTFLogAlways("GPU process: using EGL default display (hybris fallback).");
 +        return;
 +    }
- #endif
- 
-     WTFLogAlways("Could not create EGL display for GPU process: no supported platform available. Aborting...");
++#endif
+     if (auto display = WebCore::PlatformDisplaySurfaceless::create()) {
+         WebCore::PlatformDisplay::setSharedDisplay(WTF::move(display));
+         return;

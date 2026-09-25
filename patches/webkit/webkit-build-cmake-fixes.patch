@@ -82,13 +82,13 @@ diff -ruN --no-dereference sq-A/Source/cmake/OptionsWPE.cmake sq-B/Source/cmake/
 diff -ruN --no-dereference sq-A/Source/JavaScriptCore/CMakeLists.txt sq-B/Source/JavaScriptCore/CMakeLists.txt
 --- a/Source/JavaScriptCore/CMakeLists.txt
 +++ b/Source/JavaScriptCore/CMakeLists.txt
-@@ -1683,6 +1683,8 @@
+@@ -1799,6 +1799,8 @@
  
  target_include_directories(LowLevelInterpreterLib
      PRIVATE "$<TARGET_PROPERTY:JavaScriptCore,INCLUDE_DIRECTORIES>" "${JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS_DIR}/JavaScriptCore")
 +target_compile_definitions(LowLevelInterpreterLib
 +    PRIVATE "$<TARGET_PROPERTY:JavaScriptCore,COMPILE_DEFINITIONS>")
- add_dependencies(LowLevelInterpreterLib Bytecodes JSCBuiltins)
+ add_dependencies(LowLevelInterpreterLib Bytecodes JSCBuiltins JSCWebPreferenceOptions)
  if (TARGET WTF_CopyHeaders)
      add_dependencies(LowLevelInterpreterLib WTF_CopyHeaders)
 diff -ruN --no-dereference sq-A/Source/JavaScriptCore/shell/CMakeLists.txt sq-B/Source/JavaScriptCore/shell/CMakeLists.txt

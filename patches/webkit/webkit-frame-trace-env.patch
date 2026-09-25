@@ -26,140 +26,7 @@ So the ack->composite gap resolves to: no reqcomp/sched during the gap = the
 scroll/update scheduler is starved; sched with w=1 = compositor waiting on the
 renderer (tiles); rupd late/slow = main-thread update is the gate. Zero cost
 when unset; not shipped on.
---- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
-+++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
-@@ -41,6 +41,8 @@
- #include <WebCore/TextureMapperLayer.h>
- #include <WebCore/TransformationMatrix.h>
- #include <cstdlib>
-+#include <cstdio>
-+#include <ctime>
- #include <cstring>
- 
- #if USE(LIBEPOXY)
-@@ -64,6 +66,18 @@
- #endif
- 
- namespace WebKit {
-+
-+// ATLANTIC_FRAME_TRACE=1: CLOCK_MONOTONIC-stamped "[ftrace] web ..." markers
-+// across the frame pipeline (comparable to the qt5-plugin ui markers, same
-+// clock). Defined early so every function below can use it. Zero cost when unset.
-+static bool atlFrameTrace()
-+{
-+    static const bool on = [] {
-+        const char* e = getenv("ATLANTIC_FRAME_TRACE");
-+        return e && e[0] && e[0] != '0';
-+    }();
-+    return on;
-+}
- using namespace WebCore;
- 
- WTF_MAKE_TZONE_ALLOCATED_IMPL(ThreadedCompositor);
-@@ -237,6 +251,10 @@
- void ThreadedCompositor::pendingTilesDidChange()
- {
-     Locker locker { m_state.lock };
-+    if (atlFrameTrace()) {
-+        struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
-+        fprintf(stderr, "[ftrace] web tileschange p=%u wait=%d t=%.1f\n", m_sceneState->pendingTiles(), m_state.isWaitingForTiles ? 1 : 0, ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6);
-+    }
-     if (!m_state.isWaitingForTiles)
-         return;
- 
-@@ -321,6 +339,11 @@
- 
- void ThreadedCompositor::paintToCurrentGLContext(const TransformationMatrix& matrix, const IntSize& size, const OptionSet<CompositionReason>& reasons)
- {
-+    if (atlFrameTrace()) {
-+        struct timespec ts;
-+        clock_gettime(CLOCK_MONOTONIC, &ts);
-+        fprintf(stderr, "[ftrace] web composite t=%.1f\n", ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6);
-+    }
-     FloatRect clipRect(FloatPoint { }, size);
-     TextureMapperLayer& currentRootLayer = m_sceneState->rootLayer().ensureTarget();
-     if (currentRootLayer.transform() != matrix)
-@@ -513,11 +536,20 @@
-     m_state.didCompositeRenderingUpdateFunction = WTF::move(didCompositeFunction);
-     if (m_sceneState->pendingTiles())
-         m_state.isWaitingForTiles = true;
-+    if (atlFrameTrace()) {
-+        struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
-+        fprintf(stderr, "[ftrace] web wtiles-set p=%u wait=%d t=%.1f\n", m_sceneState->pendingTiles(), m_state.isWaitingForTiles ? 1 : 0, ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6);
-+    }
-     scheduleUpdateLocked();
- }
- 
- void ThreadedCompositor::requestComposition(CompositionReason reason)
- {
-+    if (atlFrameTrace()) {
-+        struct timespec ts;
-+        clock_gettime(CLOCK_MONOTONIC, &ts);
-+        fprintf(stderr, "[ftrace] web reqcomp r=%u t=%.1f\n", static_cast<unsigned>(reason), ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6);
-+    }
-     Locker locker { m_state.lock };
-     m_state.reasons.add(reason);
-     scheduleUpdateLocked();
---- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
-+++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
-@@ -53,6 +53,8 @@
- #include <WebCore/ThreadedScrollingTree.h>
- #include <WebCore/WindowEventLoop.h>
- #include <cstdlib>
-+#include <cstdio>
-+#include <ctime>
- #include <wtf/SetForScope.h>
- #include <wtf/SystemTracing.h>
- #include <wtf/TZoneMallocInlines.h>
-@@ -210,8 +212,32 @@
-         scheduleRenderingUpdate();
- }
- 
-+// ATLANTIC_FRAME_TRACE=1 marker (see webkit-frame-trace-env.patch). Same
-+// CLOCK_MONOTONIC clock as the ThreadedCompositor and qt5-plugin markers.
-+static bool atlFrameTraceLT()
-+{
-+    static const bool on = [] {
-+        const char* e = getenv("ATLANTIC_FRAME_TRACE");
-+        return e && e[0] && e[0] != '0';
-+    }();
-+    return on;
-+}
-+static void atlFtraceLT(const char* what, int w = -1)
-+{
-+    if (!atlFrameTraceLT())
-+        return;
-+    struct timespec ts;
-+    clock_gettime(CLOCK_MONOTONIC, &ts);
-+    double ms = ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6;
-+    if (w < 0)
-+        fprintf(stderr, "[ftrace] web %s t=%.1f\n", what, ms);
-+    else
-+        fprintf(stderr, "[ftrace] web %s w=%d t=%.1f\n", what, w, ms);
-+}
-+
- void LayerTreeHost::scheduleRenderingUpdate()
- {
-+    atlFtraceLT("sched", m_isWaitingForRenderer ? 1 : 0);
-     WTFEmitSignpost(this, LayerTreeHostScheduleRenderingUpdate, "isWaitingForRenderer %s", m_isWaitingForRenderer ? "yes" : "no");
- 
-     if (m_layerTreeStateIsFrozen)
-@@ -251,6 +277,7 @@
- 
- void LayerTreeHost::updateRendering()
- {
-+    atlFtraceLT("rupd", m_isWaitingForRenderer ? 1 : 0);
-     invalidateRenderingUpdateRunLoopObserver();
- 
-     RELEASE_ASSERT(!m_isUpdatingRendering);
-@@ -335,6 +362,7 @@
-     // here guarantees a real main-thread-idle gap between passes for the
-     // compositor and scrolling thread to breathe in.
-     m_lastRenderingUpdateTimeForFlingThrottle = MonotonicTime::now();
-+    atlFtraceLT("rupd-end", m_isWaitingForRenderer ? 1 : 0);
- }
- 
- bool LayerTreeHost::isFlingActiveForThrottle() const
+diff --git a/Source/WebCore/page/scrolling/coordinated/ScrollingTreeCoordinated.cpp b/Source/WebCore/page/scrolling/coordinated/ScrollingTreeCoordinated.cpp
 --- a/Source/WebCore/page/scrolling/coordinated/ScrollingTreeCoordinated.cpp
 +++ b/Source/WebCore/page/scrolling/coordinated/ScrollingTreeCoordinated.cpp
 @@ -40,9 +40,32 @@
@@ -195,17 +62,18 @@ when unset; not shipped on.
  Ref<ScrollingTreeCoordinated> ScrollingTreeCoordinated::create(AsyncScrollingCoordinator& scrollingCoordinator)
  {
      return adoptRef(*new ScrollingTreeCoordinated(scrollingCoordinator));
-@@ -81,6 +104,7 @@
- 
+@@ -82,6 +105,7 @@ Ref<ScrollingTreeNode> ScrollingTreeCoordinated::createScrollingTreeNode(Scrolli
  void ScrollingTreeCoordinated::applyLayerPositionsInternal()
  {
+     assertIsHeld(m_treeLock);
 +    atlFtraceSTC(ScrollingThread::isCurrentThread());
      auto* rootScrollingNode = rootNode();
      if (!rootScrollingNode)
          return;
+diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
 --- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
 +++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
-@@ -31,6 +31,7 @@
+@@ -34,6 +34,7 @@
  #include <cstdlib>
  #include <cstring>
  #include <cstdio>
@@ -213,7 +81,7 @@ when unset; not shipped on.
  
  static bool coordPaintLogEnabled()
  {
-@@ -52,6 +53,24 @@
+@@ -60,6 +61,24 @@ static bool coordPaintLogEnabled()
  
  namespace WebCore {
  
@@ -238,7 +106,7 @@ when unset; not shipped on.
  // Tile prepaint tuning for scroll smoothness (see also
  // webkit-glfence-disable-env.patch / webkit-texpool-compositor-sync-env.patch):
  //  - WEBKIT_COVER_AREA_MULTIPLIER=<float 1..6>: how much area around the
-@@ -313,6 +332,7 @@
+@@ -727,6 +746,7 @@ OptionSet<CoordinatedBackingStoreProxy::UpdateResult> CoordinatedBackingStorePro
  
      Vector<Update::TileUpdate> tilesToUpdate;
      if (dirtyTilesCount) {
@@ -246,6 +114,7 @@ when unset; not shipped on.
          if (coordPaintLogEnabled())
              fprintf(stderr, "[paintlog] proxy %p PAINT dirtyTiles=%u union=%d,%d %dx%d contents=%dx%d newTiles=%u\n", this, dirtyTilesCount, tileDirtyRectUnion.x(), tileDirtyRectUnion.y(), tileDirtyRectUnion.width(), tileDirtyRectUnion.height(), m_contentsRect.width(), m_contentsRect.height(), static_cast<unsigned>(tilesToCreate.size()));
          WTFBeginSignpost(this, UpdateTiles, "dirty tiles: %u", dirtyTilesCount);
+diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp
 --- a/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp
 +++ b/Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp
 @@ -45,6 +45,8 @@
@@ -257,7 +126,7 @@ when unset; not shipped on.
  #include <cstdio>
  
  static bool coordPaintLogEnabled()
-@@ -148,6 +150,28 @@
+@@ -164,6 +166,28 @@ void GraphicsLayerCoordinated::setNeedsDisplayInRect(const FloatRect& initialRec
      if (coordPaintLogEnabled() && rect.width() * rect.height() >= 500000)
          fprintf(stderr, "[paintlog] GLC %p RECT %.0f,%.0f %.0fx%.0f size=%.0fx%.0f\n", this, rect.x(), rect.y(), rect.width(), rect.height(), m_size.width(), m_size.height());
  
@@ -286,3 +155,139 @@ when unset; not shipped on.
      if (m_dirtyRegion->add(rect))
          noteLayerPropertyChanged(Change::DirtyRegion, ScheduleFlush::Yes);
  }
+diff --git a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
+@@ -54,6 +54,8 @@
+ #include <WebCore/ThreadedScrollingTree.h>
+ #include <WebCore/WindowEventLoop.h>
+ #include <cstdlib>
++#include <cstdio>
++#include <ctime>
+ #include <wtf/SetForScope.h>
+ #include <wtf/SystemTracing.h>
+ #include <wtf/TZoneMallocInlines.h>
+@@ -207,8 +209,32 @@ uint64_t LayerTreeHost::surfaceID() const
+     return m_compositor->surfaceID();
+ }
+ 
++// ATLANTIC_FRAME_TRACE=1 marker (see webkit-frame-trace-env.patch). Same
++// CLOCK_MONOTONIC clock as the ThreadedCompositor and qt5-plugin markers.
++static bool atlFrameTraceLT()
++{
++    static const bool on = [] {
++        const char* e = getenv("ATLANTIC_FRAME_TRACE");
++        return e && e[0] && e[0] != '0';
++    }();
++    return on;
++}
++static void atlFtraceLT(const char* what, int w = -1)
++{
++    if (!atlFrameTraceLT())
++        return;
++    struct timespec ts;
++    clock_gettime(CLOCK_MONOTONIC, &ts);
++    double ms = ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6;
++    if (w < 0)
++        fprintf(stderr, "[ftrace] web %s t=%.1f\n", what, ms);
++    else
++        fprintf(stderr, "[ftrace] web %s w=%d t=%.1f\n", what, w, ms);
++}
++
+ void LayerTreeHost::scheduleRenderingUpdate()
+ {
++    atlFtraceLT("sched", m_isWaitingForRenderer ? 1 : 0);
+     WTFEmitSignpost(this, LayerTreeHostScheduleRenderingUpdate, "isWaitingForRenderer %s", m_isWaitingForRenderer ? "yes" : "no");
+ 
+     if (m_layerTreeStateIsFrozen || m_isSuspended || m_webPage->size().isEmpty())
+@@ -256,6 +282,7 @@ bool LayerTreeHost::canUpdateRendering() const
+ 
+ void LayerTreeHost::updateRendering()
+ {
++    atlFtraceLT("rupd", m_isWaitingForRenderer ? 1 : 0);
+     invalidateRenderingUpdateRunLoopObserver();
+ 
+     RELEASE_ASSERT(!m_isUpdatingRendering);
+@@ -340,6 +367,7 @@ void LayerTreeHost::updateRendering()
+     // here guarantees a real main-thread-idle gap between passes for the
+     // compositor and scrolling thread to breathe in.
+     m_lastRenderingUpdateTimeForFlingThrottle = MonotonicTime::now();
++    atlFtraceLT("rupd-end", m_isWaitingForRenderer ? 1 : 0);
+ }
+ 
+ bool LayerTreeHost::isFlingActiveForThrottle() const
+diff --git a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
+@@ -46,6 +46,8 @@
+ #include <WebCore/TextureMapperLayer.h>
+ #include <WebCore/TransformationMatrix.h>
+ #include <cstdlib>
++#include <cstdio>
++#include <ctime>
+ #include <cstring>
+ 
+ #if USE(LIBEPOXY)
+@@ -76,6 +78,18 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
+ #endif
+ 
+ namespace WebKit {
++
++// ATLANTIC_FRAME_TRACE=1: CLOCK_MONOTONIC-stamped "[ftrace] web ..." markers
++// across the frame pipeline (comparable to the qt5-plugin ui markers, same
++// clock). Defined early so every function below can use it. Zero cost when unset.
++static bool atlFrameTrace()
++{
++    static const bool on = [] {
++        const char* e = getenv("ATLANTIC_FRAME_TRACE");
++        return e && e[0] && e[0] != '0';
++    }();
++    return on;
++}
+ using namespace WebCore;
+ 
+ WTF_MAKE_TZONE_ALLOCATED_IMPL(ThreadedCompositor);
+@@ -290,6 +304,10 @@ void ThreadedCompositor::preferredBufferFormatsDidChange()
+ void ThreadedCompositor::pendingTilesDidChange()
+ {
+     Locker locker { m_state.lock };
++    if (atlFrameTrace()) {
++        struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
++        fprintf(stderr, "[ftrace] web tileschange p=%u wait=%d t=%.1f\n", m_sceneState->pendingTiles(), m_state.isWaitingForTiles ? 1 : 0, ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6);
++    }
+     if (!m_state.isWaitingForTiles)
+         return;
+ 
+@@ -400,6 +418,11 @@ TargetContents ThreadedCompositor::paintToCurrentGLContext(const TransformationM
+ 
+ void ThreadedCompositor::paintToTextureMapper(const TransformationMatrix& matrix, const IntSize& size, const OptionSet<CompositionReason>& reasons)
+ {
++    if (atlFrameTrace()) {
++        struct timespec ts;
++        clock_gettime(CLOCK_MONOTONIC, &ts);
++        fprintf(stderr, "[ftrace] web composite t=%.1f\n", ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6);
++    }
+     FloatRect clipRect(FloatPoint { }, size);
+     TextureMapperLayer& currentRootLayer = m_sceneState->rootLayer().ensureTarget();
+     if (currentRootLayer.transform() != matrix)
+@@ -697,11 +720,20 @@ void ThreadedCompositor::requestCompositionForRenderingUpdate(Function<void()>&&
+     m_state.didCompositeRenderingUpdateFunction = WTF::move(didCompositeFunction);
+     if (m_sceneState->pendingTiles())
+         m_state.isWaitingForTiles = true;
++    if (atlFrameTrace()) {
++        struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
++        fprintf(stderr, "[ftrace] web wtiles-set p=%u wait=%d t=%.1f\n", m_sceneState->pendingTiles(), m_state.isWaitingForTiles ? 1 : 0, ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6);
++    }
+     scheduleUpdateLocked();
+ }
+ 
+ void ThreadedCompositor::requestComposition(CompositionReason reason)
+ {
++    if (atlFrameTrace()) {
++        struct timespec ts;
++        clock_gettime(CLOCK_MONOTONIC, &ts);
++        fprintf(stderr, "[ftrace] web reqcomp r=%u t=%.1f\n", static_cast<unsigned>(reason), ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6);
++    }
+     Locker locker { m_state.lock };
+     m_state.reasons.add(reason);
+     scheduleUpdateLocked();

@@ -25,9 +25,10 @@ Source/WebKit/UIProcess/Launcher/glib/BubblewrapLauncher.cpp:
      rootfs (now the sandbox root via --dev-bind / /) cannot host the
      /.flatpak-info mount point.
 
+diff --git a/Source/WebKit/UIProcess/Launcher/glib/BubblewrapLauncher.cpp b/Source/WebKit/UIProcess/Launcher/glib/BubblewrapLauncher.cpp
 --- a/Source/WebKit/UIProcess/Launcher/glib/BubblewrapLauncher.cpp
 +++ b/Source/WebKit/UIProcess/Launcher/glib/BubblewrapLauncher.cpp
-@@ -731,6 +731,18 @@
+@@ -745,6 +745,18 @@ static bool shouldUnshareNetwork(ProcessLauncher::ProcessType processType, Vecto
      }
  #endif
  
@@ -46,8 +47,8 @@ Source/WebKit/UIProcess/Launcher/glib/BubblewrapLauncher.cpp:
      // Otherwise, only the network process should have network access. If we are the network
      // process, then we are not sandboxed and have already bailed out before this point.
      return true;
-@@ -781,47 +793,33 @@
-         return adoptGRef(g_subprocess_launcher_spawnv(launcher, argv, error));
+@@ -797,50 +809,33 @@ GRefPtr<GSubprocess> bubblewrapSpawn(GSubprocessLauncher* launcher, const Proces
+         return adoptGRef(g_subprocess_launcher_spawnv(launcher, argv.span().data(), error));
  
      const char* runDir = g_get_user_runtime_dir();
 +    // SFOS / Android kernel 4.14 cannot pivot_root(2) into a freshly created
@@ -99,6 +100,9 @@ Source/WebKit/UIProcess/Launcher/glib/BubblewrapLauncher.cpp:
 -        "--ro-bind-try", "/usr/lib", "/usr/lib",
 -        "--ro-bind-try", "/usr/local/lib", "/usr/local/lib",
 -        "--ro-bind-try", LIBDIR, LIBDIR,
+-#if defined(WEBKIT_SWIFT_STDLIB_LIBRARY_PATH)
+-        "--ro-bind-try", WEBKIT_SWIFT_STDLIB_LIBRARY_PATH, WEBKIT_SWIFT_STDLIB_LIBRARY_PATH,
+-#endif
 -#if CPU(ADDRESS64)
 -        "--ro-bind-try", "/lib64", "/lib64",
 -        "--ro-bind-try", "/usr/lib64", "/usr/lib64",
@@ -113,7 +117,7 @@ Source/WebKit/UIProcess/Launcher/glib/BubblewrapLauncher.cpp:
      };
  
      if (enableDebugPermissions()) {
-@@ -892,7 +890,13 @@
+@@ -909,7 +904,13 @@ GRefPtr<GSubprocess> bubblewrapSpawn(GSubprocessLauncher* launcher, const Proces
      // The easiest method is for us to pretend to be a flatpak and if that
      // fails just blocking portals entirely as it just becomes a sandbox escape.
      GUniquePtr<char> instanceID(g_strdup_printf("webkit-%d-%" PRIu64, getpid(), launchOptions.processIdentifier.toUInt64()));

@@ -7,7 +7,7 @@ repo `SpecSierra/atlantic-browser`; the two ship together.
 | | |
 |---|---|
 | Sailfish OS target | **5.1.0.11** (Pispala) |
-| WPE WebKit | **2.52.6** |
+| WPE WebKit | **2.54.0** |
 | Atlantic Browser | **1.3.0** |
 | Local patches | 43 ([patches/SERIES.md](patches/SERIES.md)) |
 | Builds | CI only — push to `master` |

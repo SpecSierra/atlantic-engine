@@ -36,10 +36,10 @@
 # results-reuse.
 #
 # ---
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/filters/FilterResults.cpp sq-B/Source/WebCore/platform/graphics/filters/FilterResults.cpp
+diff --git a/Source/WebCore/platform/graphics/filters/FilterResults.cpp b/Source/WebCore/platform/graphics/filters/FilterResults.cpp
 --- a/Source/WebCore/platform/graphics/filters/FilterResults.cpp
 +++ b/Source/WebCore/platform/graphics/filters/FilterResults.cpp
-@@ -91,4 +91,19 @@
+@@ -91,4 +91,19 @@ void FilterResults::clearEffectResult(FilterEffect& effect)
      m_resultReferences.remove(result);
  }
  
@@ -59,10 +59,10 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/filters/FilterR
 +}
 +
  } // namespace WebCore
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/filters/FilterResults.h sq-B/Source/WebCore/platform/graphics/filters/FilterResults.h
+diff --git a/Source/WebCore/platform/graphics/filters/FilterResults.h b/Source/WebCore/platform/graphics/filters/FilterResults.h
 --- a/Source/WebCore/platform/graphics/filters/FilterResults.h
 +++ b/Source/WebCore/platform/graphics/filters/FilterResults.h
-@@ -47,6 +47,7 @@
+@@ -47,6 +47,7 @@ public:
      FilterImage* effectResult(FilterEffect&) const;
      void setEffectResult(FilterEffect&, std::span<const Ref<FilterImage>> inputs, Ref<FilterImage>&& result);
      void clearEffectResult(FilterEffect&);
@@ -70,10 +70,10 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/filters/FilterR
  
  private:
      size_t memoryCost() const;
-diff -ruN --no-dereference sq-A/Source/WebCore/rendering/svg/legacy/LegacyRenderSVGResourceFilter.cpp sq-B/Source/WebCore/rendering/svg/legacy/LegacyRenderSVGResourceFilter.cpp
+diff --git a/Source/WebCore/rendering/svg/legacy/LegacyRenderSVGResourceFilter.cpp b/Source/WebCore/rendering/svg/legacy/LegacyRenderSVGResourceFilter.cpp
 --- a/Source/WebCore/rendering/svg/legacy/LegacyRenderSVGResourceFilter.cpp
 +++ b/Source/WebCore/rendering/svg/legacy/LegacyRenderSVGResourceFilter.cpp
-@@ -36,6 +36,8 @@
+@@ -37,6 +37,8 @@
  #include "SVGElementTypeHelpers.h"
  #include "SVGRenderingContext.h"
  #include "Settings.h"
@@ -82,8 +82,8 @@ diff -ruN --no-dereference sq-A/Source/WebCore/rendering/svg/legacy/LegacyRender
  #include <wtf/TZoneMallocInlines.h>
  #include <wtf/text/TextStream.h>
  
-@@ -56,9 +58,40 @@
-     return SVGFilterRenderer::isIdentity(protectedFilterElement());
+@@ -57,9 +59,40 @@ bool LegacyRenderSVGResourceFilter::isIdentity() const
+     return SVGFilterRenderer::isIdentity(protect(filterElement()));
  }
  
 +static bool svgFilterResultsReuseEnabled()
@@ -123,7 +123,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/rendering/svg/legacy/LegacyRender
  }
  
  void LegacyRenderSVGResourceFilter::removeClientFromCache(RenderElement& client)
-@@ -68,8 +101,10 @@
+@@ -69,8 +102,10 @@ void LegacyRenderSVGResourceFilter::removeClientFromCache(RenderElement& client)
          FilterData& filterData = *findResult->value;
          if (filterData.savedContext)
              filterData.state = FilterData::MarkedForRemoval;
@@ -135,7 +135,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/rendering/svg/legacy/LegacyRender
      }
  }
  
-@@ -118,6 +153,26 @@
+@@ -119,6 +154,26 @@ auto LegacyRenderSVGResourceFilter::applyResource(RenderElement& renderer, const
      // Eliminate shear of the absolute transformation matrix, to be able to produce unsheared tile images for feTile.
      FloatSize filterScale(absoluteTransform.xScale(), absoluteTransform.yScale());
  
@@ -162,7 +162,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/rendering/svg/legacy/LegacyRender
      // Determine absolute boundaries of the filter and the drawing region.
      filterData->sourceImageRect = renderer.strokeBoundingBox();
      filterData->sourceImageRect.intersect(filterRegion);
-@@ -148,7 +203,22 @@
+@@ -149,7 +204,22 @@ auto LegacyRenderSVGResourceFilter::applyResource(RenderElement& renderer, const
      auto colorSpace = DestinationColorSpace::LinearSRGB();
  #endif
  
@@ -179,15 +179,15 @@ diff -ruN --no-dereference sq-A/Source/WebCore/rendering/svg/legacy/LegacyRender
 +        retired.results->clearSourceImageDependentResults();
 +    }
 +
-     auto& results = filterData->filter->ensureResults([&]() {
+     auto& results = protect(filterData->filter)->ensureResults([&]() {
 +        if (reuseRetiredResults)
 +            return WTF::move(retired.results);
          return makeUnique<FilterResults>();
      });
  
-@@ -251,6 +321,12 @@
+@@ -252,6 +322,12 @@ void LegacyRenderSVGResourceFilter::markFilterForRepaint(FilterEffect& effect)
  
-         filterData->filter->clearEffectResult(effect);
+         protect(filterData->filter)->clearEffectResult(effect);
      }
 +
 +    // Retired results may hold a stale result for this effect as well.
@@ -198,10 +198,10 @@ diff -ruN --no-dereference sq-A/Source/WebCore/rendering/svg/legacy/LegacyRender
  }
  
  void LegacyRenderSVGResourceFilter::markFilterForRebuild()
-diff -ruN --no-dereference sq-A/Source/WebCore/rendering/svg/legacy/LegacyRenderSVGResourceFilter.h sq-B/Source/WebCore/rendering/svg/legacy/LegacyRenderSVGResourceFilter.h
+diff --git a/Source/WebCore/rendering/svg/legacy/LegacyRenderSVGResourceFilter.h b/Source/WebCore/rendering/svg/legacy/LegacyRenderSVGResourceFilter.h
 --- a/Source/WebCore/rendering/svg/legacy/LegacyRenderSVGResourceFilter.h
 +++ b/Source/WebCore/rendering/svg/legacy/LegacyRenderSVGResourceFilter.h
-@@ -87,7 +87,24 @@
+@@ -86,7 +86,24 @@ private:
  
      ASCIILiteral renderName() const override { return "RenderSVGResourceFilter"_s; }
  
@@ -226,44 +226,10 @@ diff -ruN --no-dereference sq-A/Source/WebCore/rendering/svg/legacy/LegacyRender
  };
  
  WTF::TextStream& operator<<(WTF::TextStream&, FilterData::FilterDataState);
-diff -ruN --no-dereference sq-A/Source/WebCore/svg/graphics/filters/SVGFilterRenderer.h sq-B/Source/WebCore/svg/graphics/filters/SVGFilterRenderer.h
---- a/Source/WebCore/svg/graphics/filters/SVGFilterRenderer.h
-+++ b/Source/WebCore/svg/graphics/filters/SVGFilterRenderer.h
-@@ -52,6 +52,7 @@
-     FilterEffectVector effectsOfType(FilterFunction::Type) const final;
- 
-     WEBCORE_EXPORT FilterResults& ensureResults(NOESCAPE const FilterResultsCreator&);
-+    std::unique_ptr<FilterResults> takeResults() { return WTF::move(m_results); }
-     void clearEffectResult(FilterEffect&);
-     WEBCORE_EXPORT void mergeEffects(const FilterEffectVector&);
- 
-diff -ruN --no-dereference sq-A/Source/WebCore/svg/graphics/SVGImageClients.h sq-B/Source/WebCore/svg/graphics/SVGImageClients.h
---- a/Source/WebCore/svg/graphics/SVGImageClients.h
-+++ b/Source/WebCore/svg/graphics/SVGImageClients.h
-@@ -64,6 +64,8 @@
-         if (!image || !image->internalPage())
-             return;
- 
-+        image->invalidateRasterCache();
-+
-         if (RefPtr imageObserver = image->imageObserver())
-             imageObserver->imageContentChanged(*image);
-     }
-@@ -76,6 +78,10 @@
-         if (!image || !image->internalPage())
-             return;
- 
-+        // The document's rendering changed (animation tick, resource load,
-+        // interactive update): any cached rasterization is stale.
-+        image->invalidateRasterCache();
-+
-         RefPtr imageObserver = image->imageObserver();
-         if (!imageObserver)
-             return;
-diff -ruN --no-dereference sq-A/Source/WebCore/svg/graphics/SVGImage.cpp sq-B/Source/WebCore/svg/graphics/SVGImage.cpp
+diff --git a/Source/WebCore/svg/graphics/SVGImage.cpp b/Source/WebCore/svg/graphics/SVGImage.cpp
 --- a/Source/WebCore/svg/graphics/SVGImage.cpp
 +++ b/Source/WebCore/svg/graphics/SVGImage.cpp
-@@ -66,6 +66,9 @@
+@@ -65,6 +65,9 @@
  #include "TypedElementDescendantIteratorInlines.h"
  #include <JavaScriptCore/JSCInlines.h>
  #include <JavaScriptCore/JSLock.h>
@@ -273,7 +239,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/svg/graphics/SVGImage.cpp sq-B/So
  #include <wtf/text/TextStream.h>
  
  #if PLATFORM(MAC)
-@@ -184,11 +187,112 @@
+@@ -219,11 +222,112 @@ IntSize SVGImage::containerSize() const
      return IntSize(currentSize);
  }
  
@@ -386,7 +352,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/svg/graphics/SVGImage.cpp sq-B/So
      RefPtr observer = imageObserver();
  
      // Temporarily reset image observer, we don't want to receive any changeInRect() calls due to this relayout.
-@@ -480,6 +584,8 @@
+@@ -527,6 +631,8 @@ void SVGImage::reportApproximateMemoryCost() const
  
  EncodedDataStatus SVGImage::dataChanged(bool allDataReceived)
  {
@@ -395,7 +361,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/svg/graphics/SVGImage.cpp sq-B/So
      // Don't do anything; it is an empty image.
      if (!data()->size())
          return EncodedDataStatus::Complete;
-diff -ruN --no-dereference sq-A/Source/WebCore/svg/graphics/SVGImage.h sq-B/Source/WebCore/svg/graphics/SVGImage.h
+diff --git a/Source/WebCore/svg/graphics/SVGImage.h b/Source/WebCore/svg/graphics/SVGImage.h
 --- a/Source/WebCore/svg/graphics/SVGImage.h
 +++ b/Source/WebCore/svg/graphics/SVGImage.h
 @@ -29,6 +29,7 @@
@@ -406,7 +372,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/svg/graphics/SVGImage.h sq-B/Sour
  
  namespace WebCore {
  
-@@ -108,11 +109,28 @@
+@@ -112,11 +113,28 @@ private:
      WEBCORE_EXPORT explicit SVGImage(ImageObserver*);
      ImageDrawResult draw(GraphicsContext&, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions = { }) final;
      ImageDrawResult drawForContainer(GraphicsContext&, const FloatSize containerSize, float containerZoom, const URL& initialFragmentURL, const FloatRect& dstRect, const FloatRect& srcRect, ImagePaintingOptions = { });
@@ -434,4 +400,38 @@ diff -ruN --no-dereference sq-A/Source/WebCore/svg/graphics/SVGImage.h sq-B/Sour
 +
      Timer m_startAnimationTimer;
  };
+ 
+diff --git a/Source/WebCore/svg/graphics/SVGImageClients.h b/Source/WebCore/svg/graphics/SVGImageClients.h
+--- a/Source/WebCore/svg/graphics/SVGImageClients.h
++++ b/Source/WebCore/svg/graphics/SVGImageClients.h
+@@ -64,6 +64,8 @@ private:
+         if (!image || !image->internalPage())
+             return;
+ 
++        image->invalidateRasterCache();
++
+         if (RefPtr imageObserver = image->imageObserver())
+             imageObserver->imageContentChanged(*image);
+     }
+@@ -76,6 +78,10 @@ private:
+         if (!image || !image->internalPage())
+             return;
+ 
++        // The document's rendering changed (animation tick, resource load,
++        // interactive update): any cached rasterization is stale.
++        image->invalidateRasterCache();
++
+         RefPtr imageObserver = image->imageObserver();
+         if (!imageObserver)
+             return;
+diff --git a/Source/WebCore/svg/graphics/filters/SVGFilterRenderer.h b/Source/WebCore/svg/graphics/filters/SVGFilterRenderer.h
+--- a/Source/WebCore/svg/graphics/filters/SVGFilterRenderer.h
++++ b/Source/WebCore/svg/graphics/filters/SVGFilterRenderer.h
+@@ -52,6 +52,7 @@ public:
+     FilterEffectVector effectsOfType(FilterFunction::Type) const final;
+ 
+     WEBCORE_EXPORT FilterResults& ensureResults(NOESCAPE const FilterResultsCreator&);
++    std::unique_ptr<FilterResults> takeResults() { return WTF::move(m_results); }
+     void clearEffectResult(FilterEffect&);
+     WEBCORE_EXPORT void mergeEffects(const FilterEffectVector&);
  

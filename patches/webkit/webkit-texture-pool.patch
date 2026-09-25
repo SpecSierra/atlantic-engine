@@ -16,10 +16,10 @@
 #   WEBKIT_COMPOSITOR_GL_FINISH=1    glFinish per composite (diagnostic)
 #
 # ---
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/BitmapTexture.cpp sq-B/Source/WebCore/platform/graphics/texmap/BitmapTexture.cpp
+diff --git a/Source/WebCore/platform/graphics/texmap/BitmapTexture.cpp b/Source/WebCore/platform/graphics/texmap/BitmapTexture.cpp
 --- a/Source/WebCore/platform/graphics/texmap/BitmapTexture.cpp
 +++ b/Source/WebCore/platform/graphics/texmap/BitmapTexture.cpp
-@@ -465,8 +465,13 @@
+@@ -509,8 +509,13 @@ void BitmapTexture::bindAsSurface()
  
  BitmapTexture::~BitmapTexture()
  {
@@ -35,7 +35,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/BitmapTe
      if (m_fbo)
          glDeleteFramebuffers(1, &m_fbo);
  
-@@ -475,6 +480,8 @@
+@@ -519,6 +524,8 @@ BitmapTexture::~BitmapTexture()
  
      if (m_stencilBufferObject)
          glDeleteRenderbuffers(1, &m_stencilBufferObject);
@@ -44,7 +44,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/BitmapTe
  }
  
  void BitmapTexture::copyFromExternalTexture(GLuint sourceTextureID, const IntRect& targetRect, const IntSize& sourceOffset)
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.cpp sq-B/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.cpp
+diff --git a/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.cpp b/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.cpp
 --- a/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.cpp
 +++ b/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.cpp
 @@ -27,6 +27,9 @@
@@ -57,7 +57,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/BitmapTe
  #if USE(TEXTURE_MAPPER)
  #include "GLContext.h"
  #include "GLContextWrapper.h"
-@@ -49,7 +52,14 @@
+@@ -49,7 +52,14 @@ static constexpr size_t s_poolSizeLimitInBytes = std::numeric_limits<size_t>::ma
  
  static constexpr Seconds s_releaseUnusedSecondsTolerance { 3_s };
  static constexpr Seconds s_releaseUnusedTexturesTimerInterval { 500_ms };
@@ -73,7 +73,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/BitmapTe
  static constexpr Seconds s_releaseUnusedTexturesTimerIntervalOnLimitExceeded { 200_ms };
  
  BitmapTexturePool& BitmapTexturePool::singleton()
-@@ -68,11 +78,148 @@
+@@ -68,11 +78,148 @@ BitmapTexturePool::BitmapTexturePool()
  #endif
  }
  
@@ -223,18 +223,18 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/BitmapTe
          return entry.texture->refCount() == 1
              && entry.texture->size() == size
  #if USE(GBM)
-@@ -105,6 +252,7 @@
+@@ -107,6 +254,7 @@ Ref<BitmapTexture> BitmapTexturePool::createTextureForImage(EGLImage image, cons
  {
      ASSERT(GLContextWrapper::currentContext());
      Locker locker { m_lock };
 +    releaseUnusedImageTexturesWhileLocked();
-     auto texture = BitmapTexture::create(image, flags);
+     auto texture = BitmapTexture::create(image, size, flags);
      m_imageTextures.append(texture.copyRef());
      scheduleReleaseUnusedTextures();
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h sq-B/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h
+diff --git a/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h b/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h
 --- a/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h
 +++ b/Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h
-@@ -84,6 +84,10 @@
+@@ -84,6 +84,10 @@ private:
      void enterLimitExceededModeIfNeeded();
      void exitLimitExceededModeIfNeeded();
      void releaseUnusedTexturesTimerFired();
@@ -245,11 +245,11 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/BitmapTe
  
      Lock m_lock;
      Vector<Entry> m_textures WTF_GUARDED_BY_LOCK(m_lock);
-diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp sq-B/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
+diff --git a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
 --- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
 +++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
-@@ -38,6 +38,14 @@
- #include <WebCore/PlatformDisplay.h>
+@@ -43,6 +43,14 @@
+ #include <WebCore/SkiaDamageRegion.h>
  #include <WebCore/TextureMapperLayer.h>
  #include <WebCore/TransformationMatrix.h>
 +#include <cstdlib>
@@ -260,10 +260,10 @@ diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/CoordinatedGrap
 +#else
 +#include <GLES2/gl2.h>
 +#endif
- #include <wtf/SetForScope.h>
- #include <wtf/SystemTracing.h>
- #include <wtf/TZoneMallocInlines.h>
-@@ -417,6 +425,17 @@
+ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+ #include <skia/core/SkCanvas.h>
+ #include <skia/core/SkFont.h>
+@@ -599,6 +607,17 @@ void ThreadedCompositor::renderLayerTree()
  
      WTFEmitSignpost(this, DidRenderFrame, "reasons: %s", reasonsToString(reasons).ascii().data());
  
@@ -278,6 +278,6 @@ diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/CoordinatedGrap
 +    if (finishAfterFrame)
 +        glFinish();
 +
-     m_context->swapBuffers();
- 
-     m_surface->didRenderFrame();
+     if (m_context)
+         m_context->swapBuffers();
+     else

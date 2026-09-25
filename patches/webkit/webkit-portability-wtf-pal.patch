@@ -20,298 +20,7 @@
 # from the compile errors.
 #
 # ---
-diff -ruN --no-dereference sq-A/Source/WebCore/PAL/pal/crypto/CryptoDigest.h sq-B/Source/WebCore/PAL/pal/crypto/CryptoDigest.h
---- a/Source/WebCore/PAL/pal/crypto/CryptoDigest.h
-+++ b/Source/WebCore/PAL/pal/crypto/CryptoDigest.h
-@@ -26,9 +26,13 @@
- #pragma once
- 
- #include <pal/crypto/CryptoDigestHashFunction.h>
-+#include <memory>
-+#include <pal/ExportMacros.h>
-+#include <span>
- #include <wtf/HexNumber.h>
- #include <wtf/Noncopyable.h>
- #include <wtf/Vector.h>
-+#include <wtf/TZoneMalloc.h>
- #include <wtf/text/WTFString.h>
- 
- namespace PAL {
-diff -ruN --no-dereference sq-A/Source/WebCore/PAL/pal/system/ClockGeneric.h sq-B/Source/WebCore/PAL/pal/system/ClockGeneric.h
---- a/Source/WebCore/PAL/pal/system/ClockGeneric.h
-+++ b/Source/WebCore/PAL/pal/system/ClockGeneric.h
-@@ -28,6 +28,7 @@
- #pragma once
- 
- #include "Clock.h"
-+#include <wtf/TZoneMalloc.h>
- #include <wtf/MonotonicTime.h>
- 
- namespace PAL {
-diff -ruN --no-dereference sq-A/Source/WebCore/PAL/pal/system/Clock.h sq-B/Source/WebCore/PAL/pal/system/Clock.h
---- a/Source/WebCore/PAL/pal/system/Clock.h
-+++ b/Source/WebCore/PAL/pal/system/Clock.h
-@@ -27,6 +27,7 @@
- #pragma once
- 
- #include <memory>
-+#include <wtf/TZoneMalloc.h>
- 
- namespace PAL {
- 
-diff -ruN --no-dereference sq-A/Source/WebCore/PAL/pal/system/SleepDisabler.cpp sq-B/Source/WebCore/PAL/pal/system/SleepDisabler.cpp
---- a/Source/WebCore/PAL/pal/system/SleepDisabler.cpp
-+++ b/Source/WebCore/PAL/pal/system/SleepDisabler.cpp
-@@ -24,6 +24,8 @@
-  */
- 
- #include "config.h"
-+#include <wtf/Platform.h>
-+
- #include "SleepDisabler.h"
- 
- #include <wtf/text/WTFString.h>
-diff -ruN --no-dereference sq-A/Source/WebCore/PAL/pal/system/SleepDisabler.h sq-B/Source/WebCore/PAL/pal/system/SleepDisabler.h
---- a/Source/WebCore/PAL/pal/system/SleepDisabler.h
-+++ b/Source/WebCore/PAL/pal/system/SleepDisabler.h
-@@ -26,6 +26,7 @@
- #pragma once
- 
- #include <pal/ExportMacros.h>
-+#include <memory>
- #include <wtf/Forward.h>
- 
- namespace PAL {
-diff -ruN --no-dereference sq-A/Source/WebCore/PAL/pal/system/Sound.cpp sq-B/Source/WebCore/PAL/pal/system/Sound.cpp
---- a/Source/WebCore/PAL/pal/system/Sound.cpp
-+++ b/Source/WebCore/PAL/pal/system/Sound.cpp
-@@ -24,6 +24,8 @@
-  */
- 
- #include "config.h"
-+#include <wtf/Platform.h>
-+
- #include "Sound.h"
- 
- #if !PLATFORM(MAC)
-diff -ruN --no-dereference sq-A/Source/WebCore/PAL/pal/system/Sound.h sq-B/Source/WebCore/PAL/pal/system/Sound.h
---- a/Source/WebCore/PAL/pal/system/Sound.h
-+++ b/Source/WebCore/PAL/pal/system/Sound.h
-@@ -25,6 +25,8 @@
- 
- #pragma once
- 
-+#include <pal/ExportMacros.h>
-+
- namespace PAL {
- 
- PAL_EXPORT void systemBeep();
-diff -ruN --no-dereference sq-A/Source/WebCore/PAL/pal/system/SystemSleepListener.cpp sq-B/Source/WebCore/PAL/pal/system/SystemSleepListener.cpp
---- a/Source/WebCore/PAL/pal/system/SystemSleepListener.cpp
-+++ b/Source/WebCore/PAL/pal/system/SystemSleepListener.cpp
-@@ -24,6 +24,8 @@
-  */
- 
- #include "config.h"
-+#include <wtf/Platform.h>
-+
- #include "SystemSleepListener.h"
- 
- namespace PAL {
-diff -ruN --no-dereference sq-A/Source/WebCore/PAL/pal/system/SystemSleepListener.h sq-B/Source/WebCore/PAL/pal/system/SystemSleepListener.h
---- a/Source/WebCore/PAL/pal/system/SystemSleepListener.h
-+++ b/Source/WebCore/PAL/pal/system/SystemSleepListener.h
-@@ -25,6 +25,9 @@
- 
- #pragma once
- 
-+#include <memory>
-+#include <pal/ExportMacros.h>
-+
- namespace PAL {
- 
- class SystemSleepListener {
-diff -ruN --no-dereference sq-A/Source/WebCore/PAL/pal/text/EncodingTables.h sq-B/Source/WebCore/PAL/pal/text/EncodingTables.h
---- a/Source/WebCore/PAL/pal/text/EncodingTables.h
-+++ b/Source/WebCore/PAL/pal/text/EncodingTables.h
-@@ -29,8 +29,10 @@
- #include <array>
- #include <iterator>
- #include <optional>
-+#include <span>
- #include <unicode/umachine.h>
- #include <utility>
-+#include <wtf/Assertions.h>
- 
- namespace PAL {
- 
-diff -ruN --no-dereference sq-A/Source/WebCore/PAL/pal/text/KillRing.h sq-B/Source/WebCore/PAL/pal/text/KillRing.h
---- a/Source/WebCore/PAL/pal/text/KillRing.h
-+++ b/Source/WebCore/PAL/pal/text/KillRing.h
-@@ -26,6 +26,7 @@
- #pragma once
- 
- #include <wtf/TZoneMalloc.h>
-+#include <pal/ExportMacros.h>
- #include <wtf/text/WTFString.h>
- 
- namespace PAL {
-diff -ruN --no-dereference sq-A/Source/WebCore/PAL/pal/text/TextCodecASCIIFastPath.h sq-B/Source/WebCore/PAL/pal/text/TextCodecASCIIFastPath.h
---- a/Source/WebCore/PAL/pal/text/TextCodecASCIIFastPath.h
-+++ b/Source/WebCore/PAL/pal/text/TextCodecASCIIFastPath.h
-@@ -26,6 +26,7 @@
- 
- #pragma once
- 
-+#include <span>
- #include <wtf/StdLibExtras.h>
- #include <wtf/text/ASCIIFastPath.h>
- 
-diff -ruN --no-dereference sq-A/Source/WebCore/PAL/pal/text/TextCodecCJK.h sq-B/Source/WebCore/PAL/pal/text/TextCodecCJK.h
---- a/Source/WebCore/PAL/pal/text/TextCodecCJK.h
-+++ b/Source/WebCore/PAL/pal/text/TextCodecCJK.h
-@@ -26,6 +26,7 @@
- #pragma once
- 
- #include "TextCodec.h"
-+#include <span>
- #include <optional>
- #include <wtf/TZoneMalloc.h>
- 
-diff -ruN --no-dereference sq-A/Source/WebCore/PAL/pal/text/TextCodecICU.h sq-B/Source/WebCore/PAL/pal/text/TextCodecICU.h
---- a/Source/WebCore/PAL/pal/text/TextCodecICU.h
-+++ b/Source/WebCore/PAL/pal/text/TextCodecICU.h
-@@ -27,6 +27,7 @@
- #pragma once
- 
- #include "TextCodec.h"
-+#include <span>
- #include <unicode/ucnv.h>
- #include <wtf/TZoneMalloc.h>
- #include <wtf/text/ASCIILiteral.h>
-diff -ruN --no-dereference sq-A/Source/WebCore/PAL/pal/text/TextCodecLatin1.h sq-B/Source/WebCore/PAL/pal/text/TextCodecLatin1.h
---- a/Source/WebCore/PAL/pal/text/TextCodecLatin1.h
-+++ b/Source/WebCore/PAL/pal/text/TextCodecLatin1.h
-@@ -26,6 +26,7 @@
- #pragma once
- 
- #include "TextCodec.h"
-+#include <span>
- 
- namespace PAL {
- 
-diff -ruN --no-dereference sq-A/Source/WebCore/PAL/pal/text/TextCodecReplacement.h sq-B/Source/WebCore/PAL/pal/text/TextCodecReplacement.h
---- a/Source/WebCore/PAL/pal/text/TextCodecReplacement.h
-+++ b/Source/WebCore/PAL/pal/text/TextCodecReplacement.h
-@@ -26,6 +26,7 @@
- #pragma once
- 
- #include "TextCodecUTF8.h"
-+#include <span>
- #include <wtf/TZoneMalloc.h>
- 
- namespace PAL {
-diff -ruN --no-dereference sq-A/Source/WebCore/PAL/pal/text/TextCodecSingleByte.h sq-B/Source/WebCore/PAL/pal/text/TextCodecSingleByte.h
---- a/Source/WebCore/PAL/pal/text/TextCodecSingleByte.h
-+++ b/Source/WebCore/PAL/pal/text/TextCodecSingleByte.h
-@@ -26,6 +26,7 @@
- #pragma once
- 
- #include "TextCodec.h"
-+#include <span>
- #include <wtf/TZoneMalloc.h>
- 
- namespace PAL {
-diff -ruN --no-dereference sq-A/Source/WebCore/PAL/pal/text/TextCodecUserDefined.h sq-B/Source/WebCore/PAL/pal/text/TextCodecUserDefined.h
---- a/Source/WebCore/PAL/pal/text/TextCodecUserDefined.h
-+++ b/Source/WebCore/PAL/pal/text/TextCodecUserDefined.h
-@@ -26,6 +26,7 @@
- #pragma once
- 
- #include "TextCodec.h"
-+#include <span>
- #include <wtf/TZoneMalloc.h>
- 
- namespace PAL {
-diff -ruN --no-dereference sq-A/Source/WebCore/PAL/pal/text/TextCodecUTF16.h sq-B/Source/WebCore/PAL/pal/text/TextCodecUTF16.h
---- a/Source/WebCore/PAL/pal/text/TextCodecUTF16.h
-+++ b/Source/WebCore/PAL/pal/text/TextCodecUTF16.h
-@@ -26,6 +26,7 @@
- #pragma once
- 
- #include "TextCodec.h"
-+#include <span>
- #include <optional>
- #include <wtf/TZoneMalloc.h>
- 
-diff -ruN --no-dereference sq-A/Source/WebCore/PAL/pal/text/TextCodecUTF8.h sq-B/Source/WebCore/PAL/pal/text/TextCodecUTF8.h
---- a/Source/WebCore/PAL/pal/text/TextCodecUTF8.h
-+++ b/Source/WebCore/PAL/pal/text/TextCodecUTF8.h
-@@ -26,6 +26,7 @@
- #pragma once
- 
- #include "TextCodec.h"
-+#include <span>
- #include <unicode/utf8.h>
- #include <wtf/TZoneMalloc.h>
- #include <wtf/text/Latin1Character.h>
-diff -ruN --no-dereference sq-A/Source/WebCore/PAL/pal/text/TextEncoding.h sq-B/Source/WebCore/PAL/pal/text/TextEncoding.h
---- a/Source/WebCore/PAL/pal/text/TextEncoding.h
-+++ b/Source/WebCore/PAL/pal/text/TextEncoding.h
-@@ -26,6 +26,7 @@
- #pragma once
- 
- #include "UnencodableHandling.h"
-+#include <span>
- #include <pal/ExportMacros.h>
- #include <wtf/URL.h>
- #include <wtf/text/StringView.h>
-diff -ruN --no-dereference sq-A/Source/WebCore/PAL/pal/text/TextEncodingRegistry.h sq-B/Source/WebCore/PAL/pal/text/TextEncodingRegistry.h
---- a/Source/WebCore/PAL/pal/text/TextEncodingRegistry.h
-+++ b/Source/WebCore/PAL/pal/text/TextEncodingRegistry.h
-@@ -26,6 +26,8 @@
- #pragma once
- 
- #include <memory>
-+#include <pal/ExportMacros.h>
-+#include <wtf/Platform.h>
- #include <wtf/Forward.h>
- 
- #if PLATFORM(COCOA)
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/android/LoggingAndroid.cpp sq-B/Source/WTF/wtf/android/LoggingAndroid.cpp
---- a/Source/WTF/wtf/android/LoggingAndroid.cpp
-+++ b/Source/WTF/wtf/android/LoggingAndroid.cpp
-@@ -18,6 +18,7 @@
-  */
- 
- #include "config.h"
-+#include <wtf/Platform.h>
- 
- #if OS(ANDROID)
- #include "Logging.h"
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/android/RefPtrAndroid.cpp sq-B/Source/WTF/wtf/android/RefPtrAndroid.cpp
---- a/Source/WTF/wtf/android/RefPtrAndroid.cpp
-+++ b/Source/WTF/wtf/android/RefPtrAndroid.cpp
-@@ -18,6 +18,7 @@
-  */
- 
- #include "config.h"
-+#include <wtf/Platform.h>
- #include "RefPtrAndroid.h"
- 
- #if OS(ANDROID)
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/android/RefPtrAndroid.h sq-B/Source/WTF/wtf/android/RefPtrAndroid.h
---- a/Source/WTF/wtf/android/RefPtrAndroid.h
-+++ b/Source/WTF/wtf/android/RefPtrAndroid.h
-@@ -18,6 +18,7 @@
-  */
- 
- #pragma once
-+#include <wtf/Platform.h>
- 
- #if OS(ANDROID)
- 
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/EnumTraits.h sq-B/Source/WTF/wtf/EnumTraits.h
+diff --git a/Source/WTF/wtf/EnumTraits.h b/Source/WTF/wtf/EnumTraits.h
 --- a/Source/WTF/wtf/EnumTraits.h
 +++ b/Source/WTF/wtf/EnumTraits.h
 @@ -57,6 +57,7 @@
@@ -322,7 +31,96 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/EnumTraits.h sq-B/Source/WTF/wtf/
  #include <concepts>
  #include <span>
  #include <type_traits>
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/ActivityObserver.h sq-B/Source/WTF/wtf/glib/ActivityObserver.h
+diff --git a/Source/WTF/wtf/MemoryFootprint.h b/Source/WTF/wtf/MemoryFootprint.h
+--- a/Source/WTF/wtf/MemoryFootprint.h
++++ b/Source/WTF/wtf/MemoryFootprint.h
+@@ -24,6 +24,7 @@
+  */
+ 
+ #pragma once
++#include <cstddef>
+ 
+ #include <cstdint>
+ #include <wtf/ExportMacros.h>
+diff --git a/Source/WTF/wtf/ProcessMemoryStatus.h b/Source/WTF/wtf/ProcessMemoryStatus.h
+--- a/Source/WTF/wtf/ProcessMemoryStatus.h
++++ b/Source/WTF/wtf/ProcessMemoryStatus.h
+@@ -24,6 +24,7 @@
+  */
+ 
+ #pragma once
++#include <wtf/Platform.h>
+ 
+ #if OS(LINUX) || OS(HAIKU)
+ 
+diff --git a/Source/WTF/wtf/RAMSize.h b/Source/WTF/wtf/RAMSize.h
+--- a/Source/WTF/wtf/RAMSize.h
++++ b/Source/WTF/wtf/RAMSize.h
+@@ -25,6 +25,7 @@
+ 
+ #pragma once
+ 
++#include <cstddef>
+ #include <cstdint>
+ #include <wtf/ExportMacros.h>
+ 
+diff --git a/Source/WTF/wtf/TypeCasts.h b/Source/WTF/wtf/TypeCasts.h
+--- a/Source/WTF/wtf/TypeCasts.h
++++ b/Source/WTF/wtf/TypeCasts.h
+@@ -29,6 +29,7 @@
+ #include <memory>
+ #include <type_traits>
+ #include <utility>
++#include <wtf/Assertions.h>
+ #include <wtf/Compiler.h>
+ 
+ namespace WTF {
+diff --git a/Source/WTF/wtf/UniStdExtras.h b/Source/WTF/wtf/UniStdExtras.h
+--- a/Source/WTF/wtf/UniStdExtras.h
++++ b/Source/WTF/wtf/UniStdExtras.h
+@@ -26,6 +26,8 @@
+ #ifndef UniStdExtras_h
+ #define UniStdExtras_h
+ 
++#include <wtf/ExportMacros.h>
++#include <wtf/Platform.h>
+ #include <errno.h>
+ #include <unistd.h>
+ 
+diff --git a/Source/WTF/wtf/android/LoggingAndroid.cpp b/Source/WTF/wtf/android/LoggingAndroid.cpp
+--- a/Source/WTF/wtf/android/LoggingAndroid.cpp
++++ b/Source/WTF/wtf/android/LoggingAndroid.cpp
+@@ -18,6 +18,7 @@
+  */
+ 
+ #include "config.h"
++#include <wtf/Platform.h>
+ 
+ #if OS(ANDROID)
+ #include "Logging.h"
+diff --git a/Source/WTF/wtf/android/RefPtrAndroid.cpp b/Source/WTF/wtf/android/RefPtrAndroid.cpp
+--- a/Source/WTF/wtf/android/RefPtrAndroid.cpp
++++ b/Source/WTF/wtf/android/RefPtrAndroid.cpp
+@@ -18,6 +18,7 @@
+  */
+ 
+ #include "config.h"
++#include <wtf/Platform.h>
+ #include "RefPtrAndroid.h"
+ 
+ #if OS(ANDROID)
+diff --git a/Source/WTF/wtf/android/RefPtrAndroid.h b/Source/WTF/wtf/android/RefPtrAndroid.h
+--- a/Source/WTF/wtf/android/RefPtrAndroid.h
++++ b/Source/WTF/wtf/android/RefPtrAndroid.h
+@@ -18,6 +18,7 @@
+  */
+ 
+ #pragma once
++#include <wtf/Platform.h>
+ 
+ #if OS(ANDROID)
+ 
+diff --git a/Source/WTF/wtf/glib/ActivityObserver.h b/Source/WTF/wtf/glib/ActivityObserver.h
 --- a/Source/WTF/wtf/glib/ActivityObserver.h
 +++ b/Source/WTF/wtf/glib/ActivityObserver.h
 @@ -18,7 +18,9 @@
@@ -335,7 +133,7 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/ActivityObserver.h sq-B/Sour
  #if USE(GLIB_EVENT_LOOP)
  
  #include <wtf/Lock.h>
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/Application.cpp sq-B/Source/WTF/wtf/glib/Application.cpp
+diff --git a/Source/WTF/wtf/glib/Application.cpp b/Source/WTF/wtf/glib/Application.cpp
 --- a/Source/WTF/wtf/glib/Application.cpp
 +++ b/Source/WTF/wtf/glib/Application.cpp
 @@ -18,6 +18,7 @@
@@ -346,7 +144,7 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/Application.cpp sq-B/Source/
  #include "Application.h"
  
  #if USE(GLIB)
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/Application.h sq-B/Source/WTF/wtf/glib/Application.h
+diff --git a/Source/WTF/wtf/glib/Application.h b/Source/WTF/wtf/glib/Application.h
 --- a/Source/WTF/wtf/glib/Application.h
 +++ b/Source/WTF/wtf/glib/Application.h
 @@ -18,7 +18,9 @@
@@ -359,7 +157,7 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/Application.h sq-B/Source/WT
  #if USE(GLIB)
  
  #include <wtf/text/CString.h>
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/ChassisType.h sq-B/Source/WTF/wtf/glib/ChassisType.h
+diff --git a/Source/WTF/wtf/glib/ChassisType.h b/Source/WTF/wtf/glib/ChassisType.h
 --- a/Source/WTF/wtf/glib/ChassisType.h
 +++ b/Source/WTF/wtf/glib/ChassisType.h
 @@ -19,6 +19,7 @@
@@ -370,7 +168,7 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/ChassisType.h sq-B/Source/WT
  namespace WTF {
  
  enum class ChassisType {
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/FileSystemGlib.cpp sq-B/Source/WTF/wtf/glib/FileSystemGlib.cpp
+diff --git a/Source/WTF/wtf/glib/FileSystemGlib.cpp b/Source/WTF/wtf/glib/FileSystemGlib.cpp
 --- a/Source/WTF/wtf/glib/FileSystemGlib.cpp
 +++ b/Source/WTF/wtf/glib/FileSystemGlib.cpp
 @@ -21,6 +21,7 @@
@@ -381,18 +179,7 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/FileSystemGlib.cpp sq-B/Sour
  #include <wtf/FileSystem.h>
  
  #include <wtf/glib/GUniquePtr.h>
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/GMutexLocker.h sq-B/Source/WTF/wtf/glib/GMutexLocker.h
---- a/Source/WTF/wtf/glib/GMutexLocker.h
-+++ b/Source/WTF/wtf/glib/GMutexLocker.h
-@@ -19,6 +19,7 @@
- 
- #ifndef GMutexLocker_h
- #define GMutexLocker_h
-+#include <wtf/Platform.h>
- 
- #if USE(GLIB)
- 
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/GRefPtr.cpp sq-B/Source/WTF/wtf/glib/GRefPtr.cpp
+diff --git a/Source/WTF/wtf/glib/GRefPtr.cpp b/Source/WTF/wtf/glib/GRefPtr.cpp
 --- a/Source/WTF/wtf/glib/GRefPtr.cpp
 +++ b/Source/WTF/wtf/glib/GRefPtr.cpp
 @@ -17,6 +17,7 @@
@@ -403,7 +190,7 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/GRefPtr.cpp sq-B/Source/WTF/
  #include <wtf/glib/GRefPtr.h>
  
  #if USE(GLIB)
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/GRefPtr.h sq-B/Source/WTF/wtf/glib/GRefPtr.h
+diff --git a/Source/WTF/wtf/glib/GRefPtr.h b/Source/WTF/wtf/glib/GRefPtr.h
 --- a/Source/WTF/wtf/glib/GRefPtr.h
 +++ b/Source/WTF/wtf/glib/GRefPtr.h
 @@ -22,7 +22,9 @@
@@ -416,7 +203,7 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/GRefPtr.h sq-B/Source/WTF/wt
  #if USE(GLIB)
  
  #include <algorithm>
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/GResources.cpp sq-B/Source/WTF/wtf/glib/GResources.cpp
+diff --git a/Source/WTF/wtf/glib/GResources.cpp b/Source/WTF/wtf/glib/GResources.cpp
 --- a/Source/WTF/wtf/glib/GResources.cpp
 +++ b/Source/WTF/wtf/glib/GResources.cpp
 @@ -18,6 +18,7 @@
@@ -427,7 +214,7 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/GResources.cpp sq-B/Source/W
  #include "GResources.h"
  
  #if USE(GLIB)
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/GResources.h sq-B/Source/WTF/wtf/glib/GResources.h
+diff --git a/Source/WTF/wtf/glib/GResources.h b/Source/WTF/wtf/glib/GResources.h
 --- a/Source/WTF/wtf/glib/GResources.h
 +++ b/Source/WTF/wtf/glib/GResources.h
 @@ -18,7 +18,9 @@
@@ -440,7 +227,7 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/GResources.h sq-B/Source/WTF
  #if USE(GLIB)
  
  namespace WTF {
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/GSocketMonitor.h sq-B/Source/WTF/wtf/glib/GSocketMonitor.h
+diff --git a/Source/WTF/wtf/glib/GSocketMonitor.h b/Source/WTF/wtf/glib/GSocketMonitor.h
 --- a/Source/WTF/wtf/glib/GSocketMonitor.h
 +++ b/Source/WTF/wtf/glib/GSocketMonitor.h
 @@ -25,6 +25,7 @@
@@ -451,7 +238,7 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/GSocketMonitor.h sq-B/Source
  #include <glib.h>
  #include <wtf/Forward.h>
  #include <wtf/Noncopyable.h>
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/GSpanExtras.h sq-B/Source/WTF/wtf/glib/GSpanExtras.h
+diff --git a/Source/WTF/wtf/glib/GSpanExtras.h b/Source/WTF/wtf/glib/GSpanExtras.h
 --- a/Source/WTF/wtf/glib/GSpanExtras.h
 +++ b/Source/WTF/wtf/glib/GSpanExtras.h
 @@ -19,6 +19,7 @@
@@ -462,7 +249,7 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/GSpanExtras.h sq-B/Source/WT
  #include <wtf/Expected.h>
  #include <wtf/MallocSpan.h>
  #include <wtf/StdLibExtras.h>
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/GThreadSafeWeakPtr.h sq-B/Source/WTF/wtf/glib/GThreadSafeWeakPtr.h
+diff --git a/Source/WTF/wtf/glib/GThreadSafeWeakPtr.h b/Source/WTF/wtf/glib/GThreadSafeWeakPtr.h
 --- a/Source/WTF/wtf/glib/GThreadSafeWeakPtr.h
 +++ b/Source/WTF/wtf/glib/GThreadSafeWeakPtr.h
 @@ -19,6 +19,7 @@
@@ -473,7 +260,7 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/GThreadSafeWeakPtr.h sq-B/So
  
  #if USE(GLIB)
  
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/GTypedefs.h sq-B/Source/WTF/wtf/glib/GTypedefs.h
+diff --git a/Source/WTF/wtf/glib/GTypedefs.h b/Source/WTF/wtf/glib/GTypedefs.h
 --- a/Source/WTF/wtf/glib/GTypedefs.h
 +++ b/Source/WTF/wtf/glib/GTypedefs.h
 @@ -22,6 +22,7 @@
@@ -484,7 +271,7 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/GTypedefs.h sq-B/Source/WTF/
  
  typedef char gchar;
  typedef double gdouble;
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/GUniquePtr.h sq-B/Source/WTF/wtf/glib/GUniquePtr.h
+diff --git a/Source/WTF/wtf/glib/GUniquePtr.h b/Source/WTF/wtf/glib/GUniquePtr.h
 --- a/Source/WTF/wtf/glib/GUniquePtr.h
 +++ b/Source/WTF/wtf/glib/GUniquePtr.h
 @@ -19,7 +19,10 @@
@@ -498,7 +285,7 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/GUniquePtr.h sq-B/Source/WTF
  #if USE(GLIB)
  
  #include <gio/gio.h>
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/GWeakPtr.h sq-B/Source/WTF/wtf/glib/GWeakPtr.h
+diff --git a/Source/WTF/wtf/glib/GWeakPtr.h b/Source/WTF/wtf/glib/GWeakPtr.h
 --- a/Source/WTF/wtf/glib/GWeakPtr.h
 +++ b/Source/WTF/wtf/glib/GWeakPtr.h
 @@ -19,6 +19,7 @@
@@ -509,7 +296,7 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/GWeakPtr.h sq-B/Source/WTF/w
  
  #if USE(GLIB)
  
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/RunLoopSourcePriority.h sq-B/Source/WTF/wtf/glib/RunLoopSourcePriority.h
+diff --git a/Source/WTF/wtf/glib/RunLoopSourcePriority.h b/Source/WTF/wtf/glib/RunLoopSourcePriority.h
 --- a/Source/WTF/wtf/glib/RunLoopSourcePriority.h
 +++ b/Source/WTF/wtf/glib/RunLoopSourcePriority.h
 @@ -18,6 +18,7 @@
@@ -520,7 +307,7 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/RunLoopSourcePriority.h sq-B
  
  #if USE(GLIB)
  
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/Sandbox.cpp sq-B/Source/WTF/wtf/glib/Sandbox.cpp
+diff --git a/Source/WTF/wtf/glib/Sandbox.cpp b/Source/WTF/wtf/glib/Sandbox.cpp
 --- a/Source/WTF/wtf/glib/Sandbox.cpp
 +++ b/Source/WTF/wtf/glib/Sandbox.cpp
 @@ -24,6 +24,7 @@
@@ -531,7 +318,7 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/Sandbox.cpp sq-B/Source/WTF/
  #include <wtf/glib/Sandbox.h>
  
  #include <gio/gio.h>
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/Sandbox.h sq-B/Source/WTF/wtf/glib/Sandbox.h
+diff --git a/Source/WTF/wtf/glib/Sandbox.h b/Source/WTF/wtf/glib/Sandbox.h
 --- a/Source/WTF/wtf/glib/Sandbox.h
 +++ b/Source/WTF/wtf/glib/Sandbox.h
 @@ -19,6 +19,7 @@
@@ -542,7 +329,7 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/Sandbox.h sq-B/Source/WTF/wt
  #include <wtf/text/WTFString.h>
  
  namespace WTF {
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/SocketConnection.h sq-B/Source/WTF/wtf/glib/SocketConnection.h
+diff --git a/Source/WTF/wtf/glib/SocketConnection.h b/Source/WTF/wtf/glib/SocketConnection.h
 --- a/Source/WTF/wtf/glib/SocketConnection.h
 +++ b/Source/WTF/wtf/glib/SocketConnection.h
 @@ -19,6 +19,7 @@
@@ -553,7 +340,7 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/SocketConnection.h sq-B/Sour
  #include <wtf/Function.h>
  #include <wtf/HashMap.h>
  #include <wtf/RefCounted.h>
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/URLGLib.cpp sq-B/Source/WTF/wtf/glib/URLGLib.cpp
+diff --git a/Source/WTF/wtf/glib/URLGLib.cpp b/Source/WTF/wtf/glib/URLGLib.cpp
 --- a/Source/WTF/wtf/glib/URLGLib.cpp
 +++ b/Source/WTF/wtf/glib/URLGLib.cpp
 @@ -24,6 +24,7 @@
@@ -564,7 +351,7 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/glib/URLGLib.cpp sq-B/Source/WTF/
  #include "URL.h"
  
  #if USE(GLIB)
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/linux/CurrentProcessMemoryStatus.h sq-B/Source/WTF/wtf/linux/CurrentProcessMemoryStatus.h
+diff --git a/Source/WTF/wtf/linux/CurrentProcessMemoryStatus.h b/Source/WTF/wtf/linux/CurrentProcessMemoryStatus.h
 --- a/Source/WTF/wtf/linux/CurrentProcessMemoryStatus.h
 +++ b/Source/WTF/wtf/linux/CurrentProcessMemoryStatus.h
 @@ -24,6 +24,7 @@
@@ -575,7 +362,7 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/linux/CurrentProcessMemoryStatus.
  
  #include <wtf/ProcessMemoryStatus.h>
  
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/linux/ProcessMemoryFootprint.h sq-B/Source/WTF/wtf/linux/ProcessMemoryFootprint.h
+diff --git a/Source/WTF/wtf/linux/ProcessMemoryFootprint.h b/Source/WTF/wtf/linux/ProcessMemoryFootprint.h
 --- a/Source/WTF/wtf/linux/ProcessMemoryFootprint.h
 +++ b/Source/WTF/wtf/linux/ProcessMemoryFootprint.h
 @@ -25,6 +25,7 @@
@@ -586,7 +373,7 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/linux/ProcessMemoryFootprint.h sq
  
  #if OS(LINUX)
  
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/linux/RealTimeThreads.h sq-B/Source/WTF/wtf/linux/RealTimeThreads.h
+diff --git a/Source/WTF/wtf/linux/RealTimeThreads.h b/Source/WTF/wtf/linux/RealTimeThreads.h
 --- a/Source/WTF/wtf/linux/RealTimeThreads.h
 +++ b/Source/WTF/wtf/linux/RealTimeThreads.h
 @@ -18,6 +18,8 @@
@@ -598,54 +385,43 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/linux/RealTimeThreads.h sq-B/Sour
  
  #include <wtf/CanMakeWeakPtr.h>
  #include <wtf/FastMalloc.h>
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/MemoryFootprint.h sq-B/Source/WTF/wtf/MemoryFootprint.h
---- a/Source/WTF/wtf/MemoryFootprint.h
-+++ b/Source/WTF/wtf/MemoryFootprint.h
-@@ -24,6 +24,7 @@
-  */
- 
- #pragma once
-+#include <cstddef>
- 
- #include <cstdint>
- #include <wtf/ExportMacros.h>
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/posix/FileHandlePOSIX.cpp sq-B/Source/WTF/wtf/posix/FileHandlePOSIX.cpp
+diff --git a/Source/WTF/wtf/posix/FileHandlePOSIX.cpp b/Source/WTF/wtf/posix/FileHandlePOSIX.cpp
 --- a/Source/WTF/wtf/posix/FileHandlePOSIX.cpp
 +++ b/Source/WTF/wtf/posix/FileHandlePOSIX.cpp
-@@ -33,6 +33,7 @@
+@@ -32,6 +32,7 @@
+ #include <sys/file.h>
  #include <sys/stat.h>
- #include <sys/types.h>
- #include <sys/uio.h>
-+#include <wtf/Platform.h>
  #include <unistd.h>
++#include <wtf/Platform.h>
  #include <wtf/CheckedArithmetic.h>
  #include <wtf/FileSystem.h>
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/posix/FileSystemPOSIX.cpp sq-B/Source/WTF/wtf/posix/FileSystemPOSIX.cpp
+ #include <wtf/MappedFileData.h>
+diff --git a/Source/WTF/wtf/posix/FileSystemPOSIX.cpp b/Source/WTF/wtf/posix/FileSystemPOSIX.cpp
 --- a/Source/WTF/wtf/posix/FileSystemPOSIX.cpp
 +++ b/Source/WTF/wtf/posix/FileSystemPOSIX.cpp
-@@ -40,6 +40,7 @@
+@@ -35,6 +35,7 @@
+ #include <sys/stat.h>
  #include <sys/statvfs.h>
- #include <sys/types.h>
  #include <unistd.h>
 +#include <wtf/Platform.h>
- #include <wtf/EnumTraits.h>
  #include <wtf/FileHandle.h>
- #include <wtf/MallocSpan.h>
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/posix/OSAllocatorPOSIX.cpp sq-B/Source/WTF/wtf/posix/OSAllocatorPOSIX.cpp
+ #include <wtf/SafeStrerror.h>
+ #include <wtf/text/CString.h>
+diff --git a/Source/WTF/wtf/posix/OSAllocatorPOSIX.cpp b/Source/WTF/wtf/posix/OSAllocatorPOSIX.cpp
 --- a/Source/WTF/wtf/posix/OSAllocatorPOSIX.cpp
 +++ b/Source/WTF/wtf/posix/OSAllocatorPOSIX.cpp
-@@ -28,6 +28,7 @@
- 
+@@ -29,6 +29,7 @@
  #include <errno.h>
+ #include <mutex>
  #include <sys/mman.h>
 +#include <wtf/Platform.h>
  #include <wtf/Assertions.h>
  #include <wtf/DataLog.h>
- #include <wtf/MallocSpan.h>
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/posix/ThreadingPOSIX.cpp sq-B/Source/WTF/wtf/posix/ThreadingPOSIX.cpp
+ #include <wtf/MathExtras.h>
+diff --git a/Source/WTF/wtf/posix/ThreadingPOSIX.cpp b/Source/WTF/wtf/posix/ThreadingPOSIX.cpp
 --- a/Source/WTF/wtf/posix/ThreadingPOSIX.cpp
 +++ b/Source/WTF/wtf/posix/ThreadingPOSIX.cpp
-@@ -31,6 +31,7 @@
+@@ -32,6 +32,7 @@
  
  #include "config.h"
  #include <wtf/Threading.h>
@@ -653,40 +429,7 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/posix/ThreadingPOSIX.cpp sq-B/Sou
  
  #if USE(PTHREADS)
  
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/ProcessMemoryStatus.h sq-B/Source/WTF/wtf/ProcessMemoryStatus.h
---- a/Source/WTF/wtf/ProcessMemoryStatus.h
-+++ b/Source/WTF/wtf/ProcessMemoryStatus.h
-@@ -24,6 +24,7 @@
-  */
- 
- #pragma once
-+#include <wtf/Platform.h>
- 
- #if OS(LINUX) || OS(HAIKU)
- 
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/RAMSize.h sq-B/Source/WTF/wtf/RAMSize.h
---- a/Source/WTF/wtf/RAMSize.h
-+++ b/Source/WTF/wtf/RAMSize.h
-@@ -25,6 +25,7 @@
- 
- #pragma once
- 
-+#include <cstddef>
- #include <cstdint>
- #include <wtf/ExportMacros.h>
- 
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/TypeCasts.h sq-B/Source/WTF/wtf/TypeCasts.h
---- a/Source/WTF/wtf/TypeCasts.h
-+++ b/Source/WTF/wtf/TypeCasts.h
-@@ -29,6 +29,7 @@
- #include <memory>
- #include <type_traits>
- #include <utility>
-+#include <wtf/Assertions.h>
- #include <wtf/Compiler.h>
- 
- namespace WTF {
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/unicode/UTF8Conversion.h sq-B/Source/WTF/wtf/unicode/UTF8Conversion.h
+diff --git a/Source/WTF/wtf/unicode/UTF8Conversion.h b/Source/WTF/wtf/unicode/UTF8Conversion.h
 --- a/Source/WTF/wtf/unicode/UTF8Conversion.h
 +++ b/Source/WTF/wtf/unicode/UTF8Conversion.h
 @@ -25,6 +25,7 @@
@@ -697,19 +440,7 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/unicode/UTF8Conversion.h sq-B/Sou
  #include <cstddef>
  #include <span>
  #include <wtf/ExportMacros.h>
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/UniStdExtras.h sq-B/Source/WTF/wtf/UniStdExtras.h
---- a/Source/WTF/wtf/UniStdExtras.h
-+++ b/Source/WTF/wtf/UniStdExtras.h
-@@ -26,6 +26,8 @@
- #ifndef UniStdExtras_h
- #define UniStdExtras_h
- 
-+#include <wtf/ExportMacros.h>
-+#include <wtf/Platform.h>
- #include <errno.h>
- #include <unistd.h>
- 
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/unix/LoggingUnix.cpp sq-B/Source/WTF/wtf/unix/LoggingUnix.cpp
+diff --git a/Source/WTF/wtf/unix/LoggingUnix.cpp b/Source/WTF/wtf/unix/LoggingUnix.cpp
 --- a/Source/WTF/wtf/unix/LoggingUnix.cpp
 +++ b/Source/WTF/wtf/unix/LoggingUnix.cpp
 @@ -20,6 +20,7 @@
@@ -720,7 +451,7 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/unix/LoggingUnix.cpp sq-B/Source/
  
  #if !OS(ANDROID)
  
-diff -ruN --no-dereference sq-A/Source/WTF/wtf/unix/MemoryPressureHandlerUnix.cpp sq-B/Source/WTF/wtf/unix/MemoryPressureHandlerUnix.cpp
+diff --git a/Source/WTF/wtf/unix/MemoryPressureHandlerUnix.cpp b/Source/WTF/wtf/unix/MemoryPressureHandlerUnix.cpp
 --- a/Source/WTF/wtf/unix/MemoryPressureHandlerUnix.cpp
 +++ b/Source/WTF/wtf/unix/MemoryPressureHandlerUnix.cpp
 @@ -26,6 +26,7 @@
@@ -731,3 +462,261 @@ diff -ruN --no-dereference sq-A/Source/WTF/wtf/unix/MemoryPressureHandlerUnix.cp
  #include <wtf/MemoryPressureHandler.h>
  
  #include <malloc.h>
+diff --git a/Source/WebCore/PAL/pal/crypto/CryptoDigest.h b/Source/WebCore/PAL/pal/crypto/CryptoDigest.h
+--- a/Source/WebCore/PAL/pal/crypto/CryptoDigest.h
++++ b/Source/WebCore/PAL/pal/crypto/CryptoDigest.h
+@@ -26,9 +26,13 @@
+ #pragma once
+ 
+ #include <pal/crypto/CryptoTypes.h>
++#include <memory>
++#include <pal/ExportMacros.h>
++#include <span>
+ #include <wtf/HexNumber.h>
+ #include <wtf/Noncopyable.h>
+ #include <wtf/Vector.h>
++#include <wtf/TZoneMalloc.h>
+ #include <wtf/text/WTFString.h>
+ 
+ namespace PAL::Crypto {
+diff --git a/Source/WebCore/PAL/pal/system/Clock.h b/Source/WebCore/PAL/pal/system/Clock.h
+--- a/Source/WebCore/PAL/pal/system/Clock.h
++++ b/Source/WebCore/PAL/pal/system/Clock.h
+@@ -27,6 +27,7 @@
+ #pragma once
+ 
+ #include <memory>
++#include <wtf/TZoneMalloc.h>
+ 
+ namespace PAL {
+ 
+diff --git a/Source/WebCore/PAL/pal/system/ClockGeneric.h b/Source/WebCore/PAL/pal/system/ClockGeneric.h
+--- a/Source/WebCore/PAL/pal/system/ClockGeneric.h
++++ b/Source/WebCore/PAL/pal/system/ClockGeneric.h
+@@ -28,6 +28,7 @@
+ #pragma once
+ 
+ #include "Clock.h"
++#include <wtf/TZoneMalloc.h>
+ #include <wtf/MonotonicTime.h>
+ 
+ namespace PAL {
+diff --git a/Source/WebCore/PAL/pal/system/SleepDisabler.cpp b/Source/WebCore/PAL/pal/system/SleepDisabler.cpp
+--- a/Source/WebCore/PAL/pal/system/SleepDisabler.cpp
++++ b/Source/WebCore/PAL/pal/system/SleepDisabler.cpp
+@@ -24,6 +24,8 @@
+  */
+ 
+ #include "config.h"
++#include <wtf/Platform.h>
++
+ #include "SleepDisabler.h"
+ 
+ #include <wtf/text/WTFString.h>
+diff --git a/Source/WebCore/PAL/pal/system/SleepDisabler.h b/Source/WebCore/PAL/pal/system/SleepDisabler.h
+--- a/Source/WebCore/PAL/pal/system/SleepDisabler.h
++++ b/Source/WebCore/PAL/pal/system/SleepDisabler.h
+@@ -26,6 +26,7 @@
+ #pragma once
+ 
+ #include <pal/ExportMacros.h>
++#include <memory>
+ #include <wtf/Forward.h>
+ 
+ namespace PAL {
+diff --git a/Source/WebCore/PAL/pal/system/Sound.cpp b/Source/WebCore/PAL/pal/system/Sound.cpp
+--- a/Source/WebCore/PAL/pal/system/Sound.cpp
++++ b/Source/WebCore/PAL/pal/system/Sound.cpp
+@@ -24,6 +24,8 @@
+  */
+ 
+ #include "config.h"
++#include <wtf/Platform.h>
++
+ #include "Sound.h"
+ 
+ #if !PLATFORM(MAC)
+diff --git a/Source/WebCore/PAL/pal/system/Sound.h b/Source/WebCore/PAL/pal/system/Sound.h
+--- a/Source/WebCore/PAL/pal/system/Sound.h
++++ b/Source/WebCore/PAL/pal/system/Sound.h
+@@ -25,6 +25,8 @@
+ 
+ #pragma once
+ 
++#include <pal/ExportMacros.h>
++
+ namespace PAL {
+ 
+ PAL_EXPORT void systemBeep();
+diff --git a/Source/WebCore/PAL/pal/system/SystemSleepListener.cpp b/Source/WebCore/PAL/pal/system/SystemSleepListener.cpp
+--- a/Source/WebCore/PAL/pal/system/SystemSleepListener.cpp
++++ b/Source/WebCore/PAL/pal/system/SystemSleepListener.cpp
+@@ -24,6 +24,8 @@
+  */
+ 
+ #include "config.h"
++#include <wtf/Platform.h>
++
+ #include "SystemSleepListener.h"
+ 
+ namespace PAL {
+diff --git a/Source/WebCore/PAL/pal/system/SystemSleepListener.h b/Source/WebCore/PAL/pal/system/SystemSleepListener.h
+--- a/Source/WebCore/PAL/pal/system/SystemSleepListener.h
++++ b/Source/WebCore/PAL/pal/system/SystemSleepListener.h
+@@ -25,6 +25,9 @@
+ 
+ #pragma once
+ 
++#include <memory>
++#include <pal/ExportMacros.h>
++
+ namespace PAL {
+ 
+ class SystemSleepListener {
+diff --git a/Source/WebCore/PAL/pal/text/EncodingTables.h b/Source/WebCore/PAL/pal/text/EncodingTables.h
+--- a/Source/WebCore/PAL/pal/text/EncodingTables.h
++++ b/Source/WebCore/PAL/pal/text/EncodingTables.h
+@@ -29,8 +29,10 @@
+ #include <array>
+ #include <iterator>
+ #include <optional>
++#include <span>
+ #include <unicode/umachine.h>
+ #include <utility>
++#include <wtf/Assertions.h>
+ 
+ namespace PAL {
+ 
+diff --git a/Source/WebCore/PAL/pal/text/KillRing.h b/Source/WebCore/PAL/pal/text/KillRing.h
+--- a/Source/WebCore/PAL/pal/text/KillRing.h
++++ b/Source/WebCore/PAL/pal/text/KillRing.h
+@@ -26,6 +26,7 @@
+ #pragma once
+ 
+ #include <wtf/TZoneMalloc.h>
++#include <pal/ExportMacros.h>
+ #include <wtf/text/WTFString.h>
+ 
+ namespace PAL {
+diff --git a/Source/WebCore/PAL/pal/text/TextCodecASCIIFastPath.h b/Source/WebCore/PAL/pal/text/TextCodecASCIIFastPath.h
+--- a/Source/WebCore/PAL/pal/text/TextCodecASCIIFastPath.h
++++ b/Source/WebCore/PAL/pal/text/TextCodecASCIIFastPath.h
+@@ -26,6 +26,7 @@
+ 
+ #pragma once
+ 
++#include <span>
+ #include <wtf/StdLibExtras.h>
+ #include <wtf/text/ASCIIFastPath.h>
+ 
+diff --git a/Source/WebCore/PAL/pal/text/TextCodecCJK.h b/Source/WebCore/PAL/pal/text/TextCodecCJK.h
+--- a/Source/WebCore/PAL/pal/text/TextCodecCJK.h
++++ b/Source/WebCore/PAL/pal/text/TextCodecCJK.h
+@@ -26,6 +26,7 @@
+ #pragma once
+ 
+ #include "TextCodec.h"
++#include <span>
+ #include <optional>
+ #include <wtf/TZoneMalloc.h>
+ 
+diff --git a/Source/WebCore/PAL/pal/text/TextCodecICU.h b/Source/WebCore/PAL/pal/text/TextCodecICU.h
+--- a/Source/WebCore/PAL/pal/text/TextCodecICU.h
++++ b/Source/WebCore/PAL/pal/text/TextCodecICU.h
+@@ -27,6 +27,7 @@
+ #pragma once
+ 
+ #include "TextCodec.h"
++#include <span>
+ #include <unicode/ucnv.h>
+ #include <wtf/TZoneMalloc.h>
+ #include <wtf/text/ASCIILiteral.h>
+diff --git a/Source/WebCore/PAL/pal/text/TextCodecLatin1.h b/Source/WebCore/PAL/pal/text/TextCodecLatin1.h
+--- a/Source/WebCore/PAL/pal/text/TextCodecLatin1.h
++++ b/Source/WebCore/PAL/pal/text/TextCodecLatin1.h
+@@ -26,6 +26,7 @@
+ #pragma once
+ 
+ #include "TextCodec.h"
++#include <span>
+ 
+ namespace PAL {
+ 
+diff --git a/Source/WebCore/PAL/pal/text/TextCodecReplacement.h b/Source/WebCore/PAL/pal/text/TextCodecReplacement.h
+--- a/Source/WebCore/PAL/pal/text/TextCodecReplacement.h
++++ b/Source/WebCore/PAL/pal/text/TextCodecReplacement.h
+@@ -26,6 +26,7 @@
+ #pragma once
+ 
+ #include "TextCodecUTF8.h"
++#include <span>
+ #include <wtf/TZoneMalloc.h>
+ 
+ namespace PAL {
+diff --git a/Source/WebCore/PAL/pal/text/TextCodecSingleByte.h b/Source/WebCore/PAL/pal/text/TextCodecSingleByte.h
+--- a/Source/WebCore/PAL/pal/text/TextCodecSingleByte.h
++++ b/Source/WebCore/PAL/pal/text/TextCodecSingleByte.h
+@@ -26,6 +26,7 @@
+ #pragma once
+ 
+ #include "TextCodec.h"
++#include <span>
+ #include <wtf/TZoneMalloc.h>
+ 
+ namespace PAL {
+diff --git a/Source/WebCore/PAL/pal/text/TextCodecUTF16.h b/Source/WebCore/PAL/pal/text/TextCodecUTF16.h
+--- a/Source/WebCore/PAL/pal/text/TextCodecUTF16.h
++++ b/Source/WebCore/PAL/pal/text/TextCodecUTF16.h
+@@ -26,6 +26,7 @@
+ #pragma once
+ 
+ #include "TextCodec.h"
++#include <span>
+ #include <optional>
+ #include <wtf/TZoneMalloc.h>
+ 
+diff --git a/Source/WebCore/PAL/pal/text/TextCodecUTF8.h b/Source/WebCore/PAL/pal/text/TextCodecUTF8.h
+--- a/Source/WebCore/PAL/pal/text/TextCodecUTF8.h
++++ b/Source/WebCore/PAL/pal/text/TextCodecUTF8.h
+@@ -26,6 +26,7 @@
+ #pragma once
+ 
+ #include "TextCodec.h"
++#include <span>
+ #include <unicode/utf8.h>
+ #include <wtf/TZoneMalloc.h>
+ #include <wtf/text/Latin1Character.h>
+diff --git a/Source/WebCore/PAL/pal/text/TextCodecUserDefined.h b/Source/WebCore/PAL/pal/text/TextCodecUserDefined.h
+--- a/Source/WebCore/PAL/pal/text/TextCodecUserDefined.h
++++ b/Source/WebCore/PAL/pal/text/TextCodecUserDefined.h
+@@ -26,6 +26,7 @@
+ #pragma once
+ 
+ #include "TextCodec.h"
++#include <span>
+ #include <wtf/TZoneMalloc.h>
+ 
+ namespace PAL {
+diff --git a/Source/WebCore/PAL/pal/text/TextEncoding.h b/Source/WebCore/PAL/pal/text/TextEncoding.h
+--- a/Source/WebCore/PAL/pal/text/TextEncoding.h
++++ b/Source/WebCore/PAL/pal/text/TextEncoding.h
+@@ -26,6 +26,7 @@
+ #pragma once
+ 
+ #include "UnencodableHandling.h"
++#include <span>
+ #include <pal/ExportMacros.h>
+ #include <wtf/URL.h>
+ #include <wtf/text/StringView.h>
+diff --git a/Source/WebCore/PAL/pal/text/TextEncodingRegistry.h b/Source/WebCore/PAL/pal/text/TextEncodingRegistry.h
+--- a/Source/WebCore/PAL/pal/text/TextEncodingRegistry.h
++++ b/Source/WebCore/PAL/pal/text/TextEncodingRegistry.h
+@@ -26,6 +26,8 @@
+ #pragma once
+ 
+ #include <memory>
++#include <pal/ExportMacros.h>
++#include <wtf/Platform.h>
+ #include <wtf/Forward.h>
+ 
+ #if PLATFORM(COCOA)

@@ -16,10 +16,10 @@
 #    scrolling work DURING load.
 #
 # ---
-diff -ruN --no-dereference sq-A/Source/WebCore/dom/Document.cpp sq-B/Source/WebCore/dom/Document.cpp
+diff --git a/Source/WebCore/dom/Document.cpp b/Source/WebCore/dom/Document.cpp
 --- a/Source/WebCore/dom/Document.cpp
 +++ b/Source/WebCore/dom/Document.cpp
-@@ -373,6 +373,7 @@
+@@ -394,6 +394,7 @@
  #include <wtf/RuntimeApplicationChecks.h>
  #include <wtf/SetForScope.h>
  #include <wtf/SystemTracing.h>
@@ -27,7 +27,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/dom/Document.cpp sq-B/Source/WebC
  #include <wtf/TZoneMallocInlines.h>
  #include <wtf/UUID.h>
  #include <wtf/text/MakeString.h>
-@@ -4662,6 +4663,26 @@
+@@ -4694,6 +4695,26 @@ Seconds Document::domTimerAlignmentInterval(bool hasReachedMaxNestingLevel) cons
      if (m_isTimerThrottlingEnabled)
          alignmentInterval = std::max(alignmentInterval, DOMTimer::hiddenPageAlignmentInterval());
  
@@ -54,7 +54,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/dom/Document.cpp sq-B/Source/WebC
      if (RefPtr page = this->page())
          alignmentInterval = std::max(alignmentInterval, page->domTimerAlignmentInterval());
  
-diff -ruN --no-dereference sq-A/Source/WebCore/html/parser/HTMLParserScheduler.cpp sq-B/Source/WebCore/html/parser/HTMLParserScheduler.cpp
+diff --git a/Source/WebCore/html/parser/HTMLParserScheduler.cpp b/Source/WebCore/html/parser/HTMLParserScheduler.cpp
 --- a/Source/WebCore/html/parser/HTMLParserScheduler.cpp
 +++ b/Source/WebCore/html/parser/HTMLParserScheduler.cpp
 @@ -35,6 +35,7 @@
@@ -65,9 +65,9 @@ diff -ruN --no-dereference sq-A/Source/WebCore/html/parser/HTMLParserScheduler.c
  #include <wtf/TZoneMallocInlines.h>
  #include "FrameDestructionObserverInlines.h"
  
-@@ -44,8 +45,18 @@
+@@ -44,8 +45,18 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLParserScheduler);
  
- static Seconds parserTimeLimit(Page* page)
+ static Seconds NODELETE parserTimeLimit(Page* page)
  {
 -    // Always yield after exceeding this.
 -    constexpr auto defaultParserTimeLimit = 500_ms;
@@ -86,10 +86,10 @@ diff -ruN --no-dereference sq-A/Source/WebCore/html/parser/HTMLParserScheduler.c
  
      // We're using the poorly named customHTMLTokenizerTimeDelay setting.
      if (page && page->hasCustomHTMLTokenizerTimeDelay())
-diff -ruN --no-dereference sq-A/Source/WebKit/UIProcess/API/wpe/PageClientImpl.cpp sq-B/Source/WebKit/UIProcess/API/wpe/PageClientImpl.cpp
+diff --git a/Source/WebKit/UIProcess/API/wpe/PageClientImpl.cpp b/Source/WebKit/UIProcess/API/wpe/PageClientImpl.cpp
 --- a/Source/WebKit/UIProcess/API/wpe/PageClientImpl.cpp
 +++ b/Source/WebKit/UIProcess/API/wpe/PageClientImpl.cpp
-@@ -240,6 +240,17 @@
+@@ -247,6 +247,17 @@ void PageClientImpl::doneWithKeyEvent(const NativeWebKeyboardEvent&, bool)
  #if ENABLE(TOUCH_EVENTS)
  void PageClientImpl::doneWithTouchEvent(const WebTouchEvent& touchEvent, bool wasEventHandled)
  {
@@ -107,7 +107,7 @@ diff -ruN --no-dereference sq-A/Source/WebKit/UIProcess/API/wpe/PageClientImpl.c
      if (wasEventHandled) {
  #if ENABLE(WPE_PLATFORM)
          // If the touch event was handled, we must interrupt any gesture detection sequence ongoing so that gestures
-@@ -265,9 +276,19 @@
+@@ -272,9 +283,19 @@ void PageClientImpl::doneWithTouchEvent(const WebTouchEvent& touchEvent, bool wa
      if (!touchPoint || touchPoint->type == wpe_input_touch_event_type_null)
          return;
  
@@ -127,7 +127,7 @@ diff -ruN --no-dereference sq-A/Source/WebKit/UIProcess/API/wpe/PageClientImpl.c
      auto generatedEvent = touchGestureController.handleEvent(touchPoint);
      WTF::switchOn(generatedEvent,
          [](TouchGestureController::NoEvent&) { },
-@@ -295,7 +316,23 @@
+@@ -302,7 +323,23 @@ void PageClientImpl::doneWithTouchEvent(const WebTouchEvent& touchEvent, bool wa
          [&](TouchGestureController::ContextMenuEvent&) {
              // FIXME: Generate contextmenuevent without accidentally generating mouseup/mousedown events
          },
@@ -152,7 +152,7 @@ diff -ruN --no-dereference sq-A/Source/WebKit/UIProcess/API/wpe/PageClientImpl.c
  #endif
  }
  #endif
-diff -ruN --no-dereference sq-A/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.cpp sq-B/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.cpp
+diff --git a/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.cpp b/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.cpp
 --- a/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.cpp
 +++ b/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.cpp
 @@ -36,6 +36,7 @@
@@ -163,7 +163,7 @@ diff -ruN --no-dereference sq-A/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy
  #include <WebCore/SystemSettings.h>
  #include <wpe/wpe.h>
  #include <wtf/NeverDestroyed.h>
-@@ -222,9 +223,42 @@
+@@ -227,9 +228,42 @@ ViewLegacy::ViewLegacy(struct wpe_view_backend* backend, const API::PageConfigur
  
              WebKit::NativeWebTouchEvent touchEvent(event, page.deviceScaleFactor());
  
@@ -207,7 +207,7 @@ diff -ruN --no-dereference sq-A/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy
              if (touchGestureController.gesturedEvent() == TouchGestureController::GesturedEvent::Axis) {
                  bool handledThroughGestureController = false;
  
-@@ -248,7 +282,54 @@
+@@ -253,7 +287,54 @@ ViewLegacy::ViewLegacy(struct wpe_view_backend* backend, const API::PageConfigur
                      });
              }
  
@@ -262,7 +262,7 @@ diff -ruN --no-dereference sq-A/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy
  #endif
          },
          // padding
-@@ -297,6 +378,26 @@
+@@ -302,6 +383,26 @@ ViewLegacy::ViewLegacy(struct wpe_view_backend* backend, const API::PageConfigur
      viewsVector().append(this);
  }
  
@@ -289,7 +289,7 @@ diff -ruN --no-dereference sq-A/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy
  ViewLegacy::~ViewLegacy()
  {
      WebCore::SystemSettings::singleton().removeObserver(this);
-diff -ruN --no-dereference sq-A/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.h sq-B/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.h
+diff --git a/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.h b/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.h
 --- a/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.h
 +++ b/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.h
 @@ -28,6 +28,10 @@
@@ -303,7 +303,7 @@ diff -ruN --no-dereference sq-A/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy
  #include <wtf/glib/GRefPtr.h>
  
  struct wpe_input_keyboard_event;
-@@ -52,6 +56,7 @@
+@@ -52,6 +56,7 @@ public:
  
  #if ENABLE(TOUCH_EVENTS)
      WebKit::TouchGestureController& touchGestureController() const { return *m_touchGestureController; }
@@ -311,7 +311,7 @@ diff -ruN --no-dereference sq-A/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy
  #endif
  
  #if ENABLE(GAMEPAD)
-@@ -77,6 +82,17 @@
+@@ -77,6 +82,17 @@ private:
      bool m_verticalScrollActive { false };
  #if ENABLE(TOUCH_EVENTS)
      std::unique_ptr<WebKit::TouchGestureController> m_touchGestureController;

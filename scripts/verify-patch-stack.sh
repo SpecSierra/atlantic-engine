@@ -23,7 +23,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/versions.env"
-: "${WPE_WEBKIT_VERSION:=2.52.6}"
+: "${WPE_WEBKIT_VERSION:=2.54.0}"
 EXPECTED="${1:-}"
 
 WORKDIR="${WORKDIR:-$(mktemp -d)}"
@@ -63,8 +63,11 @@ while read -r p; do
         ( cd "${TREE}" && patch -p1 --batch --forward < "${SCRIPT_DIR}/$p" >/dev/null )
     else
         echo "FAILS TO APPLY: $p"
+        # `|| true`: the dry run exits non-zero by definition here, and under
+        # `set -o pipefail` that aborted the whole script at the FIRST failing
+        # patch, so a bump only ever saw one failure at a time.
         ( cd "${TREE}" && patch -p1 --batch --forward --dry-run < "${SCRIPT_DIR}/$p" 2>&1 \
-            | grep -E '^(patching|Hunk|can.t find)' | head -10 | sed 's/^/    /' )
+            | grep -E '^(patching|Hunk|can.t find)' | head -10 | sed 's/^/    /' ) || true
         fail=$((fail + 1))
     fi
 done < <(grep -oP '^\s*"\Kpatches/webkit/[^"]+' "${SCRIPT_DIR}/scripts/patches.sh")
@@ -74,8 +77,10 @@ find "${TREE}" -type f \( -name '*.orig' -o -name '*.rej' \) -delete
 # Hash the pristine->patched DIFF, not the tree: a file the stack no longer
 # touches then contributes nothing, so the value stays comparable across changes
 # to the patch set (a plain tree hash would move just because the touched-file
-# list shrank).
+# list shrank). The `diff -ruN <base> <tree>` header lines carry absolute
+# WORKDIR paths, so they are dropped; otherwise the hash changed with WORKDIR.
 HASH="$( { diff -ruN "${BASE}" "${TREE}" || true; } \
+    | grep -v '^diff -ruN ' \
     | sed -E "s#^(---|\\+\\+\\+) [^\t]*/(Source/)#\\1 \\2#; s#\t[0-9]{4}-[0-9]{2}-[0-9]{2}.*\$##" \
     | sha256sum | awk '{print $1}')"
 

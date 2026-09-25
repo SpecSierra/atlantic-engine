@@ -17,21 +17,16 @@
 # drags.
 #
 # ---
-diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/coordinated/ScrollerCoordinated.cpp sq-B/Source/WebCore/page/scrolling/coordinated/ScrollerCoordinated.cpp
+diff --git a/Source/WebCore/page/scrolling/coordinated/ScrollerCoordinated.cpp b/Source/WebCore/page/scrolling/coordinated/ScrollerCoordinated.cpp
 --- a/Source/WebCore/page/scrolling/coordinated/ScrollerCoordinated.cpp
 +++ b/Source/WebCore/page/scrolling/coordinated/ScrollerCoordinated.cpp
-@@ -39,6 +39,8 @@
+@@ -38,12 +38,59 @@
  #include "PlatformDisplay.h"
  #include "ScrollerImpAdwaita.h"
  WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 +#include <skia/core/SkBitmap.h>
 +#include <skia/core/SkCanvas.h>
- #include <skia/core/SkColorSpace.h>
- #include <skia/core/SkImage.h>
- #include <skia/gpu/ganesh/GrBackendSurface.h>
-@@ -46,10 +48,55 @@
- #include <skia/gpu/ganesh/gl/GrGLBackendSurface.h>
- #include <skia/gpu/ganesh/gl/GrGLDirectContext.h>
+ #include <skia/core/SkSurface.h>
  WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 +#include <cstdlib>
 +#include <cstring>
@@ -85,7 +80,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/coordinated/Scroll
  WTF_MAKE_TZONE_ALLOCATED_IMPL(ScrollerPairCoordinated);
  
  ScrollerCoordinated::ScrollerCoordinated(ScrollerPairCoordinated& pair, ScrollbarOrientation orientation)
-@@ -67,6 +114,7 @@
+@@ -61,6 +108,7 @@ void ScrollerCoordinated::setScrollerImp(ScrollerImpAdwaita* scrollerImp)
      Locker locker { m_lock };
      m_scrollerImp = scrollerImp;
      m_needsUpdate = true;
@@ -93,7 +88,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/coordinated/Scroll
  }
  
  void ScrollerCoordinated::setHostLayer(CoordinatedPlatformLayer* layer)
-@@ -74,6 +122,9 @@
+@@ -68,6 +116,9 @@ void ScrollerCoordinated::setHostLayer(CoordinatedPlatformLayer* layer)
      Locker locker { m_lock };
      m_hostLayer = layer;
      m_needsUpdate = true;
@@ -103,7 +98,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/coordinated/Scroll
  }
  
  void ScrollerCoordinated::updateValues()
-@@ -97,20 +148,29 @@
+@@ -91,20 +142,29 @@ void ScrollerCoordinated::updateValues()
      }
  
      RefPtr pair = m_pair.get();
@@ -135,7 +130,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/coordinated/Scroll
      int width = AdwaitaScrollbarPainter::scrollbarSize;
      IntRect rect { 0, 0, width, int(values.visibleSize) };
  
-@@ -169,12 +229,128 @@
+@@ -165,12 +225,138 @@ void ScrollerCoordinated::updateValues()
      hostLayer->setContentsBuffer(WTF::move(buffer));
  }
  
@@ -190,15 +185,25 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/coordinated/Scroll
 +        state.thumbLength = thumbLength;
 +        state.frameRect = { { }, spriteSize };
 +
++        // Paint at the layer's contents scale, like the upstream path, so the
++        // sprite is not upscaled (blurred) on a scaled layer.
++        float contentsScale;
++        {
++            Locker layerLocker { hostLayer.lock() };
++            contentsScale = hostLayer.contentsScale();
++        }
++        IntSize scaledSpriteSize = expandedIntSize(FloatSize(spriteSize) * contentsScale);
++
 +        // Rasterize on the CPU: a plain glTexSubImage2D upload of a tiny
 +        // bitmap, instead of Ganesh GPU painting, keeps the fragile
 +        // second-GL-context work out of the scrollbar path entirely.
 +        SkBitmap bitmap;
-+        if (!bitmap.tryAllocPixels(SkImageInfo::MakeN32Premul(spriteSize.width(), spriteSize.height())))
++        if (!bitmap.tryAllocPixels(SkImageInfo::MakeN32Premul(scaledSpriteSize.width(), scaledSpriteSize.height())))
 +            return;
 +        bitmap.eraseColor(SK_ColorTRANSPARENT);
 +        SkCanvas canvas(bitmap);
 +        GraphicsContextSkia context(canvas, RenderingMode::Unaccelerated, RenderingPurpose::DOM);
++        context.scale(contentsScale);
 +        scrollerImp.paint(context, state.frameRect, state);
 +
 +        auto& display = PlatformDisplay::sharedDisplay();
@@ -207,8 +212,8 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/coordinated/Scroll
 +            return;
 +        GLContext::ScopedGLContextCurrent scopedCurrent(*glContext);
 +
-+        Ref texture = BitmapTexturePool::singleton().acquireTexture(spriteSize, { BitmapTexture::Flags::SupportsAlpha });
-+        texture->updateContents(bitmap.getPixels(), IntRect({ }, spriteSize), IntPoint(), bitmap.rowBytes(), PixelFormat::BGRA8);
++        Ref texture = BitmapTexturePool::singleton().acquireTexture(scaledSpriteSize, { BitmapTexture::Flags::SupportsAlpha });
++        texture->updateContents(bitmap.getPixels(), IntRect({ }, scaledSpriteSize), IntPoint(), bitmap.rowBytes(), PixelFormat::BGRA8);
 +        auto fence = GLFence::create(display.glDisplay());
 +        if (!fence)
 +            glFinish();
@@ -264,7 +269,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/coordinated/Scroll
  }
  
  void ScrollerCoordinated::setEnabled(bool enabled)
-@@ -182,6 +358,7 @@
+@@ -178,6 +364,7 @@ void ScrollerCoordinated::setEnabled(bool enabled)
      Locker locker { m_lock };
      m_state.enabled = enabled;
      m_needsUpdate = true;
@@ -272,7 +277,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/coordinated/Scroll
  }
  
  void ScrollerCoordinated::setOverlayScrollbarEnabled(bool enabled)
-@@ -189,6 +366,7 @@
+@@ -185,6 +372,7 @@ void ScrollerCoordinated::setOverlayScrollbarEnabled(bool enabled)
      Locker locker { m_lock };
      m_state.usesOverlayScrollbars = enabled;
      m_needsUpdate = true;
@@ -280,7 +285,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/coordinated/Scroll
  }
  
  void ScrollerCoordinated::setUseDarkAppearance(bool isDark)
-@@ -196,6 +374,7 @@
+@@ -192,6 +380,7 @@ void ScrollerCoordinated::setUseDarkAppearance(bool isDark)
      Locker locker { m_lock };
      m_state.useDarkAppearanceForScrollbars = isDark;
      m_needsUpdate = true;
@@ -288,7 +293,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/coordinated/Scroll
  }
  
  void ScrollerCoordinated::setOpacity(float opacity)
-@@ -203,6 +382,7 @@
+@@ -199,6 +388,7 @@ void ScrollerCoordinated::setOpacity(float opacity)
      Locker locker { m_lock };
      m_state.opacity = opacity;
      m_needsUpdate = true;
@@ -296,7 +301,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/coordinated/Scroll
  }
  
  void ScrollerCoordinated::setScrollbarColor(const std::optional<ScrollbarColor>& scrollbarColor)
-@@ -210,6 +390,7 @@
+@@ -206,6 +396,7 @@ void ScrollerCoordinated::setScrollbarColor(const std::optional<ScrollbarColor>&
      Locker locker { m_lock };
      m_state.scrollbarColor = scrollbarColor;
      m_needsUpdate = true;
@@ -304,7 +309,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/coordinated/Scroll
  }
  
  void ScrollerCoordinated::setScrollbarLayoutDirection(UserInterfaceLayoutDirection direction)
-@@ -217,6 +398,7 @@
+@@ -213,6 +404,7 @@ void ScrollerCoordinated::setScrollbarLayoutDirection(UserInterfaceLayoutDirecti
      Locker locker { m_lock };
      m_state.shouldPlaceVerticalScrollbarOnLeft = direction == UserInterfaceLayoutDirection::RTL;
      m_needsUpdate = true;
@@ -312,10 +317,10 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/coordinated/Scroll
  }
  
  } // namespace WebCore
-diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/coordinated/ScrollerCoordinated.h sq-B/Source/WebCore/page/scrolling/coordinated/ScrollerCoordinated.h
+diff --git a/Source/WebCore/page/scrolling/coordinated/ScrollerCoordinated.h b/Source/WebCore/page/scrolling/coordinated/ScrollerCoordinated.h
 --- a/Source/WebCore/page/scrolling/coordinated/ScrollerCoordinated.h
 +++ b/Source/WebCore/page/scrolling/coordinated/ScrollerCoordinated.h
-@@ -59,6 +59,8 @@
+@@ -59,6 +59,8 @@ public:
      void setScrollbarLayoutDirection(UserInterfaceLayoutDirection);
  
  private:
@@ -324,7 +329,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/coordinated/Scroll
      ThreadSafeWeakPtr<ScrollerPairCoordinated> m_pair;
      const ScrollbarOrientation m_orientation;
      Lock m_lock;
-@@ -67,6 +69,16 @@
+@@ -67,6 +69,16 @@ private:
      RefPtr<CoordinatedPlatformLayer> m_hostLayer WTF_GUARDED_BY_LOCK(m_lock);
      AdwaitaScrollbarPainter::State m_state WTF_GUARDED_BY_LOCK(m_lock);
      ScrollerPairCoordinated::Values m_currentValue WTF_GUARDED_BY_LOCK(m_lock);
@@ -341,10 +346,10 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/coordinated/Scroll
  };
  
  } // namespace WebCore
-diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/coordinated/ScrollingTreeScrollingNodeDelegateCoordinated.cpp sq-B/Source/WebCore/page/scrolling/coordinated/ScrollingTreeScrollingNodeDelegateCoordinated.cpp
+diff --git a/Source/WebCore/page/scrolling/coordinated/ScrollingTreeScrollingNodeDelegateCoordinated.cpp b/Source/WebCore/page/scrolling/coordinated/ScrollingTreeScrollingNodeDelegateCoordinated.cpp
 --- a/Source/WebCore/page/scrolling/coordinated/ScrollingTreeScrollingNodeDelegateCoordinated.cpp
 +++ b/Source/WebCore/page/scrolling/coordinated/ScrollingTreeScrollingNodeDelegateCoordinated.cpp
-@@ -88,8 +88,19 @@
+@@ -88,8 +88,19 @@ void ScrollingTreeScrollingNodeDelegateCoordinated::updateFromStateNode(const Sc
  
      if (scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::ScrollbarHoverState)) {
          auto hoverState = scrollingStateNode.scrollbarHoverState();
@@ -366,7 +371,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/coordinated/Scroll
      }
  
      if (scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::HorizontalScrollbarLayer))
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/adwaita/AdwaitaScrollbarPainter.cpp sq-B/Source/WebCore/platform/adwaita/AdwaitaScrollbarPainter.cpp
+diff --git a/Source/WebCore/platform/adwaita/AdwaitaScrollbarPainter.cpp b/Source/WebCore/platform/adwaita/AdwaitaScrollbarPainter.cpp
 --- a/Source/WebCore/platform/adwaita/AdwaitaScrollbarPainter.cpp
 +++ b/Source/WebCore/platform/adwaita/AdwaitaScrollbarPainter.cpp
 @@ -30,10 +30,31 @@
@@ -402,7 +407,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/adwaita/AdwaitaScrollbar
      if (graphicsContext.paintingDisabled())
          return;
  
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/adwaita/AdwaitaScrollbarPainter.h sq-B/Source/WebCore/platform/adwaita/AdwaitaScrollbarPainter.h
+diff --git a/Source/WebCore/platform/adwaita/AdwaitaScrollbarPainter.h b/Source/WebCore/platform/adwaita/AdwaitaScrollbarPainter.h
 --- a/Source/WebCore/platform/adwaita/AdwaitaScrollbarPainter.h
 +++ b/Source/WebCore/platform/adwaita/AdwaitaScrollbarPainter.h
 @@ -29,6 +29,7 @@
@@ -413,7 +418,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/adwaita/AdwaitaScrollbar
  
  namespace WebCore {
  
-@@ -36,14 +37,33 @@
+@@ -36,14 +37,33 @@ class GraphicsContext;
  
  namespace AdwaitaScrollbarPainter {
  

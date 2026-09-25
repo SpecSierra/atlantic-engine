@@ -47,10 +47,11 @@ BUBBLEWRAP_SANDBOX) because that is exactly the condition under which libWPE
 links Libseccomp (PlatformWPE.cmake) — no extra build wiring. libseccomp's
 seccomp_load() sets NO_NEW_PRIVS itself. Unset env = upstream behaviour.
 
+diff --git a/Source/WebKit/Shared/unix/AuxiliaryProcessMain.cpp b/Source/WebKit/Shared/unix/AuxiliaryProcessMain.cpp
 --- a/Source/WebKit/Shared/unix/AuxiliaryProcessMain.cpp
 +++ b/Source/WebKit/Shared/unix/AuxiliaryProcessMain.cpp
-@@ -34,6 +34,21 @@
- #include <wtf/text/StringToIntegerConversion.h>
+@@ -37,6 +37,21 @@
+ #include <wtf/text/StringView.h>
  #include <wtf/unix/UnixFileDescriptor.h>
  
 +#if ENABLE(BUBBLEWRAP_SANDBOX)
@@ -71,7 +72,7 @@ seccomp_load() sets NO_NEW_PRIVS itself. Unset env = upstream behaviour.
  #if ENABLE(BREAKPAD)
  #include "unix/BreakpadExceptionHandler.h"
  #endif
-@@ -48,11 +63,113 @@ __attribute__((weak)) extern "C" int __llvm_profile_dump(void);
+@@ -51,11 +66,113 @@ __attribute__((weak)) extern "C" int __llvm_profile_dump(void);
  
  namespace WebKit {
  

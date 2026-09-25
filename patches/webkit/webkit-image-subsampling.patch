@@ -48,10 +48,10 @@
 #   WEBKIT_CACHED_SUBIMAGE_MAX_SCALE=1.0 restores "any downscale".
 #
 # ---
-diff -ruN --no-dereference sq-A/Source/WebCore/page/Settings.yaml sq-B/Source/WebCore/page/Settings.yaml
+diff --git a/Source/WebCore/page/Settings.yaml b/Source/WebCore/page/Settings.yaml
 --- a/Source/WebCore/page/Settings.yaml
 +++ b/Source/WebCore/page/Settings.yaml
-@@ -198,7 +198,7 @@
+@@ -199,7 +199,7 @@ ImageSubsamplingEnabled:
    defaultValue:
      WebCore:
        PLATFORM(COCOA): true
@@ -60,7 +60,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/Settings.yaml sq-B/Source/We
  
  ImagesEnabled:
    type: bool
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/BitmapImage.cpp sq-B/Source/WebCore/platform/graphics/BitmapImage.cpp
+diff --git a/Source/WebCore/platform/graphics/BitmapImage.cpp b/Source/WebCore/platform/graphics/BitmapImage.cpp
 --- a/Source/WebCore/platform/graphics/BitmapImage.cpp
 +++ b/Source/WebCore/platform/graphics/BitmapImage.cpp
 @@ -33,9 +33,59 @@
@@ -123,13 +123,15 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/BitmapImage.cpp
  Ref<BitmapImage> BitmapImage::create(ImageObserver* observer, AlphaOption alphaOption, GammaAndColorProfileOption gammaAndColorProfileOption)
  {
      return adoptRef(*new BitmapImage(observer, alphaOption, gammaAndColorProfileOption));
-@@ -71,20 +121,65 @@
+@@ -71,6 +121,7 @@ BitmapImage::BitmapImage(Ref<NativeImage>&& image)
  
  EncodedDataStatus BitmapImage::dataChanged(bool allDataReceived)
  {
 +    destroyCachedSubimage();
-     return m_source->dataChanged(data(), allDataReceived);
+     return m_source->dataChanged(protect(data()), allDataReceived);
  }
+ 
+@@ -81,15 +132,59 @@ void BitmapImage::dataReplaced()
  
  void BitmapImage::destroyDecodedData(bool destroyAll)
  {
@@ -189,7 +191,20 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/BitmapImage.cpp
      auto size = m_source->size(ImageOrientation::Orientation::None);
      auto sourceSize = m_source->sourceSize(ImageOrientation::Orientation::None);
  
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/BitmapImageDescriptor.cpp sq-B/Source/WebCore/platform/graphics/BitmapImageDescriptor.cpp
+diff --git a/Source/WebCore/platform/graphics/BitmapImage.h b/Source/WebCore/platform/graphics/BitmapImage.h
+--- a/Source/WebCore/platform/graphics/BitmapImage.h
++++ b/Source/WebCore/platform/graphics/BitmapImage.h
+@@ -114,6 +114,9 @@ private:
+     bool canReplaceData() const final { return m_source->canReplaceData(); }
+     void dataReplaced() final;
+ 
++    // Cached subimage
++    bool shouldDrawFromCachedSubimage(GraphicsContext&) const final;
++
+     // Current ImageFrame
+     bool currentFrameKnownToBeOpaque() const final { return !currentFrameHasAlpha(); }
+     bool currentFrameIsComplete() const final { return m_source->currentImageFrame().isComplete(); }
+diff --git a/Source/WebCore/platform/graphics/BitmapImageDescriptor.cpp b/Source/WebCore/platform/graphics/BitmapImageDescriptor.cpp
 --- a/Source/WebCore/platform/graphics/BitmapImageDescriptor.cpp
 +++ b/Source/WebCore/platform/graphics/BitmapImageDescriptor.cpp
 @@ -29,6 +29,7 @@
@@ -200,7 +215,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/BitmapImageDesc
  
  namespace WebCore {
  
-@@ -233,10 +234,30 @@
+@@ -238,10 +239,30 @@ SubsamplingLevel BitmapImageDescriptor::maximumSubsamplingLevel() const
      if (!isSizeAvailable())
          return SubsamplingLevel::Default;
  
@@ -235,7 +250,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/BitmapImageDesc
      auto level = SubsamplingLevel::First;
  
      for (; level < SubsamplingLevel::Last; ++level) {
-@@ -252,13 +273,24 @@
+@@ -257,13 +278,24 @@ SubsamplingLevel BitmapImageDescriptor::maximumSubsamplingLevel() const
  
  SubsamplingLevel BitmapImageDescriptor::subsamplingLevelForScaleFactor(GraphicsContext& context, const FloatSize& scaleFactor, AllowImageSubsampling allowImageSubsampling) const
  {
@@ -261,20 +276,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/BitmapImageDesc
  
      float scale = std::min(float(1), std::max(scaleFactor.width(), scaleFactor.height()));
      if (!(scale > 0 && scale <= 1))
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/BitmapImage.h sq-B/Source/WebCore/platform/graphics/BitmapImage.h
---- a/Source/WebCore/platform/graphics/BitmapImage.h
-+++ b/Source/WebCore/platform/graphics/BitmapImage.h
-@@ -103,6 +103,9 @@
-     EncodedDataStatus dataChanged(bool allDataReceived) final;
-     void destroyDecodedData(bool destroyAll = true) final;
- 
-+    // Cached subimage
-+    bool shouldDrawFromCachedSubimage(GraphicsContext&) const final;
-+
-     // Current ImageFrame
-     bool currentFrameKnownToBeOpaque() const final { return !currentFrameHasAlpha(); }
-     bool currentFrameIsComplete() const final { return m_source->currentImageFrame().isComplete(); }
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/Image.cpp sq-B/Source/WebCore/platform/graphics/Image.cpp
+diff --git a/Source/WebCore/platform/graphics/Image.cpp b/Source/WebCore/platform/graphics/Image.cpp
 --- a/Source/WebCore/platform/graphics/Image.cpp
 +++ b/Source/WebCore/platform/graphics/Image.cpp
 @@ -29,9 +29,11 @@
@@ -297,7 +299,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/Image.cpp sq-B/
  #include <wtf/StdLibExtras.h>
  #include <wtf/URL.h>
  #include <wtf/text/TextStream.h>
-@@ -59,6 +62,55 @@
+@@ -59,6 +62,55 @@ Image::Image(ImageObserver* observer)
  
  Image::~Image() = default;
  
@@ -353,10 +355,10 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/Image.cpp sq-B/
  RefPtr<ImageObserver> Image::imageObserver() const
  {
      return m_imageObserver.get();
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/Image.h sq-B/Source/WebCore/platform/graphics/Image.h
+diff --git a/Source/WebCore/platform/graphics/Image.h b/Source/WebCore/platform/graphics/Image.h
 --- a/Source/WebCore/platform/graphics/Image.h
 +++ b/Source/WebCore/platform/graphics/Image.h
-@@ -42,6 +42,7 @@
+@@ -41,6 +41,7 @@
  namespace WebCore {
  
  class AffineTransform;
@@ -364,7 +366,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/Image.h sq-B/So
  class Document;
  class FloatPoint;
  class FloatSize;
-@@ -186,6 +187,15 @@
+@@ -192,6 +193,15 @@ protected:
      virtual bool shouldDrawFromCachedSubimage(GraphicsContext&) const { return false; }
      virtual bool mustDrawFromCachedSubimage(GraphicsContext&) const { return false; }
      virtual ImageDrawResult draw(GraphicsContext&, const FloatRect& dstRect, const FloatRect& srcRect, ImagePaintingOptions = { }) = 0;
@@ -380,7 +382,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/Image.h sq-B/So
      ImageDrawResult drawTiled(GraphicsContext&, const FloatRect& dstRect, const FloatPoint& srcPoint, const FloatSize& tileSize, const FloatSize& spacing, ImagePaintingOptions = { });
      ImageDrawResult drawTiled(GraphicsContext&, const FloatRect& dstRect, const FloatRect& srcRect, const FloatSize& tileScaleFactor, TileRule hRule, TileRule vRule, ImagePaintingOptions = { });
  
-@@ -196,6 +206,8 @@
+@@ -205,6 +215,8 @@ private:
      RefPtr<FragmentedSharedBuffer> m_encodedImageData;
      WeakPtr<ImageObserver> m_imageObserver;
      std::unique_ptr<ImageAdapter> m_adapter;
@@ -389,10 +391,115 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/Image.h sq-B/So
  
      // A value of true or false will override the default Page::imageAnimationEnabled state.
      std::optional<bool> m_allowsAnimation { std::nullopt };
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/jpeg/JPEGImageDecoder.cpp sq-B/Source/WebCore/platform/image-decoders/jpeg/JPEGImageDecoder.cpp
+diff --git a/Source/WebCore/platform/image-decoders/ScalableImageDecoder.cpp b/Source/WebCore/platform/image-decoders/ScalableImageDecoder.cpp
+--- a/Source/WebCore/platform/image-decoders/ScalableImageDecoder.cpp
++++ b/Source/WebCore/platform/image-decoders/ScalableImageDecoder.cpp
+@@ -219,13 +219,27 @@ Seconds ScalableImageDecoder::frameDurationAtIndex(size_t index) const
+     return duration;
+ }
+ 
+-PlatformImagePtr ScalableImageDecoder::createFrameImageAtIndex(size_t index, SubsamplingLevel, const DecodingOptions&)
++PlatformImagePtr ScalableImageDecoder::createFrameImageAtIndex(size_t index, SubsamplingLevel subsamplingLevel, const DecodingOptions&)
+ {
+     Locker locker { m_lock };
+     // Zero-height images can cause problems for some ports. If we have an empty image dimension, just bail.
+     if (size().isEmpty())
+         return nullptr;
+ 
++    // For decoders that support native downscaling (JPEG), decode at the
++    // requested subsampling level. If the level differs from what the cached
++    // frame(s) were decoded at, discard them so frameBufferAtIndex() re-decodes
++    // at the new scale. (The per-format decoders recreate their reader/demuxer
++    // when the frame cache is empty, so no extra reset is needed here.)
++    if (supportsSubsampling() && subsamplingLevel != m_subsamplingLevel) {
++        m_subsamplingLevel = subsamplingLevel;
++        m_frameBufferCache.clear();
++        // Drop any persistent per-format streaming state (e.g. JPEG's reader),
++        // otherwise a level change mid-stream would resume decoding into a fresh
++        // buffer from a stale position and corrupt the result.
++        resetForNewSubsamplingLevel();
++    }
++
+     auto* buffer = frameBufferAtIndex(index);
+     if (!buffer || buffer->isInvalid() || !buffer->hasBackingStore())
+         return nullptr;
+diff --git a/Source/WebCore/platform/image-decoders/ScalableImageDecoder.h b/Source/WebCore/platform/image-decoders/ScalableImageDecoder.h
+--- a/Source/WebCore/platform/image-decoders/ScalableImageDecoder.h
++++ b/Source/WebCore/platform/image-decoders/ScalableImageDecoder.h
+@@ -32,6 +32,7 @@
+ #include "IntRect.h"
+ #include "ScalableImageDecoderFrame.h"
+ #include "SharedBuffer.h"
++#include <algorithm>
+ #include <wtf/Assertions.h>
+ #include <wtf/Lock.h>
+ #include <wtf/RefPtr.h>
+@@ -106,11 +107,37 @@ public:
+     // sizes. This does NOT differ from size() for GIF, since decoding GIFs
+     // composites any smaller frames against previous frames to create full-
+     // size frames.
+-    IntSize frameSizeAtIndex(size_t, SubsamplingLevel) const override
++    IntSize frameSizeAtIndex(size_t, SubsamplingLevel subsamplingLevel) const override
+     {
++        if (supportsSubsampling() && isSizeAvailable())
++            return scaledSizeForSubsamplingLevel(subsamplingLevel);
+         return size();
+     }
+ 
++    // Whether this decoder can produce a natively-downscaled buffer for a
++    // non-Default SubsamplingLevel (JPEG via libjpeg IDCT scaling). Decoders
++    // that return false always decode at full resolution and report size() for
++    // every level. See BitmapImageDescriptor::subsamplingLevelForScaleFactor.
++    virtual bool supportsSubsampling() const { return false; }
++
++    SubsamplingLevel currentSubsamplingLevel() const { return m_subsamplingLevel; }
++
++    // Integer power-of-two divisor for the current subsampling level (1, 2, 4, 8).
++    int subsamplingScaleDenominator() const { return 1 << static_cast<int>(m_subsamplingLevel); }
++
++    // size() scaled down for the given subsampling level, matching libjpeg's
++    // ceil(dimension / denominator) output-dimension calculation so the reported
++    // frame size stays consistent with the decoded backing store.
++    IntSize scaledSizeForSubsamplingLevel(SubsamplingLevel subsamplingLevel) const
++    {
++        auto fullSize = size();
++        int denominator = 1 << static_cast<int>(subsamplingLevel);
++        if (denominator <= 1 || fullSize.isEmpty())
++            return fullSize;
++        return IntSize(std::max(1, (fullSize.width() + denominator - 1) / denominator),
++            std::max(1, (fullSize.height() + denominator - 1) / denominator));
++    }
++
+     // Returns whether the size is legal (i.e. not going to result in
+     // overflow elsewhere). If not, marks decoding as failed.
+     virtual bool setSize(const IntSize& size)
+@@ -161,6 +188,12 @@ public:
+ 
+     void clearFrameBufferCache(size_t) override;
+ 
++    // Reset any persistent per-format decoding state after the frame cache is
++    // discarded for a new subsampling level. Overridden by decoders that hold a
++    // streaming reader (JPEG); no-op for decoders that build fresh state per
++    // decode() call (e.g. WebP's demuxer).
++    virtual void resetForNewSubsamplingLevel() { }
++
+     // If the image has a cursor hot-spot, stores it in the argument
+     // and returns true. Otherwise returns false.
+     std::optional<IntPoint> hotSpot() const override { return std::nullopt; }
+@@ -188,6 +221,9 @@ protected:
+     bool m_ignoreGammaAndColorProfile;
+     ImageOrientation m_orientation;
+     std::optional<IntSize> m_densityCorrectedSize;
++    // Subsampling level the cached frame(s) were decoded at; updated by
++    // createFrameImageAtIndex when a different level is requested.
++    SubsamplingLevel m_subsamplingLevel { SubsamplingLevel::Default };
+ 
+ private:
+     virtual void tryDecodeSize(bool) = 0;
+diff --git a/Source/WebCore/platform/image-decoders/jpeg/JPEGImageDecoder.cpp b/Source/WebCore/platform/image-decoders/jpeg/JPEGImageDecoder.cpp
 --- a/Source/WebCore/platform/image-decoders/jpeg/JPEGImageDecoder.cpp
 +++ b/Source/WebCore/platform/image-decoders/jpeg/JPEGImageDecoder.cpp
-@@ -412,6 +412,23 @@
+@@ -412,6 +412,23 @@ public:
              [[fallthrough]];
  
          case JPEG_START_DECOMPRESS:
@@ -416,7 +523,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/jpeg/JPEG
              // Set parameters for decompression.
              // FIXME -- Should reset dct_method and dither mode for final pass
              // of progressive JPEG.
-@@ -656,10 +673,15 @@
+@@ -658,10 +675,15 @@ bool JPEGImageDecoder::outputScanlines()
      if (m_frameBufferCache.isEmpty())
          return false;
  
@@ -433,7 +540,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/jpeg/JPEG
              return setFailed();
          buffer.setDecodingStatus(DecodingStatus::Partial);
          // The buffer is transparent outside the decoded area while the image is
-@@ -667,8 +689,6 @@
+@@ -669,8 +691,6 @@ bool JPEGImageDecoder::outputScanlines()
          buffer.setHasAlpha(true);
      }
  
@@ -442,10 +549,10 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/jpeg/JPEG
  #if defined(TURBO_JPEG_RGB_SWIZZLE)
      if (turboSwizzled(info->out_color_space)) {
          while (info->output_scanline < info->output_height) {
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/jpeg/JPEGImageDecoder.h sq-B/Source/WebCore/platform/image-decoders/jpeg/JPEGImageDecoder.h
+diff --git a/Source/WebCore/platform/image-decoders/jpeg/JPEGImageDecoder.h b/Source/WebCore/platform/image-decoders/jpeg/JPEGImageDecoder.h
 --- a/Source/WebCore/platform/image-decoders/jpeg/JPEGImageDecoder.h
 +++ b/Source/WebCore/platform/image-decoders/jpeg/JPEGImageDecoder.h
-@@ -58,6 +58,7 @@
+@@ -58,6 +58,7 @@ namespace WebCore {
          // ScalableImageDecoder
          String filenameExtension() const override { return "jpg"_s; }
          ScalableImageDecoderFrame* frameBufferAtIndex(size_t index) override;
@@ -453,7 +560,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/jpeg/JPEG
          // CAUTION: setFailed() deletes |m_reader|.  Be careful to avoid
          // accessing deleted memory, especially when calling this from inside
          // JPEGImageReader!
-@@ -88,6 +89,10 @@
+@@ -88,6 +89,10 @@ namespace WebCore {
  
          void clear();
  
@@ -464,10 +571,10 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/jpeg/JPEG
          std::unique_ptr<JPEGImageReader> m_reader;
  #if USE(LCMS)
          LCMSTransformPtr m_iccTransform;
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/png/PNGImageDecoder.cpp sq-B/Source/WebCore/platform/image-decoders/png/PNGImageDecoder.cpp
+diff --git a/Source/WebCore/platform/image-decoders/png/PNGImageDecoder.cpp b/Source/WebCore/platform/image-decoders/png/PNGImageDecoder.cpp
 --- a/Source/WebCore/platform/image-decoders/png/PNGImageDecoder.cpp
 +++ b/Source/WebCore/platform/image-decoders/png/PNGImageDecoder.cpp
-@@ -314,6 +314,14 @@
+@@ -334,6 +334,14 @@ void PNGImageDecoder::headerAvailable()
      int bitDepth, colorType, interlaceType, compressionType, filterType, channels;
      png_get_IHDR(png, info, &width, &height, &bitDepth, &colorType, &interlaceType, &compressionType, &filterType);
  
@@ -482,45 +589,42 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/png/PNGIm
      // The options we set here match what Mozilla does.
  
      m_hasInfo = true;
-@@ -437,13 +445,32 @@
-     if (m_currentFrame >= frameCount())
-         return;
+@@ -458,11 +466,27 @@ ScalableImageDecoderFrame* PNGImageDecoder::currentFrameBuffer()
+     RELEASE_ASSERT(m_currentFrame < m_frameBufferCache.size());
      auto& buffer = m_frameBufferCache[m_currentFrame];
-+
-+    // Only the first frame of a still image streams straight into the buffer;
-+    // anything else keeps the full-resolution path.
-+    const int scaleDenominator = (m_supportsSubsampling && !m_currentFrame) ? subsamplingScaleDenominator() : 1;
-+    const bool scaling = scaleDenominator > 1;
-+    const IntSize decodeSize = scaling ? scaledSizeForSubsamplingLevel(currentSubsamplingLevel()) : size();
-+
      if (buffer.isInvalid()) {
-         png_structp png = m_reader->pngPtr();
 -        if (!buffer.initialize(size(), m_premultiplyAlpha)) {
++        // Only the first frame of a still image streams straight into the buffer;
++        // anything else keeps the full-resolution path.
++        const bool scaling = scaledDecodeDenominator() > 1;
++        const IntSize decodeSize = scaling ? scaledSizeForSubsamplingLevel(currentSubsamplingLevel()) : size();
 +        if (!buffer.initialize(decodeSize, m_premultiplyAlpha)) {
-             longjmp(JMPBUF(png), 1);
-             return;
+             longjmp(JMPBUF(m_reader->pngPtr()), 1);
+             return nullptr;
          }
  
 +        if (scaling) {
 +            m_scaleAccumulator = makeUniqueArray<uint32_t>(decodeSize.width() * 4);
 +            m_scaleSampleCounts = makeUniqueArray<uint16_t>(decodeSize.width());
 +            if (!m_scaleAccumulator || !m_scaleSampleCounts) {
-+                longjmp(JMPBUF(png), 1);
-+                return;
++                longjmp(JMPBUF(m_reader->pngPtr()), 1);
++                return nullptr;
 +            }
 +            zeroSpan(unsafeMakeSpan(m_scaleAccumulator.get(), decodeSize.width() * 4));
 +            zeroSpan(unsafeMakeSpan(m_scaleSampleCounts.get(), decodeSize.width()));
 +            m_scaleAccumulatorRow = 0;
 +        }
 +
-         unsigned colorChannels = m_reader->hasAlpha() ? 4 : 3;
-         if (PNG_INTERLACE_ADAM7 == png_get_interlace_type(png, m_reader->infoPtr())
-             || m_currentFrame) {
-@@ -514,6 +541,42 @@
+         buffer.setDecodingStatus(DecodingStatus::Partial);
+         buffer.setHasAlpha(false);
+     }
+@@ -542,6 +566,44 @@ void PNGImageDecoder::rowAvailable(unsigned char* rowBuffer, unsigned rowIndex,
          png_progressive_combine_row(m_reader->pngPtr(), row, rowBuffer);
      }
  
-+    if (scaling) {
++    const int scaleDenominator = scaledDecodeDenominator();
++    if (scaleDenominator > 1 && m_scaleAccumulator) {
++        const IntSize decodeSize = buffer.backingStore()->size();
 +        // Box-filter this source row into the accumulator for its output row.
 +        // Rows arrive in order here (non-interlaced, first frame), so a change
 +        // of output row means the previous group is complete and can be
@@ -559,10 +663,15 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/png/PNGIm
      // Write the decoded row pixels to the frame buffer.
      auto destinationRow = buffer.backingStore()->pixelsStartingAt(0, rowIndex);
      auto address = destinationRow;
-@@ -541,8 +604,58 @@
-         buffer.setHasAlpha(true);
+@@ -587,9 +649,64 @@ void PNGImageDecoder::frameRowAvailable(unsigned char* rowBuffer, unsigned rowIn
+     png_progressive_combine_row(m_png, interlaceBuffer + (rowIndex * colorChannels * size().width()), rowBuffer);
  }
  
++int PNGImageDecoder::scaledDecodeDenominator() const
++{
++    return (m_supportsSubsampling && !m_currentFrame) ? subsamplingScaleDenominator() : 1;
++}
++
 +void PNGImageDecoder::flushScaledRow(ScalableImageDecoderFrame& buffer, unsigned outputRow, int outputWidth)
 +{
 +    if (!m_scaleAccumulator || !m_scaleSampleCounts || !buffer.backingStore())
@@ -607,6 +716,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/png/PNGIm
 +
  void PNGImageDecoder::pngComplete()
  {
+     assertIsHeld(m_lock);
 +    // Flush the last group of source rows, which has no following row to
 +    // trigger it. Harmless when not scaling: the accumulator is null.
 +    if (m_scaleAccumulator && !m_frameBufferCache.isEmpty() && m_currentFrame < m_frameBufferCache.size()) {
@@ -618,10 +728,10 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/png/PNGIm
      if (m_isAnimated) {
          if (!processingFinish() && m_frameCount == m_currentFrame)
              return;
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/png/PNGImageDecoder.h sq-B/Source/WebCore/platform/image-decoders/png/PNGImageDecoder.h
+diff --git a/Source/WebCore/platform/image-decoders/png/PNGImageDecoder.h b/Source/WebCore/platform/image-decoders/png/PNGImageDecoder.h
 --- a/Source/WebCore/platform/image-decoders/png/PNGImageDecoder.h
 +++ b/Source/WebCore/platform/image-decoders/png/PNGImageDecoder.h
-@@ -28,6 +28,7 @@
+@@ -29,6 +29,7 @@
  #include "ScalableImageDecoder.h"
  #include <array>
  #include <png.h>
@@ -629,9 +739,9 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/png/PNGIm
  
  #if USE(LCMS)
  #include "LCMSUniquePtr.h"
-@@ -67,6 +68,16 @@
+@@ -71,6 +72,16 @@ namespace WebCore {
          void init();
-         void clearFrameBufferCache(size_t clearBeforeFrame) override;
+         void clearDecodedPixelDataIfNeeded(size_t clearBeforeFrame) override;
  
 +        // libpng has no scaled-decode equivalent to libjpeg's IDCT scaling or
 +        // libwebp's use_scaling, but rows arrive one at a time through the
@@ -645,8 +755,8 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/png/PNGIm
 +
          bool isComplete() const
          {
-             if (m_frameBufferCache.isEmpty())
-@@ -101,7 +112,30 @@
+             assertIsHeld(m_lock);
+@@ -113,7 +124,33 @@ namespace WebCore {
  
          void clear();
  
@@ -664,6 +774,9 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/png/PNGIm
 +        // Averages one accumulated group of source rows into output row
 +        // `outputRow`, then clears the accumulator for the next group.
 +        void flushScaledRow(ScalableImageDecoderFrame&, unsigned outputRow, int outputWidth);
++        // 1 unless this is the first frame of a still image being decoded at a
++        // reduced subsampling level.
++        int scaledDecodeDenominator() const;
 +
          std::unique_ptr<PNGImageReader> m_reader;
 +        // Scaled-decode state. The accumulator holds one OUTPUT row: four
@@ -677,115 +790,10 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/png/PNGIm
          bool m_doNothingOnFailure;
          unsigned m_currentFrame;
          png_structp m_png;
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/ScalableImageDecoder.cpp sq-B/Source/WebCore/platform/image-decoders/ScalableImageDecoder.cpp
---- a/Source/WebCore/platform/image-decoders/ScalableImageDecoder.cpp
-+++ b/Source/WebCore/platform/image-decoders/ScalableImageDecoder.cpp
-@@ -219,13 +219,27 @@
-     return duration;
- }
- 
--PlatformImagePtr ScalableImageDecoder::createFrameImageAtIndex(size_t index, SubsamplingLevel, const DecodingOptions&)
-+PlatformImagePtr ScalableImageDecoder::createFrameImageAtIndex(size_t index, SubsamplingLevel subsamplingLevel, const DecodingOptions&)
- {
-     Locker locker { m_lock };
-     // Zero-height images can cause problems for some ports. If we have an empty image dimension, just bail.
-     if (size().isEmpty())
-         return nullptr;
- 
-+    // For decoders that support native downscaling (JPEG), decode at the
-+    // requested subsampling level. If the level differs from what the cached
-+    // frame(s) were decoded at, discard them so frameBufferAtIndex() re-decodes
-+    // at the new scale. (The per-format decoders recreate their reader/demuxer
-+    // when the frame cache is empty, so no extra reset is needed here.)
-+    if (supportsSubsampling() && subsamplingLevel != m_subsamplingLevel) {
-+        m_subsamplingLevel = subsamplingLevel;
-+        m_frameBufferCache.clear();
-+        // Drop any persistent per-format streaming state (e.g. JPEG's reader),
-+        // otherwise a level change mid-stream would resume decoding into a fresh
-+        // buffer from a stale position and corrupt the result.
-+        resetForNewSubsamplingLevel();
-+    }
-+
-     auto* buffer = frameBufferAtIndex(index);
-     if (!buffer || buffer->isInvalid() || !buffer->hasBackingStore())
-         return nullptr;
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/ScalableImageDecoder.h sq-B/Source/WebCore/platform/image-decoders/ScalableImageDecoder.h
---- a/Source/WebCore/platform/image-decoders/ScalableImageDecoder.h
-+++ b/Source/WebCore/platform/image-decoders/ScalableImageDecoder.h
-@@ -32,6 +32,7 @@
- #include "IntRect.h"
- #include "ScalableImageDecoderFrame.h"
- #include "SharedBuffer.h"
-+#include <algorithm>
- #include <wtf/Assertions.h>
- #include <wtf/Lock.h>
- #include <wtf/RefPtr.h>
-@@ -106,11 +107,37 @@
-     // sizes. This does NOT differ from size() for GIF, since decoding GIFs
-     // composites any smaller frames against previous frames to create full-
-     // size frames.
--    IntSize frameSizeAtIndex(size_t, SubsamplingLevel) const override
-+    IntSize frameSizeAtIndex(size_t, SubsamplingLevel subsamplingLevel) const override
-     {
-+        if (supportsSubsampling() && isSizeAvailable())
-+            return scaledSizeForSubsamplingLevel(subsamplingLevel);
-         return size();
-     }
- 
-+    // Whether this decoder can produce a natively-downscaled buffer for a
-+    // non-Default SubsamplingLevel (JPEG via libjpeg IDCT scaling). Decoders
-+    // that return false always decode at full resolution and report size() for
-+    // every level. See BitmapImageDescriptor::subsamplingLevelForScaleFactor.
-+    virtual bool supportsSubsampling() const { return false; }
-+
-+    SubsamplingLevel currentSubsamplingLevel() const { return m_subsamplingLevel; }
-+
-+    // Integer power-of-two divisor for the current subsampling level (1, 2, 4, 8).
-+    int subsamplingScaleDenominator() const { return 1 << static_cast<int>(m_subsamplingLevel); }
-+
-+    // size() scaled down for the given subsampling level, matching libjpeg's
-+    // ceil(dimension / denominator) output-dimension calculation so the reported
-+    // frame size stays consistent with the decoded backing store.
-+    IntSize scaledSizeForSubsamplingLevel(SubsamplingLevel subsamplingLevel) const
-+    {
-+        auto fullSize = size();
-+        int denominator = 1 << static_cast<int>(subsamplingLevel);
-+        if (denominator <= 1 || fullSize.isEmpty())
-+            return fullSize;
-+        return IntSize(std::max(1, (fullSize.width() + denominator - 1) / denominator),
-+            std::max(1, (fullSize.height() + denominator - 1) / denominator));
-+    }
-+
-     // Returns whether the size is legal (i.e. not going to result in
-     // overflow elsewhere). If not, marks decoding as failed.
-     virtual bool setSize(const IntSize& size)
-@@ -172,6 +199,12 @@
-     // compositing).
-     void clearFrameBufferCache(size_t) override { }
- 
-+    // Reset any persistent per-format decoding state after the frame cache is
-+    // discarded for a new subsampling level. Overridden by decoders that hold a
-+    // streaming reader (JPEG); no-op for decoders that build fresh state per
-+    // decode() call (e.g. WebP's demuxer).
-+    virtual void resetForNewSubsamplingLevel() { }
-+
-     // If the image has a cursor hot-spot, stores it in the argument
-     // and returns true. Otherwise returns false.
-     std::optional<IntPoint> hotSpot() const override { return std::nullopt; }
-@@ -184,6 +217,9 @@
-     bool m_ignoreGammaAndColorProfile;
-     ImageOrientation m_orientation;
-     std::optional<IntSize> m_densityCorrectedSize;
-+    // Subsampling level the cached frame(s) were decoded at; updated by
-+    // createFrameImageAtIndex when a different level is requested.
-+    SubsamplingLevel m_subsamplingLevel { SubsamplingLevel::Default };
- 
- private:
-     virtual void tryDecodeSize(bool) = 0;
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/webp/WEBPImageDecoder.cpp sq-B/Source/WebCore/platform/image-decoders/webp/WEBPImageDecoder.cpp
+diff --git a/Source/WebCore/platform/image-decoders/webp/WEBPImageDecoder.cpp b/Source/WebCore/platform/image-decoders/webp/WEBPImageDecoder.cpp
 --- a/Source/WebCore/platform/image-decoders/webp/WEBPImageDecoder.cpp
 +++ b/Source/WebCore/platform/image-decoders/webp/WEBPImageDecoder.cpp
-@@ -179,11 +179,19 @@
+@@ -188,11 +188,19 @@ void WEBPImageDecoder::decodeFrame(size_t frameIndex, WebPDemuxer* demuxer)
          return;
      }
  
@@ -807,7 +815,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/webp/WEBP
      decoderBuffer.is_external_memory = 1;
      auto p = makeUniqueArray<uint8_t>(decoderBuffer.u.RGBA.size);
      decoderBuffer.u.RGBA.rgba = p.get();
-@@ -192,7 +200,24 @@
+@@ -201,7 +209,24 @@ void WEBPImageDecoder::decodeFrame(size_t frameIndex, WebPDemuxer* demuxer)
          return;
      }
  
@@ -833,7 +841,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/webp/WEBP
      if (!decoder) {
          setFailed();
          return;
-@@ -227,12 +252,22 @@
+@@ -237,12 +262,22 @@ bool WEBPImageDecoder::initFrameBuffer(size_t frameIndex, const WebPIterator* we
      // Initialize the frame rect in our buffer.
      IntRect frameRect(webpFrame->x_offset, webpFrame->y_offset, webpFrame->width, webpFrame->height);
  
@@ -858,7 +866,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/webp/WEBP
              return false;
      } else {
          const auto& prevBuffer = m_frameBufferCache[frameIndex - 1];
-@@ -322,6 +357,10 @@
+@@ -334,6 +369,10 @@ void WEBPImageDecoder::parseHeader()
      }
  
      m_formatFlags = WebPDemuxGetI(demuxer, WEBP_FF_FORMAT_FLAGS);
@@ -869,12 +877,12 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/webp/WEBP
      if (!(m_formatFlags & ANIMATION_FLAG))
          m_repetitionCount = WebCore::RepetitionCountNone;
      else {
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/webp/WEBPImageDecoder.h sq-B/Source/WebCore/platform/image-decoders/webp/WEBPImageDecoder.h
+diff --git a/Source/WebCore/platform/image-decoders/webp/WEBPImageDecoder.h b/Source/WebCore/platform/image-decoders/webp/WEBPImageDecoder.h
 --- a/Source/WebCore/platform/image-decoders/webp/WEBPImageDecoder.h
 +++ b/Source/WebCore/platform/image-decoders/webp/WEBPImageDecoder.h
-@@ -51,6 +51,13 @@
-     size_t frameCount() const override { return m_frameCount; }
-     void clearFrameBufferCache(size_t) override;
+@@ -51,6 +51,13 @@ public:
+     size_t decodeIfNeededAndGetFrameCount() const override { return m_frameCount; }
+     void clearDecodedPixelDataIfNeeded(size_t) override;
  
 +    // libwebp can rescale during decode (WebPDecoderConfig::options.use_scaling),
 +    // so a downscaled draw decodes straight to the smaller size. Restricted to
@@ -886,7 +894,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/image-decoders/webp/WEBP
  private:
      WEBPImageDecoder(AlphaOption, GammaAndColorProfileOption);
      void tryDecodeSize(bool) override { parseHeader(); }
-@@ -65,6 +72,7 @@
+@@ -65,6 +72,7 @@ private:
      size_t m_frameCount { 0 };
      int m_formatFlags { 0 };
      bool m_headerParsed { false };

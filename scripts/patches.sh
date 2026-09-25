@@ -37,9 +37,9 @@ readonly WEBKIT_SOURCE_PATCHES=(
     "patches/webkit/webkit-glfence-disable-env.patch"
     "patches/webkit/webkit-texture-pool.patch"
     "patches/webkit/webkit-raster-on-compositor-thread-env.patch"
-    # AFTER raster-on-compositor (same file).
-    "patches/webkit/webkit-skia-record-rtree-env.patch"
-    # AFTER raster-on-compositor + skia-record-rtree (SkiaPaintingEngine.cpp).
+    # AFTER raster-on-compositor (SkiaPaintingEngine.cpp). (The R-tree record
+    # patch that used to sit here was dropped at 2.54: upstream records with an
+    # SkRTreeFactory itself whenever more than one tile is dirty.)
     "patches/webkit/webkit-scroll-degradation.patch"
 
     # --- Memory ------------------------------------------------------------
@@ -75,7 +75,8 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # Applies on top of the fully patched compositor above.
     "patches/webkit/webkit-composite-scroll-sync.patch"
 
-    "patches/webkit/webkit-wpe-spellcheck-enchant.patch"
+    # (webkit-wpe-spellcheck-enchant dropped at 2.54: upstream moved the Enchant
+    # TextChecker into shared glib code and turned ENABLE_SPELLCHECK on for WPE.)
 
     # --- Load-time responsiveness and caching ------------------------------
     "patches/webkit/webkit-load-responsiveness.patch"

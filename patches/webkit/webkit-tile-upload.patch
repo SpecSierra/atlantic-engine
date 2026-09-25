@@ -31,11 +31,19 @@
 # Must apply AFTER webkit-composite-scroll-sync and webkit-fling-throttle-env
 # (ThreadedCompositor.cpp / ScrollingTree.* contexts overlap).
 #
+# 2.54 rebase: tile updates are no longer processed inside the layer flush;
+# CoordinatedSceneState drains every layer whose backing store reports
+# hasPendingUpdates() on EVERY composite, so a TileDrain composite needs no
+# special handling in CoordinatedPlatformLayer any more (the old hunks there
+# were dropped). Upstream's new m_hasPendingTileUpdates flag is cleared after
+# each drain, which would strand budget-deferred updates, so the store now
+# recomputes it from the tiles.
+#
 # ---
-diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/ScrollingTree.cpp sq-B/Source/WebCore/page/scrolling/ScrollingTree.cpp
+diff --git a/Source/WebCore/page/scrolling/ScrollingTree.cpp b/Source/WebCore/page/scrolling/ScrollingTree.cpp
 --- a/Source/WebCore/page/scrolling/ScrollingTree.cpp
 +++ b/Source/WebCore/page/scrolling/ScrollingTree.cpp
-@@ -42,6 +42,9 @@
+@@ -43,6 +43,9 @@
  #include "ScrollingTreeOverflowScrollingNode.h"
  #include "ScrollingTreePositionedNode.h"
  #include "ScrollingTreeScrollingNode.h"
@@ -45,7 +53,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/ScrollingTree.cpp 
  #include <algorithm>
  #include <cmath>
  #include <cstdlib>
-@@ -383,6 +386,22 @@
+@@ -384,6 +387,22 @@ void ScrollingTree::scrollingTreeNodeDidScroll(ScrollingTreeScrollingNode& node,
      if (flingThrottleEnabled())
          noteScrollForFlingThrottle(node);
  
@@ -65,13 +73,13 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/ScrollingTree.cpp 
 +    }
 +#endif
 +
+     setNeedsApplyLayerPositions();
      if (node.isRootNode())
          setMainFrameScrollPosition(node.currentScrollPosition());
- }
-diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/ScrollingTree.h sq-B/Source/WebCore/page/scrolling/ScrollingTree.h
+diff --git a/Source/WebCore/page/scrolling/ScrollingTree.h b/Source/WebCore/page/scrolling/ScrollingTree.h
 --- a/Source/WebCore/page/scrolling/ScrollingTree.h
 +++ b/Source/WebCore/page/scrolling/ScrollingTree.h
-@@ -308,6 +308,11 @@
+@@ -355,6 +355,11 @@ private:
      MonotonicTime m_flingThrottleSampleTime WTF_GUARDED_BY_LOCK(m_flingThrottleSampleLock);
      std::atomic<double> m_flingThrottleActiveUntilSeconds { 0 };
  
@@ -83,28 +91,44 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/ScrollingTree.h sq
      bool updateTreeFromStateNodeRecursive(const ScrollingStateNode*, struct CommitTreeState&) WTF_REQUIRES_LOCK(m_treeLock);
      virtual void propagateSynchronousScrollingReasons(const HashSet<ScrollingNodeID>&) WTF_REQUIRES_LOCK(m_treeLock) { }
  
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp sq-B/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp
+diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp
 --- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp
 +++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp
-@@ -25,6 +25,7 @@
- #include "CoordinatedTileBuffer.h"
+@@ -26,6 +26,7 @@
  #include "GraphicsLayer.h"
  #include "TextureMapper.h"
+ #include "TextureMapperFlags.h"
 +#include <algorithm>
  #include <wtf/SystemTracing.h>
  
  namespace WebCore {
-@@ -49,8 +50,41 @@
+@@ -54,10 +55,60 @@ void CoordinatedBackingStore::processPendingUpdates()
+     if (!m_hasPendingTileUpdates)
+         return;
  
- void CoordinatedBackingStore::processPendingUpdates()
- {
 -    for (auto& tile : m_tiles.values())
 -        tile.processPendingUpdates();
++    // With the upload budget a tile can keep updates queued across composites, so
++    // the pending flag must reflect what is actually left; clearing it
++    // unconditionally (upstream) would strand deferred updates forever.
++    auto updateHasPendingTileUpdates = [this] {
++        m_hasPendingTileUpdates = false;
++        if (!TileUploadBudget::enabled())
++            return;
++        for (auto& tile : m_tiles.values()) {
++            if (tile.hasPendingUpdates()) {
++                m_hasPendingTileUpdates = true;
++                return;
++            }
++        }
++    };
++
 +    // Stock (and budget-at-rest) path: drain every tile; HashMap order is fine
 +    // because everything uploads this composite anyway.
 +    if (!TileUploadBudget::throttlingThisFrame()) {
 +        for (auto& tile : m_tiles.values())
 +            tile.processPendingUpdates();
++        updateHasPendingTileUpdates();
 +        return;
 +    }
 +
@@ -118,9 +142,12 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordina
 +        if (tile.hasPendingUpdates())
 +            pendingTiles.append(&tile);
 +    }
-+    if (pendingTiles.isEmpty())
++    if (pendingTiles.isEmpty()) {
++        m_hasPendingTileUpdates = false;
 +        return;
-+
++    }
+ 
+-    m_hasPendingTileUpdates = false;
 +    int direction = TileUploadBudget::scrollDirection();
 +    std::sort(pendingTiles.begin(), pendingTiles.end(), [direction](auto* a, auto* b) {
 +        auto rectA = a->firstPendingUpdateRect();
@@ -135,10 +162,11 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordina
 +            break;
 +        tile->processPendingUpdates();
 +    }
++    updateHasPendingTileUpdates();
  }
  
  void CoordinatedBackingStore::resize(const FloatSize& size, float scale)
-@@ -81,6 +115,15 @@
+@@ -88,6 +139,15 @@ void CoordinatedBackingStore::paintToTextureMapper(TextureMapper& textureMapper,
  
      for (const auto& tile : m_tiles.values()) {
          ASSERT(tile.scale() == m_scale);
@@ -154,7 +182,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordina
          const auto allEdgesExposed = allTileEdgesExposed(layerRect, tile.rect()) ? TextureMapper::AllEdgesExposed::Yes : TextureMapper::AllEdgesExposed::No;
  
  #if ENABLE(DAMAGE_TRACKING)
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp sq-B/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp
+diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp
 --- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp
 +++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp
 @@ -25,6 +25,10 @@
@@ -168,7 +196,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordina
  #include <wtf/SystemTracing.h>
  
  #if USE(SKIA)
-@@ -33,6 +37,171 @@
+@@ -34,6 +38,171 @@
  
  namespace WebCore {
  
@@ -340,7 +368,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordina
  CoordinatedBackingStoreTile::CoordinatedBackingStoreTile(float scale)
      : m_scale(scale)
  {
-@@ -42,16 +211,65 @@
+@@ -43,6 +212,15 @@ CoordinatedBackingStoreTile::~CoordinatedBackingStoreTile() = default;
  
  void CoordinatedBackingStoreTile::addUpdate(Update&& update)
  {
@@ -355,6 +383,8 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordina
 +        m_updates.clear();
      m_updates.append(WTF::move(update));
  }
+ 
+@@ -74,11 +252,51 @@ void CoordinatedBackingStoreTile::ensureTexture(const IntSize& size, Coordinated
  
  void CoordinatedBackingStoreTile::processPendingUpdates()
  {
@@ -409,10 +439,10 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordina
      WTFBeginSignpost(this, CoordinatedSwapBuffers, "%zu updates", updatesCount);
      for (unsigned updateIndex = 0; updateIndex < updatesCount; ++updateIndex) {
          auto& update = updates[updateIndex];
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h sq-B/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h
+diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h
 --- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h
 +++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h
-@@ -51,6 +51,11 @@
+@@ -51,6 +51,11 @@ public:
      void addUpdate(Update&&);
  
      void processPendingUpdates();
@@ -424,7 +454,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordina
  
      bool canBePainted() const { return !!m_texture; }
  
-@@ -62,6 +67,34 @@
+@@ -64,6 +69,34 @@ private:
      bool m_isLowRes { false };
  };
  
@@ -459,10 +489,10 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordina
  } // namespace WebCore
  
  #endif // USE(COORDINATED_GRAPHICS)
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedCompositionReason.h sq-B/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedCompositionReason.h
+diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedCompositionReason.h b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedCompositionReason.h
 --- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedCompositionReason.h
 +++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedCompositionReason.h
-@@ -35,6 +35,12 @@
+@@ -35,6 +35,12 @@ enum class CompositionReason : uint32_t {
      VideoFrame = 1 << 1,
      Animation = 1 << 2,
      AsyncScrolling = 1 << 3,
@@ -475,7 +505,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordina
  };
  
  } // namespace WebCore
-@@ -47,7 +53,8 @@
+@@ -47,7 +53,8 @@ template<> struct EnumTraits<WebCore::CompositionReason> {
          WebCore::CompositionReason::RenderingUpdate,
          WebCore::CompositionReason::VideoFrame,
          WebCore::CompositionReason::Animation,
@@ -485,35 +515,10 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordina
      >;
  };
  
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp sq-B/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp
---- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp
-+++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp
-@@ -898,7 +898,7 @@
- {
-     ASSERT(!isMainThread());
-     Locker locker { m_lock };
--    if (m_pendingChanges.isEmpty() && (!reasons.contains(CompositionReason::RenderingUpdate) || !m_backingStoreProxy))
-+    if (m_pendingChanges.isEmpty() && (!reasons.containsAny({ CompositionReason::RenderingUpdate, CompositionReason::TileDrain }) || !m_backingStoreProxy))
-         return;
- 
-     auto& layer = ensureTarget();
-@@ -1082,6 +1082,12 @@
-         }
-     }
- 
-+    // Tile-drain composites only flush the tile updates the upload budget
-+    // deferred (WEBKIT_TILE_UPLOAD_BUDGET_MB); RenderingUpdate composites
-+    // already did so in the backing-store block above.
-+    if (reasons.contains(CompositionReason::TileDrain) && !reasons.contains(CompositionReason::RenderingUpdate) && m_backingStore)
-+        m_backingStore->processPendingUpdates();
-+
-     if (reasons.containsAny({ CompositionReason::RenderingUpdate, CompositionReason::VideoFrame, CompositionReason::AsyncScrolling })) {
-         if (m_pendingChanges.contains(Change::ContentsBuffer)) {
-             m_contentsBuffer.committed = WTF::move(m_contentsBuffer.pending);
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp sq-B/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp
+diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp
 --- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp
 +++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp
-@@ -106,6 +106,12 @@
+@@ -94,6 +94,12 @@ void CoordinatedTileBuffer::completePainting()
  #endif
  }
  
@@ -526,10 +531,10 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordina
  void CoordinatedTileBuffer::waitUntilPaintingComplete()
  {
      Locker locker { m_painting.lock };
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.h sq-B/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.h
+diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.h b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.h
 --- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.h
 +++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.h
-@@ -67,6 +67,10 @@
+@@ -72,6 +72,10 @@ public:
      virtual void beginPainting();
      virtual void completePainting();
      void waitUntilPaintingComplete();
@@ -539,8 +544,8 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/texmap/coordina
 +    WEBCORE_EXPORT bool isPaintingComplete();
  
  #if USE(SKIA)
-     SkCanvas* canvas();
-diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp sq-B/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
+     virtual SkCanvas* canvas() = 0;
+diff --git a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
 --- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
 +++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
 @@ -33,6 +33,7 @@
@@ -550,8 +555,8 @@ diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/CoordinatedGrap
 +#include <WebCore/CoordinatedBackingStoreTile.h>
  #include <WebCore/CoordinatedPlatformLayer.h>
  #include <WebCore/Damage.h>
- #include <WebCore/PlatformDisplay.h>
-@@ -452,6 +453,10 @@
+ #include <WebCore/FontCache.h>
+@@ -632,6 +633,10 @@ void ThreadedCompositor::renderLayerTree()
  
      m_surface->willRenderFrame(viewportSize);
  
@@ -562,7 +567,7 @@ diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/CoordinatedGrap
      RunLoop::mainSingleton().dispatch([this, protectedThis = Ref { *this }] {
          if (m_layerTreeHost)
              m_layerTreeHost->willRenderFrame();
-@@ -467,6 +472,12 @@
+@@ -647,6 +652,12 @@ void ThreadedCompositor::renderLayerTree()
  
      updateFPSCounter();
  

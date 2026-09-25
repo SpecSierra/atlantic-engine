@@ -54,9 +54,10 @@ that currently recomposites the entire scene. Tightening the scroll case itself
 (per-rect scissor / layer-cull in the paint traversal / retained-target scroll-
 copy) is a follow-up that builds on this being on.
 
+diff --git a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
 --- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
 +++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
-@@ -103,6 +103,31 @@
+@@ -121,6 +121,31 @@ static double flingThrottleIntervalMs()
      return ms;
  }
  
@@ -88,18 +89,16 @@ copy) is a follow-up that builds on this being on.
  LayerTreeHost::LayerTreeHost(WebPage& webPage)
      : m_webPage(webPage)
      , m_sceneState(CoordinatedSceneState::create())
-@@ -115,8 +140,8 @@
-     {
+@@ -129,7 +154,7 @@ LayerTreeHost::LayerTreeHost(WebPage& webPage)
          auto& rootLayer = m_sceneState->rootLayer();
  #if ENABLE(DAMAGE_TRACKING)
--        rootLayer.setDamagePropagationEnabled(webPage.corePage()->settings().propagateDamagingInformation());
--        if (webPage.corePage()->settings().propagateDamagingInformation()) {
-+        rootLayer.setDamagePropagationEnabled(webPage.corePage()->settings().propagateDamagingInformation() || damageForceOn());
-+        if (webPage.corePage()->settings().propagateDamagingInformation() || damageForceOn()) {
-             m_damageInGlobalCoordinateSpace = std::make_shared<Damage>(m_webPage.size());
-             rootLayer.setDamageInGlobalCoordinateSpace(m_damageInGlobalCoordinateSpace);
-         }
-@@ -134,11 +159,13 @@
+         const auto& settings = webPage.corePage()->settings();
+-        const bool propagateDamage = settings.propagateDamagingInformation() || damageOverlayForcesPropagation(settings);
++        const bool propagateDamage = settings.propagateDamagingInformation() || damageOverlayForcesPropagation(settings) || damageForceOn();
+         rootLayer.setDamagePropagationEnabled(propagateDamage);
+         if (propagateDamage) {
+             m_damageInGlobalCoordinateSpace = std::make_shared<Damage>(m_webPage->size());
+@@ -146,11 +171,13 @@ LayerTreeHost::LayerTreeHost(WebPage& webPage)
  #if ENABLE(DAMAGE_TRACKING)
      std::optional<OptionSet<ThreadedCompositor::DamagePropagationFlags>> damagePropagationFlags;
      const auto& settings = webPage.corePage()->settings();
@@ -115,13 +114,4 @@ copy) is a follow-up that builds on this being on.
 +        if (useForCompositing)
              damagePropagationFlags->add(ThreadedCompositor::DamagePropagationFlags::UseForCompositing);
      }
-     m_compositor->setDamagePropagationFlags(damagePropagationFlags);
-@@ -469,7 +496,7 @@
- void LayerTreeHost::attachLayer(CoordinatedPlatformLayer& layer)
- {
- #if ENABLE(DAMAGE_TRACKING)
--    layer.setDamagePropagationEnabled(webPage().corePage()->settings().propagateDamagingInformation());
-+    layer.setDamagePropagationEnabled(webPage().corePage()->settings().propagateDamagingInformation() || damageForceOn());
-     if (m_damageInGlobalCoordinateSpace)
-         layer.setDamageInGlobalCoordinateSpace(m_damageInGlobalCoordinateSpace);
- #endif
+     m_compositor->setDamagePropagationSettings(damagePropagationFlags, settings.damageRectangleThreshold());

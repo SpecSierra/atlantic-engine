@@ -60,10 +60,10 @@
 # pairs with webkit-scroll-degradation. Unset/0 = stock throughout.
 #
 # ---
-diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/AsyncScrollingCoordinator.cpp sq-B/Source/WebCore/page/scrolling/AsyncScrollingCoordinator.cpp
+diff --git a/Source/WebCore/page/scrolling/AsyncScrollingCoordinator.cpp b/Source/WebCore/page/scrolling/AsyncScrollingCoordinator.cpp
 --- a/Source/WebCore/page/scrolling/AsyncScrollingCoordinator.cpp
 +++ b/Source/WebCore/page/scrolling/AsyncScrollingCoordinator.cpp
-@@ -58,6 +58,8 @@
+@@ -60,6 +60,8 @@
  #include "Settings.h"
  #include "WheelEventTestMonitor.h"
  #include "pal/HysteresisActivity.h"
@@ -72,7 +72,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/AsyncScrollingCoor
  #include <wtf/ProcessID.h>
  #include <wtf/SystemTracing.h>
  #include <wtf/TZoneMallocInlines.h>
-@@ -1211,12 +1213,36 @@
+@@ -1247,12 +1249,36 @@ void AsyncScrollingCoordinator::setRelatedOverflowScrollingNodes(ScrollingNodeID
          ASSERT_NOT_REACHED();
  }
  
@@ -109,7 +109,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/AsyncScrollingCoor
      if (reasons && is<ScrollingStateFrameScrollingNode>(*scrollingStateNode)) {
          // The LocalFrameView's GraphicsLayer is likely to be out-of-synch with the PlatformLayer
          // at this point. So we'll update it before we switch back to main thread scrolling
-diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/ThreadedScrollingTree.cpp sq-B/Source/WebCore/page/scrolling/ThreadedScrollingTree.cpp
+diff --git a/Source/WebCore/page/scrolling/ThreadedScrollingTree.cpp b/Source/WebCore/page/scrolling/ThreadedScrollingTree.cpp
 --- a/Source/WebCore/page/scrolling/ThreadedScrollingTree.cpp
 +++ b/Source/WebCore/page/scrolling/ThreadedScrollingTree.cpp
 @@ -37,6 +37,8 @@
@@ -121,7 +121,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/ThreadedScrollingT
  #include <wtf/RunLoop.h>
  #include <wtf/SetForScope.h>
  #include <wtf/SystemTracing.h>
-@@ -234,8 +236,52 @@
+@@ -234,8 +236,52 @@ void ThreadedScrollingTree::propagateSynchronousScrollingReasons(const HashSet<S
      }
  }
  
@@ -174,19 +174,20 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/ThreadedScrollingT
      return !m_hasNodesWithSynchronousScrollingReasons;
  }
  
-@@ -264,6 +310,11 @@
+@@ -271,6 +317,12 @@ void ThreadedScrollingTree::scrollingTreeNodeDidScroll(ScrollingTreeScrollingNod
+     }
  
      LOG_WITH_STREAM(Scrolling, stream << "ThreadedScrollingTree::scrollingTreeNodeDidScroll " << node.scrollingNodeID() << " to " << scrollPosition << " triggering main thread rendering update");
- 
++
 +    // Independent scrolling: we are on the scrolling thread and actually
 +    // scrolling, so make sure our own tick is running (see ensureIndependentTick).
 +    if (independentScrollEnabled() && ScrollingThread::isCurrentThread())
 +        ensureIndependentTick();
 +
-     addPendingScrollUpdate(WTF::move(scrollUpdate));
+     addPendingScrollUpdateWithDeferReason(WTF::move(scrollUpdate), WheelEventTestMonitor::DeferReason::ScrollingThreadSyncNeeded);
+ }
  
-     auto deferrer = ScrollingTreeWheelEventTestMonitorCompletionDeferrer { *this, node.scrollingNodeID(), WheelEventTestMonitor::DeferReason::ScrollingThreadSyncNeeded };
-@@ -404,6 +455,16 @@
+@@ -442,6 +494,16 @@ void ThreadedScrollingTree::willStartRenderingUpdate()
      if (!hasRecentActivity())
          return;
  
@@ -203,7 +204,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/ThreadedScrollingT
      tracePoint(ScrollingThreadRenderUpdateSyncStart);
  
      // Wait for the scrolling thread to acquire m_treeLock. This ensures that any pending wheel events are processed.
-@@ -508,6 +569,83 @@
+@@ -546,6 +608,83 @@ void ThreadedScrollingTree::delayedRenderingUpdateDetectionTimerFired()
      m_state = SynchronizationState::Desynchronized;
  }
  
@@ -287,7 +288,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/ThreadedScrollingT
  void ThreadedScrollingTree::displayDidRefreshOnScrollingThread()
  {
      TraceScope tracingScope(ScrollingThreadDisplayDidRefreshStart, ScrollingThreadDisplayDidRefreshEnd, displayID());
-@@ -519,7 +657,11 @@
+@@ -557,7 +696,11 @@ void ThreadedScrollingTree::displayDidRefreshOnScrollingThread()
      m_lastDisplayDidRefreshTime = now;
      serviceScrollAnimations(now);
  
@@ -300,10 +301,10 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/ThreadedScrollingT
          applyLayerPositionsInternal();
  
      switch (m_state) {
-diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/ThreadedScrollingTree.h sq-B/Source/WebCore/page/scrolling/ThreadedScrollingTree.h
+diff --git a/Source/WebCore/page/scrolling/ThreadedScrollingTree.h b/Source/WebCore/page/scrolling/ThreadedScrollingTree.h
 --- a/Source/WebCore/page/scrolling/ThreadedScrollingTree.h
 +++ b/Source/WebCore/page/scrolling/ThreadedScrollingTree.h
-@@ -108,6 +108,11 @@
+@@ -111,6 +111,11 @@ private:
      void didCommitTreeOnScrollingThread() WTF_REQUIRES_LOCK(m_treeLock);
  
      void displayDidRefreshOnScrollingThread();
@@ -314,8 +315,8 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/ThreadedScrollingT
 +    void independentTickFired();
      void waitForRenderingUpdateCompletionOrTimeout() WTF_REQUIRES_LOCK(m_treeLock);
  
-     bool canUpdateLayersOnScrollingThread() const WTF_REQUIRES_LOCK(m_treeLock);
-@@ -145,6 +150,9 @@
+     bool NODELETE canUpdateLayersOnScrollingThread() const WTF_REQUIRES_LOCK(m_treeLock);
+@@ -150,6 +155,9 @@ private:
  
      // Dynamically allocated because it has to use the ScrollingThread's runloop.
      std::unique_ptr<RunLoop::Timer> m_delayedRenderingUpdateDetectionTimer WTF_GUARDED_BY_LOCK(m_treeLock);
@@ -325,18 +326,18 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/ThreadedScrollingT
  
      HashMap<ScrollingNodeID, RequestedScrollData> m_nodesWithPendingScrollAnimations WTF_GUARDED_BY_LOCK(m_treeLock);
      HashMap<ScrollingNodeID, RequestedKeyboardScrollData> m_nodesWithPendingKeyboardScrollAnimations WTF_GUARDED_BY_LOCK(m_treeLock);
-diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/EventDispatcher.cpp sq-B/Source/WebKit/WebProcess/WebPage/EventDispatcher.cpp
+diff --git a/Source/WebKit/WebProcess/WebPage/EventDispatcher.cpp b/Source/WebKit/WebProcess/WebPage/EventDispatcher.cpp
 --- a/Source/WebKit/WebProcess/WebPage/EventDispatcher.cpp
 +++ b/Source/WebKit/WebProcess/WebPage/EventDispatcher.cpp
-@@ -34,6 +34,7 @@
- #include "WebPageProxyMessages.h"
+@@ -33,6 +33,7 @@
+ #include "WebPage.h"
  #include "WebProcess.h"
  #include "WebProcessProxyMessages.h"
 +#include <WebCore/AnimationFrameRate.h>
  #include "WebTouchEvent.h"
  #include "WebWheelEvent.h"
  #include <WebCore/DisplayUpdate.h>
-@@ -61,11 +62,25 @@
+@@ -60,11 +61,25 @@
  #include <WebCore/ScrollingThread.h>
  #include <WebCore/ScrollingTreeNode.h>
  #include <WebCore/ThreadedScrollingTree.h>
@@ -362,7 +363,7 @@ diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/EventDispatcher
  EventDispatcher::EventDispatcher(WebProcess& process)
      : m_process(process)
      , m_queue(WorkQueue::create("com.apple.WebKit.EventDispatcher"_s, WorkQueue::QOS::UserInteractive))
-@@ -74,6 +89,9 @@
+@@ -73,6 +88,9 @@ EventDispatcher::EventDispatcher(WebProcess& process)
      , m_momentumEventDispatcher(WTF::makeUnique<MomentumEventDispatcher>(*this))
      , m_observerID(DisplayLinkObserverID::generate())
  #endif
@@ -372,7 +373,7 @@ diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/EventDispatcher
  {
  }
  
-@@ -160,6 +178,30 @@
+@@ -159,6 +177,30 @@ void EventDispatcher::internalWheelEvent(PageIdentifier pageID, const WebWheelEv
          auto processingSteps = scrollingTree->determineWheelEventProcessing(platformWheelEvent);
          bool useMainThreadForScrolling = processingSteps.contains(WheelEventProcessingSteps::SynchronousScrolling);
  
@@ -403,7 +404,7 @@ diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/EventDispatcher
  #if !PLATFORM(COCOA)
          // Deliver continuing scroll gestures directly to the scrolling thread until the end.
          if ((platformWheelEvent.phase() == PlatformWheelEventPhase::Changed || platformWheelEvent.phase() == PlatformWheelEventPhase::Ended)
-@@ -167,6 +209,14 @@
+@@ -166,6 +208,14 @@ void EventDispatcher::internalWheelEvent(PageIdentifier pageID, const WebWheelEv
              useMainThreadForScrolling = false;
  #endif
  
@@ -417,8 +418,8 @@ diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/EventDispatcher
 +
          scrollingTree->willProcessWheelEvent();
  
-         ScrollingThread::dispatch([scrollingTree, wheelEvent, platformWheelEvent, processingSteps, useMainThreadForScrolling, pageID, wheelEventOrigin, this, protectedThis = Ref { *this }] {
-@@ -343,13 +393,87 @@
+         ScrollingThread::dispatch([scrollingTree, wheelEvent, platformWheelEvent, processingSteps, useMainThreadForScrolling, pageID, this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler)] mutable {
+@@ -342,12 +392,86 @@ void EventDispatcher::dispatchGestureEvent(FrameIdentifier frameID, PageIdentifi
  void EventDispatcher::notifyScrollingTreesDisplayDidRefresh(PlatformDisplayID displayID)
  {
  #if ENABLE(ASYNC_SCROLLING) && ENABLE(SCROLLING_THREAD)
@@ -447,7 +448,7 @@ diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/EventDispatcher
  #endif
  }
  
- #if HAVE(DISPLAY_LINK)
++#if HAVE(DISPLAY_LINK)
 +// WEBKIT_INDEPENDENT_SCROLL (see ThreadedScrollingTree.cpp for the scheduling
 +// half): give the scrolling thread a display-link observer of its own.
 +//
@@ -491,7 +492,7 @@ diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/EventDispatcher
 +    if (m_scrollingDisplayLinkID)
 +        stopScrollingDisplayLink();
 +
-+    WebProcess::singleton().protectedParentProcessConnection()->send(Messages::WebProcessProxy::StartDisplayLink(m_scrollingObserverID, displayID, WebCore::FullSpeedFramesPerSecond), 0);
++    protect(WebProcess::singleton().parentProcessConnection())->send(Messages::WebProcessProxy::StartDisplayLink(m_scrollingObserverID, displayID, WebCore::FullSpeedFramesPerSecond), 0);
 +    m_scrollingDisplayLinkID = displayID;
 +}
 +
@@ -500,19 +501,18 @@ diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/EventDispatcher
 +    if (!m_scrollingDisplayLinkID)
 +        return;
 +
-+    WebProcess::singleton().protectedParentProcessConnection()->send(Messages::WebProcessProxy::StopDisplayLink(m_scrollingObserverID, *m_scrollingDisplayLinkID), 0);
++    protect(WebProcess::singleton().parentProcessConnection())->send(Messages::WebProcessProxy::StopDisplayLink(m_scrollingObserverID, *m_scrollingDisplayLinkID), 0);
 +    m_scrollingDisplayLinkID = std::nullopt;
 +}
 +#endif
 +
-+#if HAVE(DISPLAY_LINK)
+ #if HAVE(DISPLAY_LINK)
  void EventDispatcher::displayDidRefresh(PlatformDisplayID displayID, const DisplayUpdate& displayUpdate, bool sendToMainThread)
  {
-     tracePoint(DisplayRefreshDispatchingToMainThread, displayID, sendToMainThread);
-diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/EventDispatcher.h sq-B/Source/WebKit/WebProcess/WebPage/EventDispatcher.h
+diff --git a/Source/WebKit/WebProcess/WebPage/EventDispatcher.h b/Source/WebKit/WebProcess/WebPage/EventDispatcher.h
 --- a/Source/WebKit/WebProcess/WebPage/EventDispatcher.h
 +++ b/Source/WebKit/WebProcess/WebPage/EventDispatcher.h
-@@ -149,6 +149,12 @@
+@@ -145,6 +145,12 @@ private:
  
  #if HAVE(DISPLAY_LINK)
      void displayDidRefresh(WebCore::PlatformDisplayID, const WebCore::DisplayUpdate&, bool sendToMainThread);
@@ -525,7 +525,7 @@ diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/EventDispatcher
  #endif
  
  #if ENABLE(SCROLLING_THREAD)
-@@ -185,6 +191,14 @@
+@@ -183,6 +189,14 @@ private:
      std::unique_ptr<MomentumEventDispatcher> m_momentumEventDispatcher;
      DisplayLinkObserverID m_observerID;
  #endif

@@ -23,10 +23,10 @@
 # Only the treeLock hold survives.
 #
 # ---
-diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/ScrollingTree.cpp sq-B/Source/WebCore/page/scrolling/ScrollingTree.cpp
+diff --git a/Source/WebCore/page/scrolling/ScrollingTree.cpp b/Source/WebCore/page/scrolling/ScrollingTree.cpp
 --- a/Source/WebCore/page/scrolling/ScrollingTree.cpp
 +++ b/Source/WebCore/page/scrolling/ScrollingTree.cpp
-@@ -589,6 +589,15 @@
+@@ -595,6 +595,15 @@ void ScrollingTree::applyLayerPositions()
      applyLayerPositionsInternal();
  }
  
@@ -42,22 +42,22 @@ diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/ScrollingTree.cpp 
  void ScrollingTree::applyLayerPositionsInternal()
  {
      ASSERT(m_treeLock.isLocked());
-diff -ruN --no-dereference sq-A/Source/WebCore/page/scrolling/ScrollingTree.h sq-B/Source/WebCore/page/scrolling/ScrollingTree.h
+diff --git a/Source/WebCore/page/scrolling/ScrollingTree.h b/Source/WebCore/page/scrolling/ScrollingTree.h
 --- a/Source/WebCore/page/scrolling/ScrollingTree.h
 +++ b/Source/WebCore/page/scrolling/ScrollingTree.h
-@@ -114,6 +114,7 @@
+@@ -126,6 +126,7 @@ public:
+     bool commitTreeStateInternal(std::unique_ptr<ScrollingStateTree>&&, std::optional<LayerHostingContextIdentifier>) WTF_REQUIRES_LOCK(m_treeLock);
  
      WEBCORE_EXPORT virtual void applyLayerPositions();
-     WEBCORE_EXPORT void applyLayerPositionsAfterCommit();
 +    WEBCORE_EXPORT void applyLayerPositionsWhileLocked() WTF_REQUIRES_LOCK(m_treeLock);
+     void setNeedsApplyLayerPositions() { m_needsApplyLayerPositions = true; }
  
      virtual Ref<ScrollingTreeNode> createScrollingTreeNode(ScrollingNodeType, ScrollingNodeID) = 0;
-     
-diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp sq-B/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
+diff --git a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
 --- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
 +++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
-@@ -234,6 +234,19 @@
-     if (RefPtr drawingArea = m_webPage.drawingArea())
+@@ -220,6 +220,19 @@ void LayerTreeHost::updateRendering()
+     if (RefPtr drawingArea = page->drawingArea())
          drawingArea->dispatchPendingCallbacksAfterEnsuringDrawing();
  
 +#if ENABLE(SCROLLING_THREAD)
@@ -66,7 +66,7 @@ diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/CoordinatedGrap
 +    // ThreadedCompositor::flushCompositingState, WEBKIT_COMPOSITE_SCROLL_SYNC).
 +    if (ThreadedCompositor::compositeScrollSyncEnabled()) {
 +        RefPtr<WebCore::ScrollingTree> scrollingTree;
-+        if (auto* scrollingCoordinator = m_webPage.corePage()->scrollingCoordinator()) {
++        if (auto* scrollingCoordinator = page->corePage()->scrollingCoordinator()) {
 +            if (is<AsyncScrollingCoordinator>(*scrollingCoordinator))
 +                scrollingTree = downcast<AsyncScrollingCoordinator>(*scrollingCoordinator).scrollingTree();
 +        }
@@ -76,21 +76,21 @@ diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/CoordinatedGrap
      bool didChangeSceneState = m_sceneState->flush();
      if (m_compositionRequired || m_pendingResize || m_forceFrameSync || didChangeSceneState)
          requestCompositionForRenderingUpdate();
-diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp sq-B/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
+diff --git a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
 --- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
 +++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
-@@ -36,6 +36,7 @@
- #include <WebCore/CoordinatedPlatformLayer.h>
- #include <WebCore/Damage.h>
+@@ -38,6 +38,7 @@
+ #include <WebCore/FontCache.h>
+ #include <WebCore/Page.h>
  #include <WebCore/PlatformDisplay.h>
 +#include <WebCore/ScrollingTree.h>
- #include <WebCore/TextureMapperLayer.h>
- #include <WebCore/TransformationMatrix.h>
- #include <cstdlib>
-@@ -280,6 +281,38 @@
-         ASSERT(!reasons.contains(CompositionReason::RenderingUpdate) || !m_state.isWaitingForTiles);
+ #include <WebCore/Settings.h>
+ #include <WebCore/SkiaCompositingLayer.h>
+ #include <WebCore/SkiaDamageRegion.h>
+@@ -354,6 +355,36 @@ void ThreadedCompositor::flushCompositingState(const OptionSet<CompositionReason
      }
  #endif
+ 
 +#if ENABLE(SCROLLING_THREAD)
 +    // WEBKIT_COMPOSITE_SCROLL_SYNC (default on): re-apply the scrolling
 +    // tree's layer positions under the tree lock, holding it across the whole
@@ -116,17 +116,15 @@ diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/CoordinatedGrap
 +            // scrolling thread's scroll-then-compensate walk atomic with
 +            // respect to this flush.
 +            Locker treeLocker { scrollingTree->treeLock() };
-+            m_sceneState->rootLayer().flushCompositingState(reasons);
-+            for (auto& layer : m_sceneState->committedLayers())
-+                layer->flushCompositingState(reasons);
++            m_sceneState->flushCompositingState(reasons, m_useSkia);
 +            return;
 +        }
 +    }
 +#endif
-     m_sceneState->rootLayer().flushCompositingState(reasons);
-     for (auto& layer : m_sceneState->committedLayers())
-         layer->flushCompositingState(reasons);
-@@ -479,6 +512,23 @@
+     m_sceneState->flushCompositingState(reasons, m_useSkia);
+ }
+ 
+@@ -665,6 +696,23 @@ void ThreadedCompositor::requestComposition(CompositionReason reason)
      scheduleUpdateLocked();
  }
  
@@ -150,18 +148,18 @@ diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/CoordinatedGrap
  ASCIILiteral ThreadedCompositor::stateToString(ThreadedCompositor::State state)
  {
      switch (state) {
-diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.h sq-B/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.h
+diff --git a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.h b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.h
 --- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.h
 +++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.h
-@@ -44,6 +44,7 @@
- #include <wtf/WorkQueue.h>
+@@ -53,6 +53,7 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
+ class SkCanvas;
  
  namespace WebCore {
 +class ScrollingTree;
  class TextureMapper;
  class TransformationMatrix;
  }
-@@ -74,6 +75,10 @@
+@@ -89,6 +90,10 @@ public:
      void setSize(const WebCore::IntSize&, float);
      void requestCompositionForRenderingUpdate(Function<void()>&&);
      void requestComposition(WebCore::CompositionReason);
@@ -172,7 +170,7 @@ diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/CoordinatedGrap
      RunLoop* runLoop();
  
      void invalidate();
-@@ -120,6 +125,10 @@
+@@ -153,6 +158,10 @@ private:
      RefPtr<AcceleratedSurface> m_surface;
      RefPtr<CoordinatedSceneState> m_sceneState;
      std::unique_ptr<WebCore::GLContext> m_context;
@@ -180,6 +178,6 @@ diff -ruN --no-dereference sq-A/Source/WebKit/WebProcess/WebPage/CoordinatedGrap
 +    Lock m_scrollingTreeLock;
 +    RefPtr<WebCore::ScrollingTree> m_scrollingTree WTF_GUARDED_BY_LOCK(m_scrollingTreeLock);
 +#endif
+     sk_sp<GrContextThreadSafeProxy> m_threadSafeGrContext;
  
      bool m_flipY { false };
-     int m_maxTextureSize { 0 };

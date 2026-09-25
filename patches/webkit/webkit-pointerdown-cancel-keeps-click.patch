@@ -28,36 +28,37 @@
 # real mouse is never affected.
 #
 # ---
---- a/Source/WebCore/page/EventHandler.cpp	2026-08-27 18:56:55.322551384 +0000
-+++ b/Source/WebCore/page/EventHandler.cpp	2026-08-27 18:56:55.352551544 +0000
-@@ -2125,7 +2125,11 @@
+diff --git a/Source/WebCore/page/EventHandler.cpp b/Source/WebCore/page/EventHandler.cpp
+--- a/Source/WebCore/page/EventHandler.cpp
++++ b/Source/WebCore/page/EventHandler.cpp
+@@ -2153,7 +2153,11 @@ HandleUserInputEventResult EventHandler::handleMousePressEvent(const PlatformMou
  
      frame->selection().setCaretBlinkingSuspended(true);
  
--    bool swallowEvent = !dispatchMouseEvent(eventNames().mousedownEvent, mouseEvent.protectedTargetNode().get(), m_clickCount, platformMouseEvent, FireMouseOverOut::Yes);
+-    bool swallowEvent = !dispatchMouseEvent(eventNames().mousedownEvent, protect(mouseEvent.targetNode()).get(), m_clickCount, platformMouseEvent, FireMouseOverOut::Yes);
 +    // m_clickNode/m_clickCount are already set above, which is all the click
 +    // needs; only the mousedown dispatch is suppressed.
 +    bool swallowEvent = shouldSuppressCompatibilityMouseEvent(platformMouseEvent)
 +        ? false
-+        : !dispatchMouseEvent(eventNames().mousedownEvent, mouseEvent.protectedTargetNode().get(), m_clickCount, platformMouseEvent, FireMouseOverOut::Yes);
++        : !dispatchMouseEvent(eventNames().mousedownEvent, protect(mouseEvent.targetNode()).get(), m_clickCount, platformMouseEvent, FireMouseOverOut::Yes);
      if (!swallowEvent || mouseEvent.scrollbar())
          m_capturesDragging = true;
      else
-@@ -2186,8 +2190,12 @@
+@@ -2214,8 +2218,12 @@ bool EventHandler::handleMouseDoubleClickEvent(const PlatformMouseEvent& platfor
          return true;
  
      m_clickCount = platformMouseEvent.clickCount();
--    bool swallowMouseUpEvent = !dispatchMouseEvent(eventNames().mouseupEvent, mouseEvent.protectedTargetNode().get(), m_clickCount, platformMouseEvent, FireMouseOverOut::Yes);
+-    bool swallowMouseUpEvent = !dispatchMouseEvent(eventNames().mouseupEvent, protect(mouseEvent.targetNode()).get(), m_clickCount, platformMouseEvent, FireMouseOverOut::Yes);
 +    bool swallowMouseUpEvent = shouldSuppressCompatibilityMouseEvent(platformMouseEvent)
 +        ? false
-+        : !dispatchMouseEvent(eventNames().mouseupEvent, mouseEvent.protectedTargetNode().get(), m_clickCount, platformMouseEvent, FireMouseOverOut::Yes);
++        : !dispatchMouseEvent(eventNames().mouseupEvent, protect(mouseEvent.targetNode()).get(), m_clickCount, platformMouseEvent, FireMouseOverOut::Yes);
 +    // The click is dispatched either way: it is not a compatibility mouse event.
      bool swallowClickEvent = swallowAnyClickEvent(platformMouseEvent, mouseEvent, IgnoreAncestorNodesForClickEvent::Yes);
 +    m_suppressCompatibilityMouseEventsForTap = false;
  
      if (m_lastScrollbarUnderMouse)
-         swallowMouseUpEvent = m_lastScrollbarUnderMouse->mouseUp(platformMouseEvent);
-@@ -2471,6 +2479,15 @@
+         swallowMouseUpEvent = protect(m_lastScrollbarUnderMouse)->mouseUp(platformMouseEvent);
+@@ -2498,6 +2506,15 @@ static RefPtr<Node> targetNodeForClickEvent(Node* mousePressNode, Node* mouseRel
      return nullptr;
  }
  
@@ -73,7 +74,7 @@
  bool EventHandler::swallowAnyClickEvent(const PlatformMouseEvent& platformMouseEvent, const MouseEventWithHitTestResults& mouseEvent, IgnoreAncestorNodesForClickEvent ignoreAncestorNodesForClickEvent)
  {
      if (!m_clickCount)
-@@ -5546,11 +5563,23 @@
+@@ -5615,11 +5632,23 @@ Expected<bool, RemoteFrameGeometryTransformer> EventHandler::handleTouchEvent(co
              *pointerTarget, event, index, !index, *document->windowProxy(), { 0, 0 });
  
          // https://w3c.github.io/pointerevents/#suppressing-a-compatibility-mouse-event
@@ -102,9 +103,10 @@
  #endif
  
          // pagePoint should always be relative to the target elements containing frame.
---- a/Source/WebCore/page/EventHandler.h	2026-08-27 18:56:55.327551410 +0000
-+++ b/Source/WebCore/page/EventHandler.h	2026-08-27 18:56:55.352551544 +0000
-@@ -496,6 +496,7 @@
+diff --git a/Source/WebCore/page/EventHandler.h b/Source/WebCore/page/EventHandler.h
+--- a/Source/WebCore/page/EventHandler.h
++++ b/Source/WebCore/page/EventHandler.h
+@@ -517,6 +517,7 @@ private:
      bool dispatchMouseEvent(const AtomString& eventType, Node* target, int clickCount, const PlatformMouseEvent&, FireMouseOverOut);
  
      enum class IgnoreAncestorNodesForClickEvent : bool { No, Yes };
@@ -112,7 +114,7 @@
      bool swallowAnyClickEvent(const PlatformMouseEvent&, const MouseEventWithHitTestResults&, IgnoreAncestorNodesForClickEvent);
  
  #if ENABLE(DRAG_SUPPORT)
-@@ -695,6 +696,10 @@
+@@ -714,6 +715,10 @@ private:
      Cursor m_currentMouseCursor;
  
      RefPtr<Node> m_lastTouchedNode;

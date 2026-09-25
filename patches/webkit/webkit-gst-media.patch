@@ -35,18 +35,18 @@
 # autoaudiosink "child-added" hook the media-role change installs.
 #
 # ---
-diff -ruN --no-dereference sq-A/Source/WebCore/html/HTMLMediaElement.cpp sq-B/Source/WebCore/html/HTMLMediaElement.cpp
+diff --git a/Source/WebCore/html/HTMLMediaElement.cpp b/Source/WebCore/html/HTMLMediaElement.cpp
 --- a/Source/WebCore/html/HTMLMediaElement.cpp
 +++ b/Source/WebCore/html/HTMLMediaElement.cpp
-@@ -151,6 +151,7 @@
- #include "VisibilityAdjustment.h"
+@@ -155,6 +155,7 @@
  #include "WebCoreJSClientData.h"
+ #include <JavaScriptCore/JSObjectInlines.h>
  #include <JavaScriptCore/Uint8Array.h>
 +#include <cstdlib>
  #include <limits>
  #include <pal/SessionID.h>
  #include <ranges>
-@@ -500,7 +501,15 @@
+@@ -504,7 +505,15 @@ SUPPRESS_NODELETE static bool NODELETE defaultVolumeLocked()
  #if PLATFORM(IOS)
      return PAL::currentUserInterfaceIdiomIsSmallScreen();
  #else
@@ -63,10 +63,10 @@ diff -ruN --no-dereference sq-A/Source/WebCore/html/HTMLMediaElement.cpp sq-B/So
  #endif
  }
  
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/gstreamer/GStreamerCommon.cpp sq-B/Source/WebCore/platform/graphics/gstreamer/GStreamerCommon.cpp
+diff --git a/Source/WebCore/platform/graphics/gstreamer/GStreamerCommon.cpp b/Source/WebCore/platform/graphics/gstreamer/GStreamerCommon.cpp
 --- a/Source/WebCore/platform/graphics/gstreamer/GStreamerCommon.cpp
 +++ b/Source/WebCore/platform/graphics/gstreamer/GStreamerCommon.cpp
-@@ -1164,6 +1164,16 @@
+@@ -1195,6 +1195,16 @@ bool gstElementFactoryEquals(GstElement* element, ASCIILiteral name)
  
  GstElement* /* (transfer floating) */ createAutoAudioSink(const String& role)
  {
@@ -83,7 +83,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/gstreamer/GStre
      auto* audioSink = makeGStreamerElement("autoaudiosink"_s);
      g_signal_connect_data(audioSink, "child-added", G_CALLBACK(+[](GstChildProxy*, GObject* object, gchar*, gpointer userData) {
          auto* role = reinterpret_cast<StringImpl*>(userData);
-@@ -1179,7 +1189,24 @@
+@@ -1210,7 +1220,24 @@ IGNORE_WARNINGS_END
              auto& clientName = getApplicationName();
              g_object_set(object, "client-name", clientName.ascii().data(), nullptr);
          }
@@ -109,10 +109,10 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/gstreamer/GStre
          if (auto* roleImpl = reinterpret_cast<StringImpl*>(userData))
              roleImpl->deref();
      }), static_cast<GConnectFlags>(0));
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp sq-B/Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp
+diff --git a/Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp b/Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp
 --- a/Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp
 +++ b/Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp
-@@ -2725,6 +2725,30 @@
+@@ -2792,6 +2792,30 @@ void MediaPlayerPrivateGStreamer::configureElement(GstElement* element)
      if (gst_check_version(1, 22, 0) && startsWith(name.span(), "urisourcebin"_s) && (isBlob || isMediaSource() || isMediaStreamPlayer()))
          g_object_set(element, "use-buffering", FALSE, "parse-streams", !isMediaStreamPlayer(), nullptr);
  
@@ -143,7 +143,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/gstreamer/Media
      if (startsWith(name.span(), "parsebin"_s))
          configureParsebin(element);
  
-@@ -2738,9 +2762,13 @@
+@@ -2805,9 +2829,13 @@ void MediaPlayerPrivateGStreamer::configureElement(GstElement* element)
      // configure urisourcebin to setup a ring buffer so that downstream demuxers operate in pull
      // mode. Some demuxers (matroskademux) don't work as well in push mode.
      if (startsWith(name.span(), "urisourcebin"_s) && !m_isLegacyPlaybin && m_preload == MediaPlayer::Preload::Auto) {
@@ -160,7 +160,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/gstreamer/Media
              g_object_set(element, "download", TRUE, nullptr);
      }
  
-@@ -2749,8 +2777,13 @@
+@@ -2816,8 +2844,13 @@ void MediaPlayerPrivateGStreamer::configureElement(GstElement* element)
          webkitGstTraceProcessingTimeForElement(element);
  
      // This will set the multiqueue size to the default value.
@@ -176,7 +176,7 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/gstreamer/Media
  
      if (classifiers.contains("Decoder"_s)) {
          if (classifiers.contains("Video"_s))
-@@ -2768,8 +2801,13 @@
+@@ -2835,8 +2868,13 @@ void MediaPlayerPrivateGStreamer::configureElement(GstElement* element)
          return;
      }
  
@@ -192,10 +192,10 @@ diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/gstreamer/Media
  }
  
  void MediaPlayerPrivateGStreamer::configureElementPlatformQuirks(GstElement* element)
-diff -ruN --no-dereference sq-A/Source/WebCore/platform/graphics/gstreamer/WebKitWebSourceGStreamer.cpp sq-B/Source/WebCore/platform/graphics/gstreamer/WebKitWebSourceGStreamer.cpp
+diff --git a/Source/WebCore/platform/graphics/gstreamer/WebKitWebSourceGStreamer.cpp b/Source/WebCore/platform/graphics/gstreamer/WebKitWebSourceGStreamer.cpp
 --- a/Source/WebCore/platform/graphics/gstreamer/WebKitWebSourceGStreamer.cpp
 +++ b/Source/WebCore/platform/graphics/gstreamer/WebKitWebSourceGStreamer.cpp
-@@ -691,6 +691,16 @@
+@@ -692,6 +692,16 @@ static void webKitWebSrcMakeRequest(WebKitWebSrc* src, DataMutexLocker<WebKitWeb
          });
      }
  
