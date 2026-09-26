@@ -1,0 +1,9 @@
+[atlantic-ci]
+name=Atlantic CI (aarch64)
+enabled=1
+autorefresh=1
+baseurl=https://SpecSierra.github.io/atlantic-engine/aarch64/
+type=rpm-md
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://SpecSierra.github.io/atlantic-engine/RPM-GPG-KEY-atlantic-ci
