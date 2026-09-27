@@ -1,0 +1,189 @@
+# WEBKIT_GST_TS_CC_FIX (default ON, =0 disables): keep MPEG-TS continuity
+# counters continuous across HLS fragments in WebKitWebSrc.
+#
+# Pornhub (phncdn) ends every .ts fragment with zero-payload packets that walk
+# each PID's continuity counter up to 15. GStreamer's tsdemux only counts
+# packets with payload bytes, so it flags the next fragment's first packet as a
+# continuity mismatch and, with a PES in progress, discards it and everything
+# up to the next packet start: the IDR frame opening every fragment. Result:
+# mosaic ~3 s into every video (first fragment is 3 s), with both the hardware
+# and the software decoder, on the Xperia and the Jolla. The same segments
+# played as one local file, or over HLS after the fix, play clean (tsdemux
+# mismatches 4 -> 0 on a local HLS replay of three real fragments).
+#
+# The fix renumbers continuity counters per PID with a constant shift per
+# response (no payload byte is changed), and never ends a buffer inside a TS
+# packet header. Only responses that look like MPEG-TS are touched.
+--- a/Source/WebCore/platform/graphics/gstreamer/WebKitWebSourceGStreamer.cpp
++++ b/Source/WebCore/platform/graphics/gstreamer/WebKitWebSourceGStreamer.cpp
+@@ -34,7 +34,10 @@
+ #include "ResourceResponse.h"
+ #include "SecurityOrigin.h"
+ #include <WebCore/HTTPStatusCodes.h>
++#include <array>
+ #include <cstdint>
++#include <cstdlib>
++#include <cstring>
+ #include <wtf/Condition.h>
+ #include <wtf/DataMutex.h>
+ #include <wtf/PrintStream.h>
+@@ -117,6 +120,14 @@
+         bool isDurationSet { false };
+         uint64_t readPosition { 0 };
+ 
++        // MPEG-TS continuity renumbering (WEBKIT_GST_TS_CC_FIX), see webKitWebSrcFixTsContinuity().
++        // tsLastCC survives resets on purpose: hlsdemux reuses this element for every fragment.
++        enum class MpegTsState : uint8_t { Unknown, Yes, No };
++        MpegTsState mpegTsState { MpegTsState::Unknown };
++        std::array<int8_t, 8192> tsLastCC { }; // per PID, last CC of a packet with payload bytes; -1 = unseen
++        std::array<int8_t, 8192> tsDelta { }; // per PID, CC shift for the current response; -1 = not decided yet
++        bool tsStateInitialized { false };
++
+         // Properties only set during seek.
+         // basesrc ensures they can't change during a create() call by taking the STREAMING_LOCK.
+         // (An initial seek is also guaranteed by basesrc.)
+@@ -284,6 +295,13 @@
+     // After a flush, we have to emit a segment again.
+     members->isDurationSet = false;
+ 
++    if (!members->tsStateInitialized) {
++        members->tsLastCC.fill(-1);
++        members->tsDelta.fill(-1);
++        members->tsStateInitialized = true;
++    }
++    members->mpegTsState = WebKitWebSrcPrivate::StreamingMembers::MpegTsState::Unknown;
++
+     // Hard reset is done during initialization and state transitions.
+     // Soft reset is done during flushes. In these, we preserve the seek target.
+     if (resetType == ResetType::Hard) {
+@@ -460,6 +478,107 @@
+     members->resource->shutdown();
+ }
+ 
++// WEBKIT_GST_TS_CC_FIX (default ON, =0 disables): keep MPEG-TS continuity
++// counters continuous across HLS fragments.
++//
++// Some packagers (Pornhub's phncdn, seen 2026-09) end every .ts fragment with
++// zero-payload packets (adaptation field only, 183 stuffing bytes) whose only
++// purpose is to walk each PID's continuity counter up to 15, so the next
++// fragment can start at 0. GStreamer's tsdemux only tracks the counter on
++// packets that carry payload bytes, so it still holds the last real value
++// (e.g. 4) and flags the next fragment's first packet (0) as a mismatch.
++// While a PES is in progress, that mismatch makes tsdemux discard the packet
++// and everything up to the next packet start (tsdemux.c
++// gst_ts_demux_handle_packet, "Clear pending state and don't process
++// packet"), i.e. the IDR frame that opens every fragment. Every later frame
++// then decodes against stale references: mosaic ~3 s into the video, with
++// both the hardware and the software decoder, on every device.
++//
++// The fix renumbers counters instead of touching any payload byte: at a
++// response's first payload-carrying packet on each PID, pick the shift that
++// makes it follow the counter tsdemux last saw, and apply that constant shift
++// to the rest of the response. Real packet loss inside a fragment still shows
++// as a mismatch. Only MPEG-TS responses are touched (three sync bytes at
++// packet boundaries).
++static constexpr size_t kTsPacketSize = 188;
++
++static bool tsContinuityFixEnabled()
++{
++    static const bool enabled = [] {
++        const char* value = getenv("WEBKIT_GST_TS_CC_FIX");
++        return !value || strcmp(value, "0");
++    }();
++    return enabled;
++}
++
++static void webKitWebSrcFixTsContinuity(WebKitWebSrc* src, DataMutexLocker<WebKitWebSrcPrivate::StreamingMembers>& members, GstBuffer*& buffer, uint64_t offset)
++{
++    using MpegTsState = WebKitWebSrcPrivate::StreamingMembers::MpegTsState;
++
++    GstMapInfo map;
++    if (!gst_buffer_map(buffer, &map, GST_MAP_READ))
++        return;
++    const uint8_t* data = map.data;
++    const size_t size = map.size;
++    const size_t first = (kTsPacketSize - offset % kTsPacketSize) % kTsPacketSize;
++
++    if (!offset) {
++        // A new response starts: re-detect, and decide the shifts afresh.
++        members->mpegTsState = MpegTsState::Unknown;
++        members->tsDelta.fill(-1);
++    }
++    if (members->mpegTsState == MpegTsState::Unknown) {
++        if (first < size && data[first] != 0x47)
++            members->mpegTsState = MpegTsState::No;
++        else if (first + 2 * kTsPacketSize < size && data[first + kTsPacketSize] == 0x47 && data[first + 2 * kTsPacketSize] == 0x47)
++            members->mpegTsState = MpegTsState::Yes;
++        else if (!offset && size && data[0] == 0x47)
++            members->mpegTsState = MpegTsState::Yes; // Too short to see three sync bytes; a response opening with one is TS.
++    }
++    if (members->mpegTsState != MpegTsState::Yes) {
++        gst_buffer_unmap(buffer, &map);
++        return;
++    }
++
++    Vector<std::pair<size_t, uint8_t>> edits;
++    for (size_t packet = first; packet + 5 <= size; packet += kTsPacketSize) {
++        if (data[packet] != 0x47) {
++            GST_DEBUG_OBJECT(src, "Lost MPEG-TS sync at offset %" G_GUINT64_FORMAT ", no more continuity fixes", offset + packet);
++            members->mpegTsState = MpegTsState::No;
++            break;
++        }
++        const unsigned pid = ((data[packet + 1] & 0x1f) << 8) | data[packet + 2];
++        const uint8_t afc = (data[packet + 3] >> 4) & 3;
++        if (pid == 0x1fff || !(afc & 1))
++            continue;
++        const bool hasPayloadBytes = !(afc & 2) || data[packet + 4] < 183;
++        const uint8_t cc = data[packet + 3] & 0x0f;
++        if (members->tsDelta[pid] < 0) {
++            if (!hasPayloadBytes)
++                continue; // tsdemux ignores it; decide on the first packet it will check.
++            const int8_t last = members->tsLastCC[pid];
++            members->tsDelta[pid] = last < 0 ? 0 : static_cast<int8_t>((last + 1 - cc) & 0x0f);
++            if (members->tsDelta[pid])
++                GST_DEBUG_OBJECT(src, "PID 0x%04x: renumbering continuity by %d (last %d, packet %u)", pid, static_cast<int>(members->tsDelta[pid]), static_cast<int>(last), static_cast<unsigned>(cc));
++        }
++        const uint8_t newCC = (cc + members->tsDelta[pid]) & 0x0f;
++        if (newCC != cc)
++            edits.append({ packet + 3, static_cast<uint8_t>((data[packet + 3] & 0xf0) | newCC) });
++        if (hasPayloadBytes)
++            members->tsLastCC[pid] = newCC;
++    }
++    gst_buffer_unmap(buffer, &map);
++
++    if (edits.isEmpty())
++        return;
++    buffer = gst_buffer_make_writable(buffer);
++    if (!gst_buffer_map(buffer, &map, GST_MAP_WRITE))
++        return;
++    for (auto& [position, value] : edits)
++        map.data[position] = value;
++    gst_buffer_unmap(buffer, &map);
++}
++
+ static GstFlowReturn webKitWebSrcCreate(GstPushSrc* pushSrc, GstBuffer** buffer)
+ {
+     ASSERT(!isMainThread());
+@@ -558,11 +677,22 @@
+         } else
+             GST_TRACE_OBJECT(src, "Taking %u bytes from adapter", size);
+ 
++        // Never end a buffer inside the first bytes of an MPEG-TS packet (unless these are the
++        // response's last bytes), so the continuity fix sees each packet header whole.
++        if (tsContinuityFixEnabled() && members->mpegTsState != WebKitWebSrcPrivate::StreamingMembers::MpegTsState::No
++            && (size < queueSize || !members->doesHaveEOS)) {
++            unsigned endPhase = (baseSrc->segment.position + size) % kTsPacketSize;
++            if (endPhase && endPhase < 5 && size > endPhase)
++                size -= endPhase;
++        }
++
+         *buffer = gst_adapter_take_buffer(members->adapter.get(), size);
+         RELEASE_ASSERT(*buffer);
+ 
+         GST_BUFFER_OFFSET(*buffer) = baseSrc->segment.position;
+         GST_BUFFER_OFFSET_END(*buffer) = GST_BUFFER_OFFSET(*buffer) + size;
++        if (tsContinuityFixEnabled() && members->mpegTsState != WebKitWebSrcPrivate::StreamingMembers::MpegTsState::No)
++            webKitWebSrcFixTsContinuity(src, members, *buffer, GST_BUFFER_OFFSET(*buffer));
+         GST_TRACE_OBJECT(src, "Buffer bounds set to %" G_GUINT64_FORMAT "-%" G_GUINT64_FORMAT, GST_BUFFER_OFFSET(*buffer), GST_BUFFER_OFFSET_END(*buffer));
+         GST_TRACE_OBJECT(src, "buffer size: %u, total content size: %" G_GUINT64_FORMAT, size, members->size.value_or(-1));
+ 
