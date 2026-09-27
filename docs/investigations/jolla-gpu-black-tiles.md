@@ -138,9 +138,34 @@ display-capped at 60 Hz on every arm. Caveat: GPU arms scroll faster per frame (
 358–388 vs 209 on heavy), so the stimulus isn't perfectly matched, the same
 instrument trap as the 716 sweep.
 
+### Real use
+
+The user browsed for a while in an instance launched with GPU paint + readback (the
+last arm of the 722 bench, left running) and saw no glitches or visual bugs.
+
+### Does the low-res ladder still help? (build 722, heavy, fling @8000, 4 reps)
+
+The shipped config already disables the checkerboard rung
+(`WEBKIT_LOWRES_COST_CHECKERBOARD_X=0`); only cost-triggered low-res tiles are live.
+`WEBKIT_LOWRES_TILE_SCALE=1.0` turns them off.
+
+| Arm | fps | p95 | raster CPU |
+|---|---|---|---|
+| cpu, low-res on (shipped) | 45.4 | 35 ms | 46.8% |
+| cpu, low-res off | 38.3 | **169 ms** | 47.9% |
+| gpu + readback, low-res on | 53.4 | 32.5 ms | 20.2% |
+| gpu + readback, low-res off | **55.1** | **21.5 ms** | 16.8% |
+
+Low-res is essential under CPU paint and slightly counter-productive under GPU paint
+(the low-res pass plus the sharpen repaint costs more than painting full-res on the
+GPU). Commons mid-fling, GPU + readback, 6 interleaved runs each: low-res off showed no
+blank or black tiles either (visually checked, all fully painted). Scripted flicks
+only; a real finger has not been tried in this arm.
+
 ## Next step
 
-1. Decide whether the J2 defaults to GPU paint + readback. Before flipping: check GPU
+1. Decide whether the J2 defaults to GPU paint + readback, and with it low-res OFF
+   (`WEBKIT_LOWRES_TILE_SCALE=1.0`) — the Xperia keeps CPU paint + low-res. Before flipping: check GPU
    memory on a tab-heavy session (GPU tiles live in GPU memory, not the CPU heap) and run
    the real-page black-tile check on 2–3 more sites (CNN, Reddit), not just Commons.
 2. The flip belongs in the browser's paint-mode detection (`apps/browser/main.cpp`,
