@@ -170,8 +170,8 @@ only; a real finger has not been tried in this arm.
    (`gpu-mali`), and the EGL probe bug (`QLibrary("EGL")` never loaded `libEGL.so.1`)
    is fixed, with the Adreno pinned to CPU explicitly (verified on the Xperia, 723:
    `painting=cpu(auto) reason=adreno`; its EGL reports surfaceless=1, so the Adreno
-   guard is load-bearing). GPU memory checked by the user on the J2: fine. Still open:
-   a black-tile check on CNN/Reddit.
+   guard is load-bearing). GPU memory checked by the user on the J2: fine. Reddit
+   browsed by the user: no black tiles. Still open: CNN.
 2. Watch for black bands in real use: they would mean the readback is not a complete
    cure.
 3. Root cause, if it's worth more builds: *Open leads* above.
