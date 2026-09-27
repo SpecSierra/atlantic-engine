@@ -1,0 +1,49 @@
+# WEBKIT_TILE_GPU_READBACK_SYNC=1 (default OFF): read one pixel back from each
+# whole-tile GPU replay right after playback.
+#
+# Mitigation for black tiles under GPU tile painting on the Jolla Phone 2
+# (Mali-G610): a whole-tile GPU replay is intermittently lost entirely (tile
+# stays transparent until a later full repaint) although its recording is
+# correct and CPU painting replays it fine. A readback at this point is the
+# only thing found to prevent it; root cause open, see
+# docs/investigations/jolla-gpu-black-tiles.md.
+--- a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
++++ b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
+@@ -380,6 +380,26 @@
+     int m_tileY;
+ };
+ 
++// WEBKIT_TILE_GPU_READBACK_SYNC=1 (default OFF): read one pixel back from
++// each whole-tile GPU replay right after playback.
++//
++// Mitigation, not a root-cause fix. On the Jolla Phone 2 (Mali-G610) a
++// whole-tile GPU replay is intermittently lost entirely -- the tile stays
++// transparent (black) until a later full repaint, even though the recording
++// is correct and the CPU replays it fine. A readback at this point is the only
++// thing found to prevent it (0/12 black vs 6/12); glFinish after the paint,
++// fences off, and flushing the allocating context all failed. Costs one GPU
++// round trip per whole-tile paint. See
++// docs/investigations/jolla-gpu-black-tiles.md in atlantic-engine.
++static bool tileGpuReadbackSync()
++{
++    static const bool enabled = [] {
++        const char* env = getenv("WEBKIT_TILE_GPU_READBACK_SYNC");
++        return env && *env && strcmp(env, "0");
++    }();
++    return enabled;
++}
++
+ // WEBKIT_TILE_ALLOC_SYNC=1 (glFlush) / 2 (glFinish), default OFF.
+ //
+ // createBuffer() runs on the MAIN thread (updateBackingStore -> replay) with the
+@@ -615,6 +635,10 @@
+                 replayCanvas->removeCanvas(canvas);
+             } else
+                 replayPicture(recording->picture(), canvas, recording->recordRect(), tileRect, dirtyRect, isDDLBuffer);
++            if (dirtyRect == tileRect && buffer->isBackedByOpenGL() && !isDDLBuffer && tileGpuReadbackSync()) {
++                uint32_t pixel = 0;
++                canvas->readPixels(SkImageInfo::MakeN32Premul(1, 1), &pixel, 4, 0, 0);
++            }
+             TileRasterCost::singleton().record(MonotonicTime::now() - rasterStart, bufferSize);
+             WTFEndSignpost(canvas, PaintTile);
+ 

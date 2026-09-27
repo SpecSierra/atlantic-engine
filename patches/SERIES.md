@@ -10,11 +10,11 @@ Each patch carries its own rationale as a header comment at the top of the patch
 
 | | Count |
 |---|---|
-| Patches | 46 |
+| Patches | 47 |
 | …portability / build fixes | 4 |
-| …behaviour | 42 |
+| …behaviour | 43 |
 | Distinct source files touched | 1293 |
-| Env flags introduced | 99 |
+| Env flags introduced | 100 |
 
 ## Hot files
 
@@ -22,7 +22,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 
 | Source file | Patches |
 |---|---|
-| `Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp` | 5 |
+| `Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp` | 6 |
 | `Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp` | 5 |
 | `Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp` | 5 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp` | 4 |
@@ -88,6 +88,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | 40 | `webkit-tile-reset-log-env.patch` | 4 | `WEBKIT_TILE_RESET_LOG`<br>`WEBKIT_TILE_UPLOAD_BUDGET_MB` | WEBKIT_TILE_RESET_LOG=1 (default OFF): diagnostic for black tiles under GPU painting. |
 | 41 | `webkit-tile-alloc-sync-env.patch` | 1 | `WEBKIT_RASTER_ON_COMPOSITOR_THREAD`<br>`WEBKIT_TILE_ALLOC_SYNC` | WEBKIT_TILE_ALLOC_SYNC=1 (glFlush) / 2 (glFinish), default OFF: submit a freshly allocated GPU tile texture before another GL context paints into it. |
 | 42 | `webkit-tile-op-log-env.patch` | 1 | `WEBKIT_SKIA_ENABLE_CPU_RENDERING`<br>`WEBKIT_TILE_ALLOC_SYNC`<br>`WEBKIT_TILE_RESET_LOG` | WEBKIT_TILE_RESET_LOG=4 (diagnostic, default OFF): print every op of each whole-tile recording just before it is replayed, and keep the level-3 pixel readback to level 3 only (the readback hides the b… |
+| 43 | `webkit-tile-gpu-readback-sync-env.patch` | 1 | `WEBKIT_TILE_ALLOC_SYNC`<br>`WEBKIT_TILE_GPU_READBACK_SYNC` | WEBKIT_TILE_GPU_READBACK_SYNC=1 (default OFF): read one pixel back from each whole-tile GPU replay right after playback. |
 
 ## Portability / build fixes
 
