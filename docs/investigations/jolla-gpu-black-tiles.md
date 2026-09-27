@@ -4,8 +4,10 @@
 dpr 2.5, 1032 px wide), engine 2.54.0, builds 716–722
 **Status:** **root cause OPEN.** Mitigation `WEBKIT_TILE_GPU_READBACK_SYNC=1` (722)
 prevents it (0/12 vs 7/18) and keeps most of the GPU win (heavy +15.5% fps vs CPU).
-Default OFF; the J2 still paints tiles on the CPU. Flipping the J2 to GPU paint +
-readback is the next decision (see *Next step*).
+**Now the J2 default** (browser `gpu-mali` mode, 2026-09-27): compositor-thread GPU
+paint + readback + low-res off, picked at runtime from the GL renderer (Mali); the
+Adreno is pinned to CPU paint. Escape hatches: `WEBKIT_SKIA_ENABLE_CPU_RENDERING=1` or
+`ATLANTIC_GPU_CONSERVATIVE=1` (CPU paint), `ATLANTIC_GPU_KEEP_LOWRES=1`.
 
 ## Why it matters
 
@@ -164,13 +166,11 @@ only; a real finger has not been tried in this arm.
 
 ## Next step
 
-1. Decide whether the J2 defaults to GPU paint + readback, and with it low-res OFF
-   (`WEBKIT_LOWRES_TILE_SCALE=1.0`) — the Xperia keeps CPU paint + low-res. Before flipping: check GPU
-   memory on a tab-heavy session (GPU tiles live in GPU memory, not the CPU heap) and run
-   the real-page black-tile check on 2–3 more sites (CNN, Reddit), not just Commons.
-2. The flip belongs in the browser's paint-mode detection (`apps/browser/main.cpp`,
-   `probeGpuCapability`): a Mali/non-Adreno device picks gpu + readback, the Adreno
-   stays on CPU. Note the probe bug first: `QLibrary("EGL")` looks for `libEGL.so`, SFOS
-   ships only `libEGL.so.1`, so `egl=unknown` and every device lands in "conservative".
+1. **Done 2026-09-27:** the J2 defaults to GPU paint + readback + low-res off
+   (`gpu-mali`), and the EGL probe bug (`QLibrary("EGL")` never loaded `libEGL.so.1`)
+   is fixed, with the Adreno pinned to CPU explicitly. Still open before calling it
+   settled: GPU memory on a tab-heavy session, and a black-tile check on CNN/Reddit.
+2. Watch for black bands in real use: they would mean the readback is not a complete
+   cure.
 3. Root cause, if it's worth more builds: *Open leads* above.
 

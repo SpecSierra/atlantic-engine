@@ -832,8 +832,12 @@ atlantic_export_browser_env() {
     # WEBKIT_SKIA_ENABLE_CPU_RENDERING and WEBKIT_SKIA_GPU_PAINTING_THREADS are
     # intentionally NOT set here. The browser auto-selects the painting backend
     # from a GPU capability probe in main.cpp (configureGpuModeFromCapabilities):
-    # CPU painting on conservative stacks — e.g. the libhybris Adreno 610 — and
-    # multi-threaded GPU painting on surfaceless-capable stacks (Mali, desktop).
+    # CPU painting on conservative stacks — e.g. the libhybris Adreno 610 —,
+    # "gpu-mali" on Mali (Jolla Phone 2: compositor-thread GPU painting with
+    # WEBKIT_TILE_GPU_READBACK_SYNC=1 and low-res tiles off, overriding the
+    # WEBKIT_LOWRES_TILE_SCALE default below; see
+    # docs/investigations/jolla-gpu-black-tiles.md), and multi-threaded GPU
+    # painting on other surfaceless-capable stacks (desktop).
     # CPU raster is the conservative default for two reasons: (1) the driver does
     # not honour cross-context EGL fence server-waits, so GPU tile painting can
     # corrupt tiles; (2) device A/B showed the synchronous cross-context GPU tile
