@@ -119,7 +119,7 @@ readonly WEBKIT_SOURCE_PATCHES=(
 
     # --- Diagnostics -------------------------------------------------------
     # AFTER tile-upload and scroll-degradation (CoordinatedBackingStoreTile.*,
-    # CoordinatedBackingStore.cpp).
+    # CoordinatedBackingStore.cpp) and the low-res replay (SkiaPaintingEngine.cpp).
     "patches/webkit/webkit-tile-reset-log-env.patch"
 )
 

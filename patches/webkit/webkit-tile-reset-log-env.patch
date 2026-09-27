@@ -25,7 +25,83 @@
 # (tex_opaque -1 = the tile had no texture before), so the history of the tile
 # under a black band can be read once the band's page position is known.
 #
+#
+# Level 2 on build 718 (3 cold runs, one band): the black tile had exactly ONE
+# whole-tile update (a GPU adopt, opaque) and then only small partial copies
+# (the touched link's repaint) that landed correctly -- the whole-tile paint
+# itself came out black. So level 2 also logs every whole-tile REPLAY:
+#   [tilepaint] gl=0|1 tile=... buf=... record=... ops=N fences=0|1 atlases=0|1 opaque=0|1
+# and level 3 additionally reads back three pixels right after playback
+# (read=1 px=...), which tells an empty recording from a GPU paint that drew
+# nothing. A replay that finds no canvas skips the paint silently upstream;
+#   [tilepaint] NO-CANVAS ...
+# is logged at any level.
+#
 # Nothing is logged, and nothing changes, when the variable is unset.
+--- a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
++++ b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
+@@ -31,10 +31,12 @@
+ #include <cstdio>
+ #include <cstdlib>
+ #include <cstring>
++#include <ctime>
+ 
+ #if USE(COORDINATED_GRAPHICS) && USE(SKIA)
+ #include "BitmapTexturePool.h"
+ #include "CoordinatedBackingStoreProxy.h"
++#include "CoordinatedBackingStoreTile.h"
+ #include "CoordinatedPlatformLayer.h"
+ #include "CoordinatedTileBuffer.h"
+ #include "FloatSize.h"
+@@ -422,7 +424,18 @@
+     buffer->beginPainting();
+ 
+     auto rasterTask = [platformLayer = WTF::move(platformLayer), buffer = Ref { buffer }, tileRect, dirtyRect, bufferSize, lowResScale, recording = WTF::move(recording), threadSafeGrContext = WTF::move(threadSafeGrContext)]() mutable {
+-        if (auto* canvas = buffer->canvas()) {
++        // WEBKIT_TILE_RESET_LOG>=2: log every whole-tile replay (a tile under a
++        // black band had exactly one, which came out black); >=3 also reads
++        // back three pixels right after playback. A missing canvas skips the
++        // paint silently, so it is logged at any level.
++        const int tileLogLevel = TileResetLog::level();
++        const bool logReplay = tileLogLevel >= 2 && dirtyRect == tileRect;
++        auto* canvas = buffer->canvas();
++        if (!canvas && tileLogLevel >= 1) {
++            fprintf(stderr, "[tilepaint] NO-CANVAS gl=%d tile=%dx%d+%d+%d dirty=%dx%d+%d+%d\n", buffer->isBackedByOpenGL() ? 1 : 0,
++                tileRect.width(), tileRect.height(), tileRect.x(), tileRect.y(), dirtyRect.width(), dirtyRect.height(), dirtyRect.x(), dirtyRect.y());
++        }
++        if (canvas) {
+             auto replayPicture = [lowResScale, bufferSize](const sk_sp<SkPicture>& picture, SkCanvas* canvas, const IntRect& recordRect, const IntRect& tileRect, const IntRect& dirtyRect, bool isDDLBuffer) {
+                 canvas->save();
+                 if (isDDLBuffer) {
+@@ -458,6 +471,28 @@
+                 replayPicture(recording->picture(), canvas, recording->recordRect(), tileRect, dirtyRect, isDDLBuffer);
+             TileRasterCost::singleton().record(MonotonicTime::now() - rasterStart, bufferSize);
+             WTFEndSignpost(canvas, PaintTile);
++
++            if (logReplay) {
++                uint32_t px[3] = { 0, 0, 0 };
++                int readOk = -1;
++                if (tileLogLevel >= 3) {
++                    const auto info = SkImageInfo::MakeN32Premul(1, 1);
++                    const int w = bufferSize.width();
++                    const int h = bufferSize.height();
++                    readOk = canvas->readPixels(info, &px[0], 4, w / 2, h / 2)
++                        && canvas->readPixels(info, &px[1], 4, w / 4, h / 4)
++                        && canvas->readPixels(info, &px[2], 4, 3 * w / 4, 3 * h / 4);
++                }
++                struct timespec ts;
++                clock_gettime(CLOCK_MONOTONIC, &ts);
++                fprintf(stderr, "[tilepaint] gl=%d tile=%dx%d+%d+%d buf=%dx%d record=%dx%d+%d+%d ops=%d fences=%d atlases=%d opaque=%d read=%d px=%08x,%08x,%08x t=%.1f\n",
++                    buffer->isBackedByOpenGL() ? 1 : 0, tileRect.width(), tileRect.height(), tileRect.x(), tileRect.y(),
++                    bufferSize.width(), bufferSize.height(),
++                    recording->recordRect().width(), recording->recordRect().height(), recording->recordRect().x(), recording->recordRect().y(),
++                    recording->picture() ? recording->picture()->approximateOpCount(true) : -1,
++                    recording->hasFences() ? 1 : 0, recording->hasGPUAtlases() ? 1 : 0, recording->contentsOpaque() ? 1 : 0,
++                    readOk, px[0], px[1], px[2], ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6);
++            }
+         }
+ 
+         buffer->completePainting();
 --- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp
 +++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp
 @@ -27,6 +27,8 @@
@@ -94,7 +170,7 @@
 +// painting on the Mali while a page is still loading.
 +namespace TileResetLog {
 +
-+static int level()
++int level()
 +{
 +    static const int value = [] {
 +        const char* env = getenv("WEBKIT_TILE_RESET_LOG");
@@ -223,7 +299,7 @@
          ASSERT(!update.buffer->isBackedByOpenGL());
 --- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h
 +++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h
-@@ -97,6 +97,12 @@
+@@ -97,6 +97,13 @@
  void noteDeferred();
  } // namespace TileUploadBudget
  
@@ -231,6 +307,7 @@
 +// discarded texture, and of tiles skipped at composite for lack of one.
 +namespace TileResetLog {
 +bool enabled();
++int level();
 +} // namespace TileResetLog
 +
  } // namespace WebCore
