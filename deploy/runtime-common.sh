@@ -447,6 +447,11 @@ atlantic_export_browser_env() {
     # bfcache are the bulk of the ~1.5 GB off-RSS growth that hard-OOMs the phone
     # on a reddit feed under the desktop-style web_browser model. Read by the
     # browser (WPEWebContainer); env-tunable (web / document / viewer).
+    # >= 8 GB devices (Jolla Phone 2): the browser overrides this to "web" and
+    # WEBKIT_MEMORY_BASE_THRESHOLD_MB (above) to 4000 at startup
+    # (configureMemoryTierFromRam in main.cpp), which makes Back a bfcache
+    # restore (~0.4 s vs a 3.4 s DCL reload on CNN). ATLANTIC_MEMORY_TIER=low
+    # keeps these values.
     export ATLANTIC_CACHE_MODEL="${ATLANTIC_CACHE_MODEL:-viewer}"
 
     # ── HTTP disk cache (bounded) ─────────────────────────────────────────────

@@ -317,6 +317,14 @@ measuring the RSS cost of exactly that one entry — not flipping the cache mode
 back, which is what caused the OOM in the first place. Instrument before
 touching: log `BackForwardCache::pageCount()` at each purge and each `goBack`.
 
+**Resolved for >= 8 GB devices (2026-09-27, Jolla Phone 2, build 723 + browser RAM
+tier).** Both mechanisms confirmed on edition.cnn.com -> example.org -> Back:
+`viewer`/700 = reload (DCL 3.4-3.7 s, load 5.8-6.4 s); `web`/700 = still a reload
+(the page process is always above 700 MB there, so the entry is pruned on the next
+poll); `web`/4000 = bfcache restore, `pageshow` persisted ~0.4 s after Back, for
+~0.5 GB more WebProcess RSS. The browser now picks `web`/4000 when MemTotal >= ~7 GiB
+(`configureMemoryTierFromRam`); the 3.5 GB Xperia keeps `viewer`/700.
+
 ### No JS bytecode caching
 
 `CachedBytecode` / `CodeCache` exist in JSC but are referenced **nowhere** in
