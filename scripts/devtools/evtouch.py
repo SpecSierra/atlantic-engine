@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """Shared raw-evdev touch primitives for the device touchscreen.
 
-The sec_touchscreen is a type-B multitouch device on /dev/input/event2 whose
-ABS range maps 1:1 to pixels. Used by tap.py and swipe.py — it MUST be copied
+The touchscreen is found at runtime (Xperia 10 II: sec_touchscreen on event2;
+Jolla Phone 2: hyn_ts on event5). Both are type-B multitouch devices whose ABS
+range maps 1:1 to pixels, so the pixel size defaults to the ABS range. Used by
+tap.py, swipe.py and pinch.py — it MUST be copied
 to the device alongside them (they `import evtouch`).
 """
 import struct
 import fcntl
 
-DEV = "/dev/input/event2"          # sec_touchscreen
-SCREEN_W, SCREEN_H = 1080, 2520    # Xperia 10 II panel; ABS range maps 1:1 to pixels
 
 EV_SYN = 0
 EV_KEY = 1
@@ -39,6 +39,20 @@ def emit(fd, etype, code, value):
     fd.write(struct.pack('llHHi', 0, 0, etype, code, value))
 
 
+def find_touchscreen():
+    """Return /dev/input/eventN of the first device reporting ABS_MT_POSITION_X."""
+    name = None
+    with open('/proc/bus/input/devices') as f:
+        for line in f:
+            if line.startswith('H: Handlers='):
+                name = next((h for h in line.split('=', 1)[1].split()
+                             if h.startswith('event')), None)
+            elif line.startswith('B: ABS=') and name:
+                if (int(line.split('=', 1)[1].replace(' ', ''), 16) >> ABS_MT_POSITION_X) & 1:
+                    return '/dev/input/' + name
+    raise OSError('no multitouch device in /proc/bus/input/devices')
+
+
 class Touch:
     """Open the touchscreen and translate pixel coords to ABS device units.
 
@@ -47,19 +61,14 @@ class Touch:
             t.down(x, y); ...; t.up()
     """
 
-    def __init__(self, dev=DEV, screen_w=SCREEN_W, screen_h=SCREEN_H):
-        self.screen_w = screen_w
-        self.screen_h = screen_h
+    def __init__(self, dev=None, screen_w=None, screen_h=None):
+        dev = dev or find_touchscreen()
         self.fd = open(dev, 'wb', buffering=0)
-        raw = open(dev, 'rb', buffering=0)
-        try:
+        with open(dev, 'rb', buffering=0) as raw:
             self.xmin, self.xmax = eviocgabs(raw.fileno(), ABS_MT_POSITION_X)
             self.ymin, self.ymax = eviocgabs(raw.fileno(), ABS_MT_POSITION_Y)
-        except OSError:
-            self.xmin, self.xmax = 0, screen_w - 1
-            self.ymin, self.ymax = 0, screen_h - 1
-        finally:
-            raw.close()
+        self.screen_w = screen_w or self.xmax - self.xmin + 1
+        self.screen_h = screen_h or self.ymax - self.ymin + 1
 
     def ax(self, px):
         return self.xmin + (self.xmax - self.xmin) * px // (self.screen_w - 1)

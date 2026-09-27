@@ -104,9 +104,11 @@ sshpass -p root scp -P 2222 -o StrictHostKeyChecking=no \
 
 ## Touch input
 
-No `evdev`/`evemu` on device, so touch is raw-written to `/dev/input/event2`
-(`sec_touchscreen`, type-B multitouch, ABS range maps 1:1 to pixels: X 0–1079,
-Y 0–2519). Helpers in `scripts/devtools/`:
+No `evdev`/`evemu` on device, so touch is raw-written to the touchscreen's event node.
+`evtouch.py` finds it at runtime (the first device reporting `ABS_MT_POSITION_X`):
+Xperia 10 II `sec_touchscreen` on `event2` (X 0–1079, Y 0–2519), Jolla Phone 2 `hyn_ts`
+on `event5` (X 0–1030, Y 0–2271; `event2` there is the GPIO keys). Both are type-B
+multitouch with the ABS range mapping 1:1 to pixels. Helpers in `scripts/devtools/`:
 
 | Script | Does |
 |---|---|

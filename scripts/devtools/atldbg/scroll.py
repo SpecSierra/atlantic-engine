@@ -236,11 +236,8 @@ _TOUCH_HELPERS = ("/root/swipe.py", "/root/evtouch.py")
 
 
 def ensure_touch_helpers() -> None:
-    """Copy swipe.py/evtouch.py to the device if they are not already there."""
-    r = device.ssh("test -f /tmp/swipe.py && "
-                   "test -f /tmp/evtouch.py && echo yes")
-    if "yes" in r.stdout:
-        return
+    """Copy swipe.py/evtouch.py to the device (always: a stale copy survives
+    in /tmp across sessions and devices)."""
     for f in _TOUCH_HELPERS:
         device.scp_to(f, "/tmp/")
 
