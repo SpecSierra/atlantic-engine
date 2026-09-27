@@ -168,8 +168,10 @@ only; a real finger has not been tried in this arm.
 
 1. **Done 2026-09-27:** the J2 defaults to GPU paint + readback + low-res off
    (`gpu-mali`), and the EGL probe bug (`QLibrary("EGL")` never loaded `libEGL.so.1`)
-   is fixed, with the Adreno pinned to CPU explicitly. Still open before calling it
-   settled: GPU memory on a tab-heavy session, and a black-tile check on CNN/Reddit.
+   is fixed, with the Adreno pinned to CPU explicitly (verified on the Xperia, 723:
+   `painting=cpu(auto) reason=adreno`; its EGL reports surfaceless=1, so the Adreno
+   guard is load-bearing). GPU memory checked by the user on the J2: fine. Still open:
+   a black-tile check on CNN/Reddit.
 2. Watch for black bands in real use: they would mean the readback is not a complete
    cure.
 3. Root cause, if it's worth more builds: *Open leads* above.
