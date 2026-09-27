@@ -121,6 +121,8 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # AFTER tile-upload and scroll-degradation (CoordinatedBackingStoreTile.*,
     # CoordinatedBackingStore.cpp) and the low-res replay (SkiaPaintingEngine.cpp).
     "patches/webkit/webkit-tile-reset-log-env.patch"
+    # AFTER tile-reset-log (SkiaPaintingEngine.cpp createBuffer).
+    "patches/webkit/webkit-tile-alloc-sync-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

@@ -1,0 +1,71 @@
+# WEBKIT_TILE_ALLOC_SYNC=1 (glFlush) / 2 (glFinish), default OFF: submit a
+# freshly allocated GPU tile texture before another GL context paints into it.
+#
+# createBuffer() runs on the MAIN thread (updateBackingStore -> replay) with the
+# main thread's Skia context current, so a new pool texture's glTexImage2D is
+# issued there, while the tile is painted from the compositor thread's Skia
+# context (WEBKIT_RASTER_ON_COMPOSITOR_THREAD) or a GPU worker's. Suspected
+# cause of the black tiles under GPU painting on the Jolla Phone 2 (Mali-G610):
+# only some tiles created mid-fling, every GPU mode, never CPU painting; the
+# black tile's single whole-tile paint had a non-empty recording; a
+# producer-side glFinish (WPE_GL_FENCE_DISABLED=1) did not help (6/12 black),
+# a pixel readback right after playback did (0/12).
+--- a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
++++ b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
+@@ -57,6 +57,12 @@
+ #include "MemoryMappedGPUBuffer.h"
+ #endif
+ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
++#if USE(LIBEPOXY)
++#include <epoxy/gl.h>
++#else
++#include <GLES3/gl3.h>
++#endif
++
+ #include <skia/core/SkBBHFactory.h>
+ #include <skia/core/SkColorSpace.h>
+ #include <skia/core/SkPictureRecorder.h>
+@@ -267,6 +273,27 @@
+     layer.paintGraphicsLayerContents(context, clipRect);
+ }
+ 
++// WEBKIT_TILE_ALLOC_SYNC=1 (glFlush) / 2 (glFinish), default OFF.
++//
++// createBuffer() runs on the MAIN thread (updateBackingStore -> replay) with the
++// main thread's Skia GL context current, so a tile texture freshly allocated by
++// the pool (glTexImage2D in BitmapTexture::create) is defined in that context --
++// but the tile is painted from ANOTHER context: the compositor thread's Skia
++// context (WEBKIT_RASTER_ON_COMPOSITOR_THREAD) or a GPU worker's. Nothing
++// flushes the allocating context, so on the Jolla Phone 2's Mali the allocation
++// can reach the GPU after the paint and leave the tile undefined (black): only
++// fresh allocations (a fling outrunning the pool), every GPU paint mode, never
++// CPU paint, and a producer-side glFinish does not help. This submits the
++// allocation before the texture leaves this context.
++static int tileAllocSyncMode()
++{
++    static const int mode = [] {
++        const char* env = getenv("WEBKIT_TILE_ALLOC_SYNC");
++        return env ? atoi(env) : 0;
++    }();
++    return mode;
++}
++
+ Ref<CoordinatedTileBuffer> SkiaPaintingEngine::createBuffer(RenderingMode renderingMode, const IntSize& size, bool contentsOpaque) const
+ {
+     if (renderingMode == RenderingMode::Accelerated) {
+@@ -279,7 +306,14 @@
+         if (!contentsOpaque)
+             textureFlags.add(BitmapTexture::Flags::SupportsAlpha);
+ 
+-        return CoordinatedAcceleratedTileBuffer::create(BitmapTexturePool::singleton().acquireTexture(size, textureFlags));
++        auto texture = BitmapTexturePool::singleton().acquireTexture(size, textureFlags);
++        if (auto mode = tileAllocSyncMode()) {
++            if (mode >= 2)
++                glFinish();
++            else
++                glFlush();
++        }
++        return CoordinatedAcceleratedTileBuffer::create(WTF::move(texture));
+     }
+ 
+     return CoordinatedUnacceleratedTileBuffer::create(size, contentsOpaque ? CoordinatedTileBuffer::NoFlags : CoordinatedTileBuffer::SupportsAlpha);

@@ -10,11 +10,11 @@ Each patch carries its own rationale as a header comment at the top of the patch
 
 | | Count |
 |---|---|
-| Patches | 44 |
+| Patches | 45 |
 | …portability / build fixes | 4 |
-| …behaviour | 40 |
+| …behaviour | 41 |
 | Distinct source files touched | 1293 |
-| Env flags introduced | 98 |
+| Env flags introduced | 99 |
 
 ## Hot files
 
@@ -24,10 +24,10 @@ Files edited by more than one patch — every one is an ordering constraint.
 |---|---|
 | `Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp` | 5 |
 | `Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp` | 5 |
+| `Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp` | 4 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp` | 4 |
 | `Source/WebCore/page/scrolling/ScrollingTree.cpp` | 3 |
 | `Source/WebCore/page/scrolling/ScrollingTree.h` | 3 |
-| `Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp` | 3 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp` | 3 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp` | 3 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h` | 3 |
@@ -86,6 +86,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | 38 | `webkit-viewport-unit-font-size-zoom.patch` | 1 | `WEBKIT_FONT_SIZE_UNIT_UNZOOM` | fix font-size resolved from viewport (vw/vh/...) or container (cqw/cqi/...) percentage units coming out deviceScaleFactor times too large — db.no and vg.no headlines overflowing the viewport while eve… |
 | 39 | `webkit-pointerdown-cancel-keeps-click.patch` | 2 | — | Canceling pointerdown must not eat the tap's click. |
 | 40 | `webkit-tile-reset-log-env.patch` | 4 | `WEBKIT_TILE_RESET_LOG`<br>`WEBKIT_TILE_UPLOAD_BUDGET_MB` | WEBKIT_TILE_RESET_LOG=1 (default OFF): diagnostic for black tiles under GPU painting. |
+| 41 | `webkit-tile-alloc-sync-env.patch` | 1 | `WEBKIT_RASTER_ON_COMPOSITOR_THREAD`<br>`WEBKIT_TILE_ALLOC_SYNC` | WEBKIT_TILE_ALLOC_SYNC=1 (glFlush) / 2 (glFinish), default OFF: submit a freshly allocated GPU tile texture before another GL context paints into it. |
 
 ## Portability / build fixes
 
