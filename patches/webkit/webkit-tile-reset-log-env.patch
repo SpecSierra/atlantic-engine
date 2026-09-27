@@ -15,9 +15,19 @@
 # Logs, to the WebProcess stderr:
 #   [tilereset] gpu|cpu partial reason=no-texture|size|alpha rect_reset=0|1 was_lowres=0|1 src=... tile=...
 #   [tilereset] skip-no-texture tiles=N of M   (tiles skipped at composite for lack of a texture)
+#
+# Level 1 found NOTHING on build 717 (7 cold runs, one black band, 0 lines):
+# no partial update hit a discarded texture and no tile was skipped. The band
+# kept the page's images while its background and text were black, so its
+# texture was valid but held (or was composited as) the wrong content.
+# WEBKIT_TILE_RESET_LOG=2 therefore also logs EVERY tile update:
+#   [tileupd] <tile> gpu|cpu swap|adopt|copy|whole src=... tile=... buf=WxH buf_alpha=0|1 tex_opaque=B->A lowres=0|1
+# (tex_opaque -1 = the tile had no texture before), so the history of the tile
+# under a black band can be read once the band's page position is known.
+#
 # Nothing is logged, and nothing changes, when the variable is unset.
---- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp	2026-09-25 23:40:18.470424886 +0000
-+++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp	2026-09-25 23:40:49.432599617 +0000
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp
 @@ -27,6 +27,8 @@
  #include "TextureMapper.h"
  #include "TextureMapperFlags.h"
@@ -61,8 +71,8 @@
  }
  
  void CoordinatedBackingStore::drawBorder(TextureMapper& textureMapper, const Color& borderColor, float borderWidth, const FloatRect& targetRect, const TransformationMatrix& transform)
---- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp	2026-09-25 23:40:18.470424886 +0000
-+++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp	2026-09-25 23:40:49.431599611 +0000
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp
 @@ -28,6 +28,8 @@
  #include <atomic>
  #include <cstdlib>
@@ -72,7 +82,7 @@
  #include <wtf/MonotonicTime.h>
  #include <wtf/SystemTracing.h>
  
-@@ -38,6 +40,47 @@
+@@ -38,6 +40,74 @@
  
  namespace WebCore {
  
@@ -84,13 +94,42 @@
 +// painting on the Mali while a page is still loading.
 +namespace TileResetLog {
 +
++static int level()
++{
++    static const int value = [] {
++        const char* env = getenv("WEBKIT_TILE_RESET_LOG");
++        return env ? atoi(env) : 0;
++    }();
++    return value;
++}
++
 +bool enabled()
 +{
-+    static const bool on = [] {
-+        const char* env = getenv("WEBKIT_TILE_RESET_LOG");
-+        return env && atoi(env);
-+    }();
-+    return on;
++    return level() >= 1;
++}
++
++// WEBKIT_TILE_RESET_LOG=2 also logs EVERY tile update, so the update history of
++// a tile that shows black can be read back once its rect is known.
++static bool verbose()
++{
++    return level() >= 2;
++}
++
++static double nowMs()
++{
++    struct timespec ts;
++    clock_gettime(CLOCK_MONOTONIC, &ts);
++    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6;
++}
++
++static void logUpdate(const void* tile, const char* path, const char* kind, const IntRect& sourceRect, const IntRect& tileRect, const IntSize& bufferSize, bool bufferAlpha, int texOpaqueBefore, bool texOpaqueAfter, bool lowRes)
++{
++    fprintf(stderr, "[tileupd] %p %s %s src=%dx%d+%d+%d tile=%dx%d+%d+%d buf=%dx%d buf_alpha=%d tex_opaque=%d->%d lowres=%d t=%.1f\n",
++        tile, path, kind,
++        sourceRect.width(), sourceRect.height(), sourceRect.x(), sourceRect.y(),
++        tileRect.width(), tileRect.height(), tileRect.x(), tileRect.y(),
++        bufferSize.width(), bufferSize.height(), bufferAlpha ? 1 : 0,
++        texOpaqueBefore, texOpaqueAfter ? 1 : 0, lowRes ? 1 : 0, nowMs());
 +}
 +
 +static const char* lossReason(const RefPtr<BitmapTexture>& texture, const IntSize& size, bool supportsAlpha)
@@ -106,13 +145,11 @@
 +
 +static void logPartialOnLostTexture(const char* path, const char* reason, bool rectReset, bool wasLowRes, const IntRect& sourceRect, const IntRect& tileRect)
 +{
-+    struct timespec ts;
-+    clock_gettime(CLOCK_MONOTONIC, &ts);
 +    fprintf(stderr, "[tilereset] %s partial reason=%s rect_reset=%d was_lowres=%d src=%dx%d+%d+%d tile=%dx%d+%d+%d t=%.1f\n",
 +        path, reason, rectReset ? 1 : 0, wasLowRes ? 1 : 0,
 +        sourceRect.width(), sourceRect.height(), sourceRect.x(), sourceRect.y(),
 +        tileRect.width(), tileRect.height(), tileRect.x(), tileRect.y(),
-+        ts.tv_sec * 1000.0 + ts.tv_nsec / 1.0e6);
++        nowMs());
 +}
 +
 +} // namespace TileResetLog
@@ -120,7 +157,7 @@
  namespace TileUploadBudget {
  
  // Compositor-thread only (renderLayerTree -> flushCompositingState ->
-@@ -308,6 +351,8 @@
+@@ -308,6 +378,8 @@
          FloatRect unscaledTileRect(update.tileRect);
          unscaledTileRect.scale(1. / m_scale);
  
@@ -129,9 +166,28 @@
          if (unscaledTileRect != m_rect) {
              m_rect = unscaledTileRect;
              m_texture = nullptr;
-@@ -332,6 +377,10 @@
-                 else
+@@ -321,17 +393,27 @@
+ 
+             auto texture = buffer.texture();
+             ASSERT(texture);
++            // -1 = the tile had no texture before this update.
++            const int texOpaqueBefore = m_texture ? (m_texture->isOpaque() ? 1 : 0) : -1;
++            const char* updateKind = "copy";
+             // Fast path: whole tile content changed -- take ownership of the incoming texture, replacing the existing tile buffer (avoiding texture copies).
+             // A whole-tile update may carry a reduced-resolution texture (low-res tiles
+             // during scroll); swapTexture() requires equal sizes, so take ownership
+             // instead when the size differs. paintToTextureMapper upscales it.
+             if (update.sourceRect.size() == update.tileRect.size()) {
+                 ASSERT(update.sourceRect.location().isZero());
+-                if (m_texture && m_texture->size() == texture->size())
++                if (m_texture && m_texture->size() == texture->size()) {
+                     m_texture->swapTexture(*texture);
+-                else
++                    updateKind = "swap";
++                } else {
                      m_texture = WTF::move(texture);
++                    updateKind = "adopt";
++                }
              } else {
 +                if (TileResetLog::enabled()) {
 +                    if (auto* reason = TileResetLog::lossReason(m_texture, update.tileRect.size(), buffer.supportsAlpha()))
@@ -140,7 +196,16 @@
                  ensureTexture(update.tileRect.size(), buffer);
                  m_texture->copyFromExternalTexture(texture->id(), update.sourceRect, toIntSize(update.bufferOffset));
              }
-@@ -354,6 +403,10 @@
+@@ -339,6 +421,8 @@
+             // The tile is low-res when its texture is smaller than its full device-pixel
+             // rect; paintToTextureMapper must then avoid the 1:1 damage-fragment fast path.
+             m_isLowRes = m_texture->size() != update.tileRect.size();
++            if (TileResetLog::verbose())
++                TileResetLog::logUpdate(this, "gpu", updateKind, update.sourceRect, update.tileRect, update.buffer->size(), buffer.supportsAlpha(), texOpaqueBefore, m_texture->isOpaque(), m_isLowRes);
+ 
+             WTFEndSignpost(this, CopyTextureGPUToGPU);
+             WTFEndSignpost(this, CoordinatedSwapBuffer);
+@@ -354,8 +438,15 @@
          // copied into it 1:1.
          const IntSize bufferSize = update.buffer->size();
          bool lowResUpdate = update.sourceRect.size() == update.tileRect.size() && bufferSize != update.sourceRect.size();
@@ -148,11 +213,16 @@
 +            if (auto* reason = TileResetLog::lossReason(m_texture, update.tileRect.size(), buffer.supportsAlpha()))
 +                TileResetLog::logPartialOnLostTexture("cpu", reason, rectReset, wasLowRes, update.sourceRect, update.tileRect);
 +        }
++        const int cpuTexOpaqueBefore = m_texture ? (m_texture->isOpaque() ? 1 : 0) : -1;
          ensureTexture(lowResUpdate ? bufferSize : update.tileRect.size(), buffer);
          m_isLowRes = lowResUpdate;
++        if (TileResetLog::verbose())
++            TileResetLog::logUpdate(this, "cpu", update.sourceRect.size() == update.tileRect.size() ? "whole" : "copy", update.sourceRect, update.tileRect, bufferSize, buffer.supportsAlpha(), cpuTexOpaqueBefore, m_texture->isOpaque(), m_isLowRes);
  
---- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h	2026-09-25 23:40:56.261638187 +0000
-+++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h	2026-09-25 23:41:02.113671248 +0000
+         WTFBeginSignpost(this, CopyTextureCPUToGPU);
+         ASSERT(!update.buffer->isBackedByOpenGL());
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h
 @@ -97,6 +97,12 @@
  void noteDeferred();
  } // namespace TileUploadBudget
