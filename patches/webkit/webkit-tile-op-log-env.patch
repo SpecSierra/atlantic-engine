@@ -1,0 +1,156 @@
+# WEBKIT_TILE_RESET_LOG=4 (diagnostic, default OFF): print every op of each
+# whole-tile recording just before it is replayed, and keep the level-3 pixel
+# readback to level 3 only (the readback hides the bug).
+#
+# On the Jolla Phone 2 (Mali-G610) with GPU tile painting, one early-load
+# Wikimedia Commons recording (tile y=10240, 94 ops, no image atlases) replays
+# as FULLY TRANSPARENT on the GPU in most cold runs -- a persistent black tile
+# until a later full repaint -- while CPU painting replays the very same
+# recording correctly. Not an allocation race (WEBKIT_TILE_ALLOC_SYNC 6/12 and
+# 4/12 vs 6/12) and not an unfinished paint (WPE_GL_FENCE_DISABLED 6/12). This
+# names the op the GPU replay mishandles:
+#   [tileop] <tileY> <op> <rect> color=AARRGGBB style= blend= shader= cf= mf= if= aa= m=[matrix] depth=N
+--- a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
++++ b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
+@@ -64,6 +64,11 @@
+ #endif
+ 
+ #include <skia/core/SkBBHFactory.h>
++#include <skia/core/SkBlendMode.h>
++#include <skia/core/SkPath.h>
++#include <skia/core/SkRRect.h>
++#include <skia/core/SkTextBlob.h>
++#include <skia/utils/SkNoDrawCanvas.h>
+ #include <skia/core/SkColorSpace.h>
+ #include <skia/core/SkPictureRecorder.h>
+ #include <skia/core/SkSurface.h>
+@@ -273,6 +278,108 @@
+     layer.paintGraphicsLayerContents(context, clipRect);
+ }
+ 
++// WEBKIT_TILE_RESET_LOG=4 (diagnostic): print every op of each whole-tile
++// recording before it is replayed, WITHOUT the level-3 readback (which hides
++// the bug). On the Jolla Phone 2 one early-load Commons recording (94 ops)
++// deterministically replays as fully transparent on the GPU while the CPU
++// replays the same recording correctly; this names the op responsible.
++class TileOpLogCanvas final : public SkNoDrawCanvas {
++public:
++    TileOpLogCanvas(int width, int height, int tileY)
++        : SkNoDrawCanvas(width, height)
++        , m_tileY(tileY)
++    {
++    }
++
++protected:
++    SaveLayerStrategy getSaveLayerStrategy(const SaveLayerRec& rec) override
++    {
++        logOp("saveLayer", rec.fBounds, rec.fPaint);
++        fprintf(stderr, "[tileop] %d   backdrop=%d flags=0x%x\n", m_tileY, rec.fBackdrop ? 1 : 0, rec.fSaveLayerFlags);
++        return SkNoDrawCanvas::getSaveLayerStrategy(rec);
++    }
++    void willSave() override { fprintf(stderr, "[tileop] %d save\n", m_tileY); }
++    void willRestore() override { fprintf(stderr, "[tileop] %d restore\n", m_tileY); }
++    void onClipRect(const SkRect& rect, SkClipOp op, ClipEdgeStyle style) override
++    {
++        fprintf(stderr, "[tileop] %d clipRect op=%d aa=%d %.1f,%.1f %.1fx%.1f\n", m_tileY, static_cast<int>(op), style == kSoft_ClipEdgeStyle ? 1 : 0, rect.x(), rect.y(), rect.width(), rect.height());
++        SkNoDrawCanvas::onClipRect(rect, op, style);
++    }
++    void onClipRRect(const SkRRect& rrect, SkClipOp op, ClipEdgeStyle style) override
++    {
++        fprintf(stderr, "[tileop] %d clipRRect op=%d\n", m_tileY, static_cast<int>(op));
++        SkNoDrawCanvas::onClipRRect(rrect, op, style);
++    }
++    void onClipPath(const SkPath& path, SkClipOp op, ClipEdgeStyle style) override
++    {
++        fprintf(stderr, "[tileop] %d clipPath op=%d verbs=%d\n", m_tileY, static_cast<int>(op), path.countVerbs());
++        SkNoDrawCanvas::onClipPath(path, op, style);
++    }
++    void onClipShader(sk_sp<SkShader> shader, SkClipOp op) override
++    {
++        fprintf(stderr, "[tileop] %d clipShader op=%d\n", m_tileY, static_cast<int>(op));
++        SkNoDrawCanvas::onClipShader(WTF::move(shader), op);
++    }
++    void onDrawPaint(const SkPaint& paint) override { logOp("drawPaint", nullptr, &paint); }
++    void onDrawBehind(const SkPaint& paint) override { logOp("drawBehind", nullptr, &paint); }
++    void onDrawRect(const SkRect& rect, const SkPaint& paint) override { logOp("drawRect", &rect, &paint); }
++    void onDrawRRect(const SkRRect& rrect, const SkPaint& paint) override { logOp("drawRRect", &rrect.rect(), &paint); }
++    void onDrawDRRect(const SkRRect& outer, const SkRRect&, const SkPaint& paint) override { logOp("drawDRRect", &outer.rect(), &paint); }
++    void onDrawOval(const SkRect& rect, const SkPaint& paint) override { logOp("drawOval", &rect, &paint); }
++    void onDrawPath(const SkPath& path, const SkPaint& paint) override
++    {
++        auto bounds = path.getBounds();
++        logOp("drawPath", &bounds, &paint);
++    }
++    void onDrawTextBlob(const SkTextBlob* blob, SkScalar x, SkScalar y, const SkPaint& paint) override
++    {
++        auto bounds = blob->bounds().makeOffset(x, y);
++        logOp("drawTextBlob", &bounds, &paint);
++    }
++    void onDrawImage2(const SkImage* image, SkScalar x, SkScalar y, const SkSamplingOptions&, const SkPaint* paint) override
++    {
++        auto bounds = SkRect::MakeXYWH(x, y, image->width(), image->height());
++        logOp(image->isTextureBacked() ? "drawImage(gpu)" : "drawImage", &bounds, paint);
++    }
++    void onDrawImageRect2(const SkImage* image, const SkRect&, const SkRect& dst, const SkSamplingOptions&, const SkPaint* paint, SrcRectConstraint) override
++    {
++        logOp(image->isTextureBacked() ? "drawImageRect(gpu)" : "drawImageRect", &dst, paint);
++    }
++    void onDrawEdgeAAQuad(const SkRect& rect, const SkPoint[4], QuadAAFlags, const SkColor4f& color, SkBlendMode mode) override
++    {
++        fprintf(stderr, "[tileop] %d drawEdgeAAQuad %.1f,%.1f %.1fx%.1f color=%08x blend=%s\n", m_tileY, rect.x(), rect.y(), rect.width(), rect.height(), color.toSkColor(), SkBlendMode_Name(mode));
++    }
++    void onDrawPicture(const SkPicture*, const SkMatrix*, const SkPaint* paint) override
++    {
++        logOp("drawPicture", nullptr, paint);
++    }
++    void onDrawDrawable(SkDrawable*, const SkMatrix*) override { logOp("drawDrawable", nullptr, nullptr); }
++    void onDrawVerticesObject(const SkVertices*, SkBlendMode, const SkPaint& paint) override { logOp("drawVertices", nullptr, &paint); }
++    void onDrawPoints(PointMode, size_t, const SkPoint[], const SkPaint& paint) override { logOp("drawPoints", nullptr, &paint); }
++    void onDrawShadowRec(const SkPath&, const SkDrawShadowRec&) override { logOp("drawShadowRec", nullptr, nullptr); }
++    void onDrawAnnotation(const SkRect& rect, const char key[], SkData*) override { logOp(key ? key : "annotation", &rect, nullptr); }
++
++private:
++    void logOp(const char* op, const SkRect* rect, const SkPaint* paint)
++    {
++        const auto m = getTotalMatrix();
++        char rectText[96] = "-";
++        if (rect)
++            snprintf(rectText, sizeof(rectText), "%.1f,%.1f %.1fx%.1f", rect->x(), rect->y(), rect->width(), rect->height());
++        char paintText[160] = "nopaint";
++        if (paint) {
++            auto blend = paint->asBlendMode();
++            snprintf(paintText, sizeof(paintText), "color=%08x style=%d blend=%s shader=%d cf=%d mf=%d if=%d aa=%d",
++                paint->getColor(), static_cast<int>(paint->getStyle()), blend ? SkBlendMode_Name(*blend) : "custom",
++                paint->getShader() ? 1 : 0, paint->getColorFilter() ? 1 : 0, paint->getMaskFilter() ? 1 : 0, paint->getImageFilter() ? 1 : 0, paint->isAntiAlias() ? 1 : 0);
++        }
++        fprintf(stderr, "[tileop] %d %s %s %s m=[%.3g %.3g %.1f %.3g %.3g %.1f] depth=%d\n", m_tileY, op, rectText, paintText,
++            m.getScaleX(), m.getSkewX(), m.getTranslateX(), m.getSkewY(), m.getScaleY(), m.getTranslateY(), getSaveCount());
++    }
++
++    int m_tileY;
++};
++
+ // WEBKIT_TILE_ALLOC_SYNC=1 (glFlush) / 2 (glFinish), default OFF.
+ //
+ // createBuffer() runs on the MAIN thread (updateBackingStore -> replay) with the
+@@ -489,6 +596,11 @@
+             };
+ 
+             const bool isDDLBuffer = buffer->isBackedByOpenGL() && !static_cast<CoordinatedAcceleratedTileBuffer&>(buffer.get()).texture();
++            if (logReplay && tileLogLevel >= 4 && recording->picture()) {
++                TileOpLogCanvas opLog(tileRect.width(), tileRect.height(), tileRect.y());
++                opLog.translate(recording->recordRect().x() - tileRect.x(), recording->recordRect().y() - tileRect.y());
++                recording->picture()->playback(&opLog);
++            }
+             WTFBeginSignpost(canvas, PaintTile, "Skia/%s%s threaded, dirty region %ix%i+%i+%i", buffer->isBackedByOpenGL() ? "GPU" : "CPU", isDDLBuffer ? "(DDL)" : "", dirtyRect.x(), dirtyRect.y(), dirtyRect.width(), dirtyRect.height());
+             // Cost sample: this is the live path on the Adreno 610 stack
+             // (WEBKIT_SKIA_ENABLE_CPU_RENDERING=1 + 2 SkiaCPUWorker threads).
+@@ -509,7 +621,7 @@
+             if (logReplay) {
+                 uint32_t px[3] = { 0, 0, 0 };
+                 int readOk = -1;
+-                if (tileLogLevel >= 3) {
++                if (tileLogLevel == 3) {
+                     const auto info = SkImageInfo::MakeN32Premul(1, 1);
+                     const int w = bufferSize.width();
+                     const int h = bufferSize.height();

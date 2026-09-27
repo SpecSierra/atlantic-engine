@@ -123,6 +123,8 @@ readonly WEBKIT_SOURCE_PATCHES=(
     "patches/webkit/webkit-tile-reset-log-env.patch"
     # AFTER tile-reset-log (SkiaPaintingEngine.cpp createBuffer).
     "patches/webkit/webkit-tile-alloc-sync-env.patch"
+    # AFTER tile-alloc-sync (SkiaPaintingEngine.cpp: anchors on its comment).
+    "patches/webkit/webkit-tile-op-log-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(
