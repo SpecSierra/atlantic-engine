@@ -64,11 +64,17 @@ pub unsafe extern "C" fn atlantic_adblock_create_from_cache(
         return std::ptr::null_mut();
     }
     let bytes = slice::from_raw_parts(data, len);
-    let mut engine = AdblockEngine::new_with_filter_set_no_optimize(FilterSet::new(true));
-    match engine.deserialize(bytes) {
-        Ok(()) => Box::into_raw(Box::new(AtlanticAdblockEngine { engine })),
-        Err(_) => std::ptr::null_mut(),
-    }
+    // A downloaded payload can be malformed in ways deserialize() panics on;
+    // unwinding across the C boundary aborts the whole browser, and it would do
+    // so again on every start. Report failure instead.
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut engine = AdblockEngine::new_with_filter_set_no_optimize(FilterSet::new(true));
+        match engine.deserialize(bytes) {
+            Ok(()) => Box::into_raw(Box::new(AtlanticAdblockEngine { engine })),
+            Err(_) => std::ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(std::ptr::null_mut())
 }
 
 #[no_mangle]
