@@ -1,0 +1,34 @@
+# webkit-process-prewarm-env.patch: WEBKIT_PROCESS_PREWARM=1 keeps a spare
+# WebProcess warm from the first page load.
+#
+# Why: on the Jolla Phone 2 the first cross-site link tap of a session starts the
+# new page ~365 ms after touch-up (same-origin: ~40 ms). The gap is a WebProcess
+# launch on the critical path: PSON swaps every cross-site navigation and there
+# is no spare process yet. WebKit only turns automatic prewarming on AFTER the
+# first automatic swap (WebProcessPool::processForNavigation, "Automatically
+# turning on process prewarming"), and the glib API has no way to enable it up
+# front. Measured with scripts/devtools/scrollbench/tapbench.py-style probes on
+# the J2: swap 1 = ~360 ms, swaps 2 and 3 = 120-160 ms (spare taken). This just
+# sets ProcessPoolConfiguration::setIsAutomaticProcessWarmingEnabled(true) at
+# context creation so swap 1 gets the spare too. Default OFF here; the browser
+# turns it on for high-RAM devices (a spare WebProcess costs idle memory).
+#
+# ---
+diff --git a/Source/WebKit/UIProcess/API/glib/WebKitWebContext.cpp b/Source/WebKit/UIProcess/API/glib/WebKitWebContext.cpp
+--- a/Source/WebKit/UIProcess/API/glib/WebKitWebContext.cpp
++++ b/Source/WebKit/UIProcess/API/glib/WebKitWebContext.cpp
+@@ -438,6 +438,14 @@
+     Ref configuration = API::ProcessPoolConfiguration::create();
+     configuration->setInjectedBundlePath(FileSystem::stringFromFileSystemRepresentation(bundleFilename.get()));
+     configuration->setUsesWebProcessCache(true);
++    // WEBKIT_PROCESS_PREWARM=1: keep one spare WebProcess warm from the first page
++    // load on. WebKit only switches automatic prewarming on after the FIRST
++    // cross-site process swap of a session (WebProcessPool::processForNavigation),
++    // so that swap launches a process on the critical path.
++    if (const char* prewarm = getenv("WEBKIT_PROCESS_PREWARM")) {
++        if (*prewarm && strcmp(prewarm, "0"))
++            configuration->setIsAutomaticProcessWarmingEnabled(true);
++    }
+ #if PLATFORM(GTK) && !USE(GTK4)
+     configuration->setProcessSwapsOnNavigation(priv->psonEnabled);
+ #else

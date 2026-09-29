@@ -71,6 +71,8 @@ readonly WEBKIT_SOURCE_PATCHES=(
     "patches/webkit/webkit-wpe-device-orientation.patch"
     # Disjoint (bindings/js/CachedScriptFetcher.cpp is touched by nothing else).
     "patches/webkit/webkit-module-import-cors.patch"
+    # Disjoint (WebKitWebContext.cpp is touched by nothing else).
+    "patches/webkit/webkit-process-prewarm-env.patch"
 
     # --- Sandboxing --------------------------------------------------------
     # Disjoint files, order between these two is irrelevant.
