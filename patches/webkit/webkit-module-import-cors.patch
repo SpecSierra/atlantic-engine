@@ -1,0 +1,33 @@
+# webkit-module-import-cors.patch: dynamic import() from a user script / isolated
+# world must fetch the module in CORS mode.
+#
+# The default CachedScriptFetcher (used when an import() has no script element
+# behind it: WebExtension content scripts, inspector code) requested module
+# scripts with an EMPTY crossorigin mode, i.e. no-cors. WPE 2.54 refuses
+# cross-origin no-cors subresource loads to a URL scheme handler
+# (CachedResourceLoader::isNoCorsCrossOriginRequestToURLSchemeHandler), so
+# `import(browser.runtime.getURL("/content.js"))` from an extension's isolated
+# world died with "Unsafe attempt to load URL atlantic-extension://... from origin
+# https://... Domains, protocols and ports must match." -- the loader pattern
+# LanguageTool (and most bundled extensions) start with. Page-world imports and
+# <script type=module> already worked because ScriptElementCachedScriptFetcher
+# asks for "anonymous". Modules are always CORS-mode per the HTML spec, so this
+# only aligns the default fetcher with it. Device-diagnosed on 730.
+#
+diff --git a/Source/WebCore/bindings/js/CachedScriptFetcher.cpp b/Source/WebCore/bindings/js/CachedScriptFetcher.cpp
+--- a/Source/WebCore/bindings/js/CachedScriptFetcher.cpp
++++ b/Source/WebCore/bindings/js/CachedScriptFetcher.cpp
+@@ -43,7 +43,12 @@
+ 
+ CachedResourceHandle<CachedScript> CachedScriptFetcher::requestModuleScript(Document& document, const URL& sourceURL, FetchOptionsDestination destination, String&& integrity, std::optional<ServiceWorkersMode> serviceWorkersMode) const
+ {
+-    return requestScriptWithCache(document, sourceURL, destination, String { }, WTF::move(integrity), { }, serviceWorkersMode);
++    // Module scripts are always fetched in CORS mode (credentials "same-origin"):
++    // https://html.spec.whatwg.org/multipage/webappapis.html#default-classic-script-fetch-options
++    // ScriptElementCachedScriptFetcher already does this; this default fetcher
++    // (dynamic import() from user scripts / isolated worlds, where there is no
++    // script element) passed an empty mode, i.e. no-cors.
++    return requestScriptWithCache(document, sourceURL, destination, "anonymous"_s, WTF::move(integrity), { }, serviceWorkersMode);
+ }
+ 
+ RefPtr<CachedScript> CachedScriptFetcher::requestScriptWithCache(Document& document, const URL& sourceURL, FetchOptionsDestination destination, const String& crossOriginMode, String&& integrity, std::optional<ResourceLoadPriority> resourceLoadPriority, std::optional<ServiceWorkersMode> serviceWorkersMode) const

@@ -69,6 +69,8 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # WebProcess/WebPage/WebPage.{h,cpp} are touched by nothing else), so the
     # position here is free.
     "patches/webkit/webkit-wpe-device-orientation.patch"
+    # Disjoint (bindings/js/CachedScriptFetcher.cpp is touched by nothing else).
+    "patches/webkit/webkit-module-import-cors.patch"
 
     # --- Sandboxing --------------------------------------------------------
     # Disjoint files, order between these two is irrelevant.
