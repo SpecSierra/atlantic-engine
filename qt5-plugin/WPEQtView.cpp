@@ -873,6 +873,11 @@ static void jsAsyncReadyCallback(GObject* object, GAsyncResult* result, gpointer
 */
 void WPEQtView::runJavaScript(const QString& script, const QJSValue& callback)
 {
+    if (!m_webView) {
+        // Called before the view exists (or after teardown): nothing to run on.
+        qWarning("WPEQtView::runJavaScript: no web view yet, script dropped");
+        return;
+    }
     std::unique_ptr<JavascriptCallbackData> data = std::make_unique<JavascriptCallbackData>(callback, QPointer<WPEQtView>(this));
     auto utf8Script = script.toUtf8();
     webkit_web_view_evaluate_javascript(m_webView, utf8Script.constData(), utf8Script.size(), nullptr, nullptr, nullptr, jsAsyncReadyCallback, data.release());
