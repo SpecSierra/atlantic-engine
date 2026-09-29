@@ -29,12 +29,14 @@ and record why here.
 
 ## Sandboxing
 
-The bwrap WebProcess sandbox is **on by default** (`ATLANTIC_ENABLE_SANDBOX=1`,
-`ENABLE_BUBBLEWRAP_SANDBOX=ON` plus `patches/webkit/webkit-bubblewrap-sfos-sandbox.patch`):
+The bwrap WebProcess sandbox is **off by default** (`deploy/runtime-common.sh` exports
+`WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1` unless `ATLANTIC_ENABLE_SANDBOX=1`; enabling
+it can produce blank pages on hybris devices). It is still built in
+(`ENABLE_BUBBLEWRAP_SANDBOX=ON` plus `patches/webkit/webkit-bubblewrap-sfos-sandbox.patch`):
 `--dev-bind / /` with no `pivot_root`/`--dev` masking of GPU nodes, a shared netns
 for Web/GPU (hybris abstract sockets), and `flatpakInfoFd = -1` for the read-only
-rootfs. An in-process seccomp filter (no namespaces) ships alongside it —
-`ATLANTIC_ENABLE_SECCOMP`, verified from build 602.
+rootfs. The in-process seccomp filter (no namespaces) is what ships on by default —
+`ATLANTIC_ENABLE_SECCOMP` (set `0` to disable), verified from build 602.
 
 Firejail/sailjail confinement is wired but **experimental and default-off**: it must
 run via the booster (a direct `firejail --profile=` re-exec fails with `seteuid`),
