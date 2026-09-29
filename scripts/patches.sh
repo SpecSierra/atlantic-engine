@@ -152,11 +152,11 @@ apply_single_repo_patch() {
 
     if (
         cd "${target_dir}" &&
-        patch "-p${strip_level}" --batch --forward --dry-run < "${patch_path}" >/dev/null 2>&1
+        patch -F0 "-p${strip_level}" --batch --forward --dry-run < "${patch_path}" >/dev/null 2>&1
     ); then
         (
             cd "${target_dir}" &&
-            patch "-p${strip_level}" --batch --forward < "${patch_path}"
+            patch -F0 "-p${strip_level}" --batch --forward < "${patch_path}"
         )
         return $?
     fi

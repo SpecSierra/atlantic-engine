@@ -59,14 +59,14 @@ echo "==> Applying the stack in scripts/patches.sh order"
 fail=0
 while read -r p; do
     [ -z "$p" ] && continue
-    if ( cd "${TREE}" && patch -p1 --batch --forward --dry-run < "${SCRIPT_DIR}/$p" >/dev/null 2>&1 ); then
-        ( cd "${TREE}" && patch -p1 --batch --forward < "${SCRIPT_DIR}/$p" >/dev/null )
+    if ( cd "${TREE}" && patch -F0 -p1 --batch --forward --dry-run < "${SCRIPT_DIR}/$p" >/dev/null 2>&1 ); then
+        ( cd "${TREE}" && patch -F0 -p1 --batch --forward < "${SCRIPT_DIR}/$p" >/dev/null )
     else
         echo "FAILS TO APPLY: $p"
         # `|| true`: the dry run exits non-zero by definition here, and under
         # `set -o pipefail` that aborted the whole script at the FIRST failing
         # patch, so a bump only ever saw one failure at a time.
-        ( cd "${TREE}" && patch -p1 --batch --forward --dry-run < "${SCRIPT_DIR}/$p" 2>&1 \
+        ( cd "${TREE}" && patch -F0 -p1 --batch --forward --dry-run < "${SCRIPT_DIR}/$p" 2>&1 \
             | grep -E '^(patching|Hunk|can.t find)' | head -10 | sed 's/^/    /' ) || true
         fail=$((fail + 1))
     fi
