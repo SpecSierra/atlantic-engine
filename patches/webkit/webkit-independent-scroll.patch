@@ -121,7 +121,15 @@ diff --git a/Source/WebCore/page/scrolling/ThreadedScrollingTree.cpp b/Source/We
  #include <wtf/RunLoop.h>
  #include <wtf/SetForScope.h>
  #include <wtf/SystemTracing.h>
-@@ -234,8 +236,52 @@ void ThreadedScrollingTree::propagateSynchronousScrollingReasons(const HashSet<S
+@@ -150,6 +152,7 @@ void ThreadedScrollingTree::invalidate()
+     
+     removeAllNodes();
+     m_delayedRenderingUpdateDetectionTimer = nullptr;
++    m_independentTickTimer = nullptr;
+ 
+     // Since this can potentially be the last reference to the scrolling coordinator,
+     // we need to release it on the main thread since it has member variables (such as timers)
+@@ -234,8 +237,52 @@ void ThreadedScrollingTree::propagateSynchronousScrollingReasons(const HashSet<S
      }
  }
  
@@ -174,7 +182,7 @@ diff --git a/Source/WebCore/page/scrolling/ThreadedScrollingTree.cpp b/Source/We
      return !m_hasNodesWithSynchronousScrollingReasons;
  }
  
-@@ -271,6 +317,12 @@ void ThreadedScrollingTree::scrollingTreeNodeDidScroll(ScrollingTreeScrollingNod
+@@ -271,6 +318,12 @@ void ThreadedScrollingTree::scrollingTreeNodeDidScroll(ScrollingTreeScrollingNod
      }
  
      LOG_WITH_STREAM(Scrolling, stream << "ThreadedScrollingTree::scrollingTreeNodeDidScroll " << node.scrollingNodeID() << " to " << scrollPosition << " triggering main thread rendering update");
@@ -187,7 +195,7 @@ diff --git a/Source/WebCore/page/scrolling/ThreadedScrollingTree.cpp b/Source/We
      addPendingScrollUpdateWithDeferReason(WTF::move(scrollUpdate), WheelEventTestMonitor::DeferReason::ScrollingThreadSyncNeeded);
  }
  
-@@ -442,6 +494,16 @@ void ThreadedScrollingTree::willStartRenderingUpdate()
+@@ -442,6 +495,16 @@ void ThreadedScrollingTree::willStartRenderingUpdate()
      if (!hasRecentActivity())
          return;
  
@@ -204,7 +212,7 @@ diff --git a/Source/WebCore/page/scrolling/ThreadedScrollingTree.cpp b/Source/We
      tracePoint(ScrollingThreadRenderUpdateSyncStart);
  
      // Wait for the scrolling thread to acquire m_treeLock. This ensures that any pending wheel events are processed.
-@@ -546,6 +608,83 @@ void ThreadedScrollingTree::delayedRenderingUpdateDetectionTimerFired()
+@@ -546,6 +609,83 @@ void ThreadedScrollingTree::delayedRenderingUpdateDetectionTimerFired()
      m_state = SynchronizationState::Desynchronized;
  }
  
@@ -288,7 +296,7 @@ diff --git a/Source/WebCore/page/scrolling/ThreadedScrollingTree.cpp b/Source/We
  void ThreadedScrollingTree::displayDidRefreshOnScrollingThread()
  {
      TraceScope tracingScope(ScrollingThreadDisplayDidRefreshStart, ScrollingThreadDisplayDidRefreshEnd, displayID());
-@@ -557,7 +696,11 @@ void ThreadedScrollingTree::displayDidRefreshOnScrollingThread()
+@@ -557,7 +697,11 @@ void ThreadedScrollingTree::displayDidRefreshOnScrollingThread()
      m_lastDisplayDidRefreshTime = now;
      serviceScrollAnimations(now);
  
