@@ -72,7 +72,7 @@ diff --git a/Source/WebKit/Shared/unix/AuxiliaryProcessMain.cpp b/Source/WebKit/
  #if ENABLE(BREAKPAD)
  #include "unix/BreakpadExceptionHandler.h"
  #endif
-@@ -51,11 +66,113 @@ __attribute__((weak)) extern "C" int __llvm_profile_dump(void);
+@@ -51,11 +66,122 @@ __attribute__((weak)) extern "C" int __llvm_profile_dump(void);
  
  namespace WebKit {
  
@@ -140,6 +140,12 @@ diff --git a/Source/WebKit/Shared/unix/AuxiliaryProcessMain.cpp b/Source/WebKit/
 +        { SCMP_SYS(perf_event_open), EPERM, nullptr },
 +        { SCMP_SYS(personality), EPERM, nullptr },
 +        { SCMP_SYS(ptrace), EPERM, nullptr },
++        // Kernel-attack-surface / cross-process memory access a renderer never
++        // needs (userfaultfd is a classic race-widening primitive).
++        { SCMP_SYS(bpf), EPERM, nullptr },
++        { SCMP_SYS(userfaultfd), EPERM, nullptr },
++        { SCMP_SYS(process_vm_readv), EPERM, nullptr },
++        { SCMP_SYS(process_vm_writev), EPERM, nullptr },
 +    };
 +
 +    scmp_filter_ctx seccomp = seccomp_init(SCMP_ACT_ALLOW);
@@ -163,6 +169,9 @@ diff --git a/Source/WebKit/Shared/unix/AuxiliaryProcessMain.cpp b/Source/WebKit/
 +    // seccomp_load() enables NO_NEW_PRIVS and installs the filter for this
 +    // thread group. Failure is non-fatal: the process runs unfiltered (same
 +    // exposure as the shipped default) rather than not at all.
++    // Threads spawned before this point (e.g. by early static initialisers)
++    // must be covered too, not just the calling one.
++    seccomp_attr_set(seccomp, SCMP_FLTATR_CTL_TSYNC, 1);
 +    int r = seccomp_load(seccomp);
 +    if (r < 0)
 +        WTFLogAlways("[Atlantic] seccomp_load failed (%d); syscall filter NOT installed", r);
