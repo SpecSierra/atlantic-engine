@@ -91,14 +91,20 @@ Merged into `adblock-resources.json` by the builder's `--resources` mode.
 MPL-2.0. npm tarball; the build extracts **only** `dist/autoconsent.standalone.js`
 and renames it to `autoconsent.js` (`scripts/build-adblock-lists.sh`). That bundle
 self-initializes with rules embedded — there is no separate `rules.json`, and the
-playwright bundle is not used. The browser injects it verbatim as a document-start
-user script in every frame.
+playwright bundle is not used. The browser injects it as a document-start user
+script in every frame, after switching off two things in the self-init `const
+config = { isMainWorld: … }` block (`applyLeanAutoconsentConfig` in
+`WPEWebPage.cpp`): `enableHeuristicDetection` (telemetry that reads the whole
+page's `innerText` and runs ~140 regexes over it on each of up to 21 detection
+attempts per frame) and the `lifecycle`/`rulesteps`/`waits` debug logs.
+`ATLANTIC_AUTOCONSENT_DEBUG=1` injects it with its own config instead.
 Consumers: `apps/wpe/WPEUserScripts.h`, `WPEWebPage.cpp`, `BrowserPage.qml`.
 To bump: change `AUTOCONSENT_VERSION` and re-pin `AUTOCONSENT_SHA256`
 (`AUTOCONSENT_URL` now derives the version). Then check the bundle's self-init
-tail still ends with `consent.initialize(config, rules)` and still sets
-`window.autoconsentReceiveMessage` / `window.autoconsentStandalone` — that is the
-whole contract with our injector.
+tail still ends with `consent.initialize(config, rules)`, still sets
+`window.autoconsentReceiveMessage` / `window.autoconsentStandalone`, and still
+declares that config block (the browser logs "standalone config block not found"
+otherwise) — that is the whole contract with our injector.
 Upstream: <https://github.com/duckduckgo/autoconsent/releases>
 
 ## 7. Libraries bundled from Ubuntu (copied, not built)
