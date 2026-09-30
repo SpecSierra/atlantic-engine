@@ -1,6 +1,7 @@
 > **Status: PARTLY RESOLVED (2026-08-18)** — Lever 1 (preconnect) is implemented
-> and its mechanism is **device-verified on build 646.2**; it stays default OFF
-> because the benefit still has no instrument. Lever 5 (page interventions) was
+> and its mechanism is **device-verified on build 646.2**; it now ships
+> default ON (2026-09-30): tapbench measured fcp -30 / -93 ms on two sites (medians,
+> noisy network, see runtime-common.sh). Lever 5 (page interventions) was
 > implemented, measured, found **inert**, and has been **removed** — the reasons
 > are recorded below so it is not rebuilt the same way. The SoC input boost is
 > now implemented too — its mechanism is proven but its benefit is not, so it

@@ -807,12 +807,14 @@ atlantic_export_browser_env() {
     # the identical three probes opened nothing. So the chain touchstart ->
     # bridge -> preconnect() -> socket works.
     #
-    # STILL DEFAULT OFF because the mechanism working is not the same as the
-    # mechanism paying: tap-to-first-byte has no instrument yet (render --scroll
-    # measures the fling path and cannot see this). Build that first, then A/B
-    # 5 off / 5 on with COLD DNS each run — a second run to the same host
-    # measures the resolver cache, not this lever.
-    export ATLANTIC_PRECONNECT="${ATLANTIC_PRECONNECT:-0}"
+    # DEFAULT ON (2026-09-30). tapbench A/B on the J2 (build 735, prewarm on in
+    # both arms, 6 reps, cold cache-busted destinations): fcp -30 ms on
+    # example.org (connect 70 -> 22 ms = the pre-opened socket was reused) and
+    # -93 ms on wikipedia (ttfb -98 ms). Medians only: ranges overlap on
+    # wikipedia and the network is noisy, so this shipped on a consistent sign
+    # plus the connect-time proof, not on a cleared noise floor. Cost: one idle
+    # socket per touched link. Opt out with ATLANTIC_PRECONNECT=0.
+    export ATLANTIC_PRECONNECT="${ATLANTIC_PRECONNECT:-1}"
 
     # ── Overlay scrollbar size ────────────────────────────────────────────────
     # Honoured by webkit-scrollbar.patch. Atlantic's 3x UI
