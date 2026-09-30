@@ -55,8 +55,9 @@ extern void atlantic_adblock_free_match_result(MatchResult result);
  * is still initializing -- so every non-prewarmed process (a new tab, and every
  * cross-site navigation under process swap) paid for it before it could even
  * create its page. Now it overlaps with that setup and with the fetch of the
- * document; a request that needs the engine before it is ready waits for it
- * (ready_engine), so what gets blocked is unchanged.
+ * document; a frame or subresource request that needs the engine before it is
+ * ready waits for it (ready_engine), a top-level document does not (see
+ * on_send_request).
  * ATLANTIC_ADBLOCK_SYNC_LOAD=1 restores the old in-line load (A/B). */
 static GMutex g_engine_mutex;
 static GCond g_engine_cond;
@@ -180,17 +181,26 @@ static int is_third_party(const char *page_uri, const char *req_uri)
     return tp;
 }
 
-/* The engine, once the load has settled; until then the first caller waits for
- * it (bounded). NULL when the load failed, or while a timed-out load is still
- * running. Main thread only. */
-static AtlanticAdblockEngine *ready_engine(void)
+/* The engine, once the load has settled. Until then a caller that may_wait
+ * blocks for it (bounded); one that may not gets NULL straight away. NULL also
+ * when the load failed, or while a timed-out load is still running. Main
+ * thread only. */
+static AtlanticAdblockEngine *ready_engine(gboolean may_wait, const char *rtype)
 {
     static gboolean wait_expired = FALSE;
+    static gboolean logged_skip = FALSE;
 
     /* g_engine is written before the settled flag is set, and GLib atomics are
      * full barriers, so seeing the flag means seeing the final pointer. */
     if (g_atomic_int_get(&g_engine_settled))
         return g_engine;
+    if (!may_wait) {
+        if (!logged_skip) {
+            logged_skip = TRUE;
+            fprintf(stderr, "[ATL-ADBLOCK-EXT] %s request did not wait for the engine\n", rtype);
+        }
+        return NULL;
+    }
     if (wait_expired)
         return NULL;
 
@@ -205,8 +215,8 @@ static AtlanticAdblockEngine *ready_engine(void)
     const gboolean settled = g_atomic_int_get(&g_engine_settled);
     if (!settled)
         wait_expired = TRUE;
-    fprintf(stderr, "[ATL-ADBLOCK-EXT] first request waited %lld ms for the engine%s\n",
-            (long long)((g_get_monotonic_time() - start) / 1000),
+    fprintf(stderr, "[ATL-ADBLOCK-EXT] first %s request waited %lld ms for the engine%s\n",
+            rtype, (long long)((g_get_monotonic_time() - start) / 1000),
             settled ? "" : " -- gave up, requests pass unfiltered until it loads");
     return settled ? g_engine : NULL;
 }
@@ -235,7 +245,17 @@ static gboolean on_send_request(WebKitWebPage *page, WebKitURIRequest *request,
     if (!method)
         method = "GET";
 
-    AtlanticAdblockEngine *engine = ready_engine();
+    /* A top-level document (Sec-Fetch-Dest: document; https only) does not wait
+     * for the engine. In a fresh WebProcess it is the first request, issued a
+     * few tens of ms after the process initialized and before the ~100 ms load
+     * is done, so waiting here put the rest of that load back on the
+     * navigation's critical path (J2, prewarm off: 29 ms). The UI process
+     * already matches main-frame navigations and their redirect hops against
+     * the same filters as documents (onDecidePolicy / WEBKIT_LOAD_REDIRECTED ->
+     * AdBlockEngine::shouldBlockPopup), except a fresh tab's first URL, which
+     * the user typed or opened. It is still checked here whenever the engine is
+     * ready; frames and subresources always wait. */
+    AtlanticAdblockEngine *engine = ready_engine(strcmp(rtype, "document") != 0, rtype);
     if (!engine)
         return FALSE;
 
