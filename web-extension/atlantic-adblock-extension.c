@@ -49,7 +49,23 @@ extern void atlantic_adblock_free_match_result(MatchResult result);
 #define ATL_TOGGLE_MESSAGE "atlantic-adblock-set-enabled"
 #define ATL_ALLOWLIST_MESSAGE "atlantic-adblock-set-allowlist"
 
+/* The engine is loaded on a worker thread (see load_engine_thread): reading,
+ * checksumming, copying and verifying the ~16 MB engine.dat used to run inside
+ * the extension's initialize function, which WebKit calls while the WebProcess
+ * is still initializing -- so every non-prewarmed process (a new tab, and every
+ * cross-site navigation under process swap) paid for it before it could even
+ * create its page. Now it overlaps with that setup and with the fetch of the
+ * document; a request that needs the engine before it is ready waits for it
+ * (ready_engine), so what gets blocked is unchanged.
+ * ATLANTIC_ADBLOCK_SYNC_LOAD=1 restores the old in-line load (A/B). */
+static GMutex g_engine_mutex;
+static GCond g_engine_cond;
+static gint g_engine_settled = 0; /* atomic; set once g_engine is final */
 static AtlanticAdblockEngine *g_engine = NULL;
+/* Upper bound on that wait. The load takes a fraction of a second; this only
+ * keeps a load that never finishes from wedging the page's main thread. */
+#define ATL_ENGINE_WAIT_US (5 * G_USEC_PER_SEC)
+
 static gboolean g_enabled = TRUE;
 /* Per-site allowlist: NULL-terminated host vector; blocking is skipped when
  * the page host is one of these (or a subdomain, per hosts_related). */
@@ -164,12 +180,43 @@ static int is_third_party(const char *page_uri, const char *req_uri)
     return tp;
 }
 
+/* The engine, once the load has settled; until then the first caller waits for
+ * it (bounded). NULL when the load failed, or while a timed-out load is still
+ * running. Main thread only. */
+static AtlanticAdblockEngine *ready_engine(void)
+{
+    static gboolean wait_expired = FALSE;
+
+    /* g_engine is written before the settled flag is set, and GLib atomics are
+     * full barriers, so seeing the flag means seeing the final pointer. */
+    if (g_atomic_int_get(&g_engine_settled))
+        return g_engine;
+    if (wait_expired)
+        return NULL;
+
+    const gint64 start = g_get_monotonic_time();
+    g_mutex_lock(&g_engine_mutex);
+    while (!g_atomic_int_get(&g_engine_settled)) {
+        if (!g_cond_wait_until(&g_engine_cond, &g_engine_mutex, start + ATL_ENGINE_WAIT_US))
+            break;
+    }
+    g_mutex_unlock(&g_engine_mutex);
+
+    const gboolean settled = g_atomic_int_get(&g_engine_settled);
+    if (!settled)
+        wait_expired = TRUE;
+    fprintf(stderr, "[ATL-ADBLOCK-EXT] first request waited %lld ms for the engine%s\n",
+            (long long)((g_get_monotonic_time() - start) / 1000),
+            settled ? "" : " -- gave up, requests pass unfiltered until it loads");
+    return settled ? g_engine : NULL;
+}
+
 static gboolean on_send_request(WebKitWebPage *page, WebKitURIRequest *request,
                                 WebKitURIResponse *redirected_response, gpointer user_data)
 {
     (void)redirected_response;
     (void)user_data;
-    if (!g_engine || !g_enabled)
+    if (!g_enabled)
         return FALSE;
 
     const char *req_uri = webkit_uri_request_get_uri(request);
@@ -188,7 +235,11 @@ static gboolean on_send_request(WebKitWebPage *page, WebKitURIRequest *request,
     if (!method)
         method = "GET";
 
-    MatchResult r = atlantic_adblock_match_network_v2(g_engine, src, req_uri, rtype,
+    AtlanticAdblockEngine *engine = ready_engine();
+    if (!engine)
+        return FALSE;
+
+    MatchResult r = atlantic_adblock_match_network_v2(engine, src, req_uri, rtype,
                                                    third_party, method);
     gboolean block = FALSE;
     if (r.redirect) {
@@ -234,6 +285,75 @@ static void on_page_created(WebKitWebProcessExtension *extension, WebKitWebPage 
     g_signal_connect(page, "user-message-received", G_CALLBACK(on_user_message), NULL);
 }
 
+/* Loads the engine and publishes it (g_engine, then g_engine_settled) exactly
+ * once. Runs on the loader thread, or in-line for ATLANTIC_ADBLOCK_SYNC_LOAD=1.
+ * Owns updated_dir. */
+static gpointer load_engine_thread(gpointer data)
+{
+    char *updated_dir = data;
+    const gint64 start = g_get_monotonic_time();
+    AtlanticAdblockEngine *engine = NULL;
+
+    /* Pick the filter dir with the higher engine.version stamp (0 if absent). */
+    gint64 shipped_ver = 0, updated_ver = 0;
+    char *ver = NULL;
+    if (g_file_get_contents(ATL_SHIPPED_DIR "/engine.version", &ver, NULL, NULL)) {
+        shipped_ver = g_ascii_strtoll(ver, NULL, 10);
+        g_free(ver);
+        ver = NULL;
+    }
+    char *updated_ver_path = g_build_filename(updated_dir, "engine.version", NULL);
+    if (g_file_get_contents(updated_ver_path, &ver, NULL, NULL)) {
+        updated_ver = g_ascii_strtoll(ver, NULL, 10);
+        g_free(ver);
+    }
+    g_free(updated_ver_path);
+    const gboolean use_updated = updated_ver > shipped_ver;
+    const char *dir = use_updated ? updated_dir : ATL_SHIPPED_DIR;
+
+    char *dat_path = g_build_filename(dir, "engine.dat", NULL);
+    char *dat = NULL;
+    gsize len = 0;
+    if (g_file_get_contents(dat_path, &dat, &len, NULL) && len > 0)
+        engine = atlantic_adblock_create_from_cache((const uint8_t *)dat, len);
+    g_free(dat);
+    dat = NULL;
+    /* A corrupt/missing updated copy must not kill adblock entirely. */
+    if (!engine && use_updated) {
+        dir = ATL_SHIPPED_DIR;
+        if (g_file_get_contents(ATL_SHIPPED_DIR "/engine.dat", &dat, &len, NULL) && len > 0)
+            engine = atlantic_adblock_create_from_cache((const uint8_t *)dat, len);
+        g_free(dat);
+    }
+    g_free(dat_path);
+
+    /* Scriptlet/redirect resources are not part of the serialized cache; load
+     * them so redirect= rules resolve to their surrogates instead of no-ops.
+     * Before publishing: the engine must be complete when requests see it. */
+    if (engine) {
+        char *res_path = g_build_filename(dir, "adblock-resources.json", NULL);
+        char *res = NULL;
+        gsize rlen = 0;
+        if (g_file_get_contents(res_path, &res, &rlen, NULL) && rlen > 0) {
+            if (!atlantic_adblock_use_resources_json(engine, (const uint8_t *)res, rlen))
+                fprintf(stderr, "[ATL-ADBLOCK-EXT] resources.json failed to load\n");
+        }
+        g_free(res);
+        g_free(res_path);
+    }
+
+    fprintf(stderr, "[ATL-ADBLOCK-EXT] engine=%s (%s) in %lld ms\n",
+            engine ? "loaded" : "FAILED", dir, (long long)((g_get_monotonic_time() - start) / 1000));
+    g_free(updated_dir);
+
+    g_mutex_lock(&g_engine_mutex);
+    g_engine = engine;
+    g_atomic_int_set(&g_engine_settled, 1);
+    g_cond_broadcast(&g_engine_cond);
+    g_mutex_unlock(&g_engine_mutex);
+    return NULL;
+}
+
 G_MODULE_EXPORT void
 webkit_web_process_extension_initialize_with_user_data(WebKitWebProcessExtension *extension,
                                                        GVariant *user_data)
@@ -248,55 +368,26 @@ webkit_web_process_extension_initialize_with_user_data(WebKitWebProcessExtension
         set_allowlist(joined);
     }
 
-    /* Pick the filter dir with the higher engine.version stamp (0 if absent). */
-    char *updated_dir = g_build_filename(g_get_user_cache_dir(), ATL_UPDATED_SUBDIR, NULL);
-    gint64 shipped_ver = 0, updated_ver = 0;
-    char *ver = NULL;
-    if (g_file_get_contents(ATL_SHIPPED_DIR "/engine.version", &ver, NULL, NULL)) {
-        shipped_ver = g_ascii_strtoll(ver, NULL, 10);
-        g_free(ver);
-        ver = NULL;
-    }
-    char *updated_ver_path = g_build_filename(updated_dir, "engine.version", NULL);
-    if (g_file_get_contents(updated_ver_path, &ver, NULL, NULL)) {
-        updated_ver = g_ascii_strtoll(ver, NULL, 10);
-        g_free(ver);
-    }
-    g_free(updated_ver_path);
-    const char *dir = updated_ver > shipped_ver ? updated_dir : ATL_SHIPPED_DIR;
-
-    char *dat_path = g_build_filename(dir, "engine.dat", NULL);
-    char *data = NULL;
-    gsize len = 0;
-    if (g_file_get_contents(dat_path, &data, &len, NULL) && len > 0)
-        g_engine = atlantic_adblock_create_from_cache((const uint8_t *)data, len);
-    g_free(data);
-    /* A corrupt/missing updated copy must not kill adblock entirely. */
-    if (!g_engine && dir != (const char *)ATL_SHIPPED_DIR) {
-        dir = ATL_SHIPPED_DIR;
-        if (g_file_get_contents(ATL_SHIPPED_DIR "/engine.dat", &data, &len, NULL) && len > 0)
-            g_engine = atlantic_adblock_create_from_cache((const uint8_t *)data, len);
-        g_free(data);
-    }
-    g_free(dat_path);
-
-    /* Scriptlet/redirect resources are not part of the serialized cache; load
-     * them so redirect= rules resolve to their surrogates instead of no-ops. */
-    if (g_engine) {
-        char *res_path = g_build_filename(dir, "adblock-resources.json", NULL);
-        char *res = NULL;
-        gsize rlen = 0;
-        if (g_file_get_contents(res_path, &res, &rlen, NULL) && rlen > 0) {
-            if (!atlantic_adblock_use_resources_json(g_engine, (const uint8_t *)res, rlen))
-                fprintf(stderr, "[ATL-ADBLOCK-EXT] resources.json failed to load\n");
-        }
-        g_free(res);
-        g_free(res_path);
-    }
-
-    fprintf(stderr, "[ATL-ADBLOCK-EXT] initialized: engine=%s (%s) enabled=%d\n",
-            g_engine ? "loaded" : "FAILED", dir, g_enabled);
-    g_free(updated_dir);
-
+    /* Connected before the engine exists: pages created while it loads still
+     * route their requests through on_send_request, which waits for it. */
     g_signal_connect(extension, "page-created", G_CALLBACK(on_page_created), NULL);
+
+    char *updated_dir = g_build_filename(g_get_user_cache_dir(), ATL_UPDATED_SUBDIR, NULL);
+    const char *sync_load = g_getenv("ATLANTIC_ADBLOCK_SYNC_LOAD");
+    if (sync_load && *sync_load && strcmp(sync_load, "0") != 0) {
+        load_engine_thread(updated_dir);
+    } else {
+        GError *error = NULL;
+        GThread *loader = g_thread_try_new("atl-adblock-load", load_engine_thread, updated_dir, &error);
+        if (loader) {
+            g_thread_unref(loader); /* detached; it publishes and exits */
+        } else {
+            fprintf(stderr, "[ATL-ADBLOCK-EXT] loader thread failed (%s); loading in-line\n",
+                    error ? error->message : "?");
+            g_clear_error(&error);
+            load_engine_thread(updated_dir);
+        }
+    }
+    fprintf(stderr, "[ATL-ADBLOCK-EXT] initialized: enabled=%d, engine %s\n", g_enabled,
+            g_atomic_int_get(&g_engine_settled) ? "ready" : "loading on a worker thread");
 }
