@@ -71,6 +71,12 @@ jobs:
       ARTIFACT_ROOT: ${{ github.workspace }}/artifacts
 
     steps:
+      # A run cancelled mid-build (cancel-in-progress) skips the chowns at the
+      # end, leaving root-owned files from the sudo build steps (e.g.
+      # adblock-engine/target, artifacts/rpms) that checkout then cannot delete.
+      - name: Reclaim workspace from root-owned leftovers
+        run: sudo chown -R "$(id -u)":"$(id -g)" "${GITHUB_WORKSPACE}" || true
+
       - name: Check out repo
         uses: actions/checkout@v4
 
