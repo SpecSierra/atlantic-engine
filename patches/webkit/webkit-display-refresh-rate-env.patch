@@ -1,0 +1,98 @@
+# Drive requestAnimationFrame / rendering updates at the panel's real rate.
+#
+# On Sailfish the UI process has no usable vblank source (WPE platform API is
+# off; the panel belongs to the Android composer), so DisplayVBlankMonitor
+# falls back to DisplayVBlankMonitorTimer, which upstream hard-codes to
+# FullSpeedFramesPerSecond (60) and sleeps a truncated whole-millisecond
+# period. That capped rAF, CSS/JS animations and main-thread rendering updates
+# at ~62 Hz on the Jolla Phone 2's 90 Hz panel.
+#
+#  - WEBKIT_DISPLAY_REFRESH_RATE (Hz, 30-240) sets the timer's rate, which is
+#    also what DisplayLink reports as the display's nominal rate. Unset = 60,
+#    i.e. upstream behaviour. The browser sets it at startup.
+#  - The timer sleeps to a running deadline instead of sleep_for(1000 / rate)
+#    so the cadence matches the rate (11 ms truncation = 90.9 Hz, plus drift).
+#
+# Observers that still ask for 60 fps get every 90 Hz tick:
+# DisplayUpdate::relevantForUpdateFrequency() only decimates on integral
+# ratios.
+#
+# ---
+diff --git a/Source/WebKit/UIProcess/glib/DisplayVBlankMonitorTimer.cpp b/Source/WebKit/UIProcess/glib/DisplayVBlankMonitorTimer.cpp
+--- a/Source/WebKit/UIProcess/glib/DisplayVBlankMonitorTimer.cpp
++++ b/Source/WebKit/UIProcess/glib/DisplayVBlankMonitorTimer.cpp
+@@ -28,6 +28,7 @@
+ 
+ #include <WebCore/AnimationFrameRate.h>
+ #include <chrono>
++#include <cstdlib>
+ #include <thread>
+ 
+ namespace WebKit {
+@@ -37,14 +38,43 @@
+     return makeUnique<DisplayVBlankMonitorTimer>();
+ }
+ 
++// Atlantic: this timer is the only vblank source on Sailfish (no WPE platform
++// API, and the panel belongs to the Android composer, not a DRM node we can
++// wait on), so it paces requestAnimationFrame, animations and rendering
++// updates. Upstream hard-codes 60 Hz; WEBKIT_DISPLAY_REFRESH_RATE (Hz, 30-240)
++// sets the panel's real rate, e.g. 90 on the Jolla Phone 2.
++static unsigned timerRefreshRate()
++{
++    static const unsigned rate = [] {
++        if (const char* env = getenv("WEBKIT_DISPLAY_REFRESH_RATE")) {
++            int value = atoi(env);
++            if (value >= 30 && value <= 240)
++                return static_cast<unsigned>(value);
++        }
++        return static_cast<unsigned>(WebCore::FullSpeedFramesPerSecond);
++    }();
++    return rate;
++}
++
+ DisplayVBlankMonitorTimer::DisplayVBlankMonitorTimer()
+-    : DisplayVBlankMonitorThreaded(WebCore::FullSpeedFramesPerSecond)
++    : DisplayVBlankMonitorThreaded(timerRefreshRate())
+ {
+ }
+ 
+ bool DisplayVBlankMonitorTimer::waitForVBlank() const
+ {
+-    std::this_thread::sleep_for(std::chrono::milliseconds(1000 / m_refreshRate));
++    // Sleep to a running deadline rather than a whole-millisecond period:
++    // 1000 / 90 truncates to 11 ms (90.9 Hz) and every sleep overshoots, so the
++    // old form drifted off the panel rate. A deadline more than a period in
++    // the past (thread was stopped, or we fell behind) restarts the cadence
++    // instead of bursting to catch up.
++    using namespace std::chrono;
++    const auto period = duration_cast<steady_clock::duration>(duration<double>(1.0 / m_refreshRate));
++    const auto now = steady_clock::now();
++    m_nextVBlank += period;
++    if (m_nextVBlank + period < now || m_nextVBlank > now + period)
++        m_nextVBlank = now + period;
++    std::this_thread::sleep_until(m_nextVBlank);
+     return true;
+ }
+ 
+diff --git a/Source/WebKit/UIProcess/glib/DisplayVBlankMonitorTimer.h b/Source/WebKit/UIProcess/glib/DisplayVBlankMonitorTimer.h
+--- a/Source/WebKit/UIProcess/glib/DisplayVBlankMonitorTimer.h
++++ b/Source/WebKit/UIProcess/glib/DisplayVBlankMonitorTimer.h
+@@ -26,6 +26,7 @@
+ #pragma once
+ 
+ #include "DisplayVBlankMonitorThreaded.h"
++#include <chrono>
+ 
+ namespace WebKit {
+ 
+@@ -37,6 +38,9 @@
+ private:
+     Type type() const override { return Type::Timer; }
+     bool waitForVBlank() const override;
++
++    // Next vblank deadline; waitForVBlank() runs on the monitor thread only.
++    mutable std::chrono::steady_clock::time_point m_nextVBlank;
+ };
+ 
+ } // namespace WebKit

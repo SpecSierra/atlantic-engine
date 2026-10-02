@@ -73,6 +73,8 @@ readonly WEBKIT_SOURCE_PATCHES=(
     "patches/webkit/webkit-module-import-cors.patch"
     # Disjoint (WebKitWebContext.cpp is touched by nothing else).
     "patches/webkit/webkit-process-prewarm-env.patch"
+    # Disjoint (UIProcess/glib/DisplayVBlankMonitorTimer.* touched by nothing else).
+    "patches/webkit/webkit-display-refresh-rate-env.patch"
 
     # --- Sandboxing --------------------------------------------------------
     # Disjoint files, order between these two is irrelevant.
