@@ -23,7 +23,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/versions.env"
-: "${WPE_WEBKIT_VERSION:=2.54.0}"
+: "${WPE_WEBKIT_VERSION:=2.54.1}"
 EXPECTED="${1:-}"
 
 WORKDIR="${WORKDIR:-$(mktemp -d)}"

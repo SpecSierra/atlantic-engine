@@ -89,8 +89,8 @@ Any future merge or removal should be proven, not argued —
    the hash returns to the old one — that proves the delta is exactly the
    intended patches and nothing else.
 
-Current stack hash (41 patches, 2.54.0):
-`a857c43c6e7667e6fa640cdcabfdecc7e02a703027728ff2ac27ecbced71f275`
+Current stack hash (50 patches, 2.54.1):
+`af2ec20f82f2dd0051f11db1ab4ff02cf67a5973484424a7ce16969e3f7662b6`
 
 Hashes recorded before 2.54 are not comparable with this one: the script used to
 hash the `diff -ruN <base> <tree>` header lines, which carry absolute WORKDIR

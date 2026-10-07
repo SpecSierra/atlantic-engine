@@ -48,9 +48,9 @@ follow ambience) and the ambience state reported by the QML root.
  #include <wpe/wpe.h>
  #include <wtf/NeverDestroyed.h>
  
-@@ -66,6 +67,13 @@
- 
-     createWebPage(configuration);
+@@ -70,6 +71,13 @@ ViewLegacy::ViewLegacy(struct wpe_view_backend* backend, const API::PageConfigur
+     static constexpr WebCore::PlatformDisplayID legacyDisplayID = 1;
+     m_pageProxy->windowScreenDidChange(legacyDisplayID);
  
 +    // SFOS: mirror ViewPlatform — repropagate the color appearance to the page
 +    // when the system dark mode flips at runtime (wpe_sfos_set_dark_mode).
@@ -62,7 +62,7 @@ follow ambience) and the ambience state reported by the QML root.
      static struct wpe_view_backend_client s_backendClient = {
          // set_size
          [](void* data, uint32_t width, uint32_t height)
-@@ -291,6 +299,7 @@
+@@ -300,6 +308,7 @@ ViewLegacy::ViewLegacy(struct wpe_view_backend* backend, const API::PageConfigur
  
  ViewLegacy::~ViewLegacy()
  {
@@ -72,7 +72,7 @@ follow ambience) and the ambience state reported by the QML root.
      // Although the fullscreen client is used for libwpe 1.11.1 and newer, we cannot
 --- a/Source/WebKit/UIProcess/glib/SystemSettingsManagerProxy.cpp
 +++ b/Source/WebKit/UIProcess/glib/SystemSettingsManagerProxy.cpp
-@@ -46,7 +46,11 @@
+@@ -47,7 +47,11 @@ String SystemSettingsManagerProxy::themeName() const
  
  bool SystemSettingsManagerProxy::darkMode() const
  {
@@ -85,7 +85,7 @@ follow ambience) and the ambience state reported by the QML root.
  }
  
  String SystemSettingsManagerProxy::fontName() const
-@@ -191,3 +195,19 @@
+@@ -201,3 +205,19 @@ void SystemSettingsManagerProxy::settingsDidChange()
  }
  
  } // namespace WebKit

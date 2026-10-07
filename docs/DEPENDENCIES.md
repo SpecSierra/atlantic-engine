@@ -11,7 +11,7 @@ Most pins live in `versions.env`. The exceptions are called out explicitly.
 
 | Component | Version | Pinned in | Upstream |
 |---|---|---|---|
-| WPE WebKit | 2.54.0 | `versions.env` (`LEGACY_WPEWEBKIT_VERSION`, `TARGET_WPEWEBKIT_VERSION`) + `rpm/wpewebkit2.spec` `Version:` | <https://wpewebkit.org/releases/> |
+| WPE WebKit | 2.54.1 | `versions.env` (`LEGACY_WPEWEBKIT_VERSION`, `TARGET_WPEWEBKIT_VERSION`) + `rpm/wpewebkit2.spec` `Version:` | <https://wpewebkit.org/releases/> |
 | libwpe | 1.17.0 | `versions.env` + `rpm/libwpe.spec` | <https://github.com/WebPlatformForEmbedded/libwpe> |
 | WPEBackend-fdo | 1.17.0 | `versions.env` + `rpm/wpebackend-fdo.spec` | <https://github.com/Igalia/WPEBackend-fdo> |
 | libepoxy | 1.5.11 | `versions.env` + `rpm/libepoxy.spec` | <https://github.com/anholt/libepoxy> |
@@ -160,7 +160,7 @@ Brave Search. Static, only needs touching if the endpoint changes.
 
 | Component | Ours | Upstream | Action |
 |---|---|---|---|
-| WPE WebKit | 2.54.0 | 2.54.0 | ✅ current — bumped 2026-09-25, CI green (run 36134457003), not yet device-verified |
+| WPE WebKit | 2.54.1 | 2.54.1 | ✅ current — bumped 2026-10-07 (2.54.0 was CI-green run 36134457003, never device-verified); 2.54.1 not yet built or device-verified |
 | libwpe | 1.17.0 @ `445a0b55` | main; latest tag 1.16.3 | ✅ pinned 2026-08-18 |
 | WPEBackend-fdo | 1.17.0 @ `84492327` | main; latest tag 1.16.1 | ✅ pinned 2026-08-18 |
 | libepoxy | 1.5.11 @ `1b6d7db1` | main; latest tag 1.5.10 | ✅ pinned 2026-08-18 |
