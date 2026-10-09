@@ -677,7 +677,9 @@ cp -a "${BROWSER_SRC}/build_browser/atlantic-browser_eng_en.qm" "${S}/usr/share/
 #   - whitelist /usr/share/atlantic-browser: Base whitelist-LOCKS /usr/share.
 #     (NEVER whitelist under /usr/lib64 — firejail then locks the whole dir and
 #     hides libQt5*.)
-#   - data dirs (the fork persists under org.sailfishos/browser) + Downloads.
+#   - data dirs (org.atlantic/atlanticbrowser; the stock browser's
+#     org.sailfishos/browser stays whitelisted for the migration release only)
+#     + Downloads.
 #   - dbus-user.own: the browser's real bus names (under org.atlantic, which the
 #     template's OrganizationName permits).
 PROFILE_ENV_LINES="$(env -i sh -c '. "'"${SCRIPT_DIR}"'/deploy/runtime-common.sh"
@@ -719,13 +721,23 @@ whitelist ${HOME}/.cache/ambienced
 mkdir     ${HOME}/.local/share/ambienced/wallpapers
 whitelist ${HOME}/.local/share/ambienced/wallpapers
 
-# Browser data (the fork persists under org.sailfishos/browser) + config.
-mkdir     ${HOME}/.local/share/org.sailfishos/browser
+# Browser data + config: Atlantic's own org.atlantic/atlanticbrowser dirs (the
+# names the desktop entry declares and the browser sets on QGuiApplication).
+mkdir     ${HOME}/.local/share/org.atlantic/atlanticbrowser
+whitelist ${HOME}/.local/share/org.atlantic/atlanticbrowser
+mkdir     ${HOME}/.cache/org.atlantic/atlanticbrowser
+whitelist ${HOME}/.cache/org.atlantic/atlanticbrowser
+mkdir     ${HOME}/.config/org.atlantic/atlanticbrowser
+whitelist ${HOME}/.config/org.atlantic/atlanticbrowser
+
+# TRANSITIONAL — remove one release after 1.6.x. Up to 1.6.x Atlantic persisted
+# in the STOCK browser's profile; BrowserPaths::migrateSharedProfile() moves its
+# files out on first run and BookmarkManager imports/repairs bookmarks.json, so
+# the old dirs must still be reachable (read-write) for that one pass. No mkdir:
+# whitelisting a missing path is a no-op, and we must not create stock dirs.
+# While these lines exist the jail still exposes the stock browser's profile.
 whitelist ${HOME}/.local/share/org.sailfishos/browser
-mkdir     ${HOME}/.cache/org.sailfishos/browser
 whitelist ${HOME}/.cache/org.sailfishos/browser
-mkdir     ${HOME}/.config/org.sailfishos/browser
-whitelist ${HOME}/.config/org.sailfishos/browser
 
 # WebKit's default cache tree. The bounded HTTP disk cache
 # (WEBKIT_URL_CACHE_DISK_CAPACITY_MB, webkit-http-cache.patch)

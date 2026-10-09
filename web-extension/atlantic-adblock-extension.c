@@ -45,7 +45,7 @@ extern void atlantic_adblock_free_match_result(MatchResult result);
 /* Relative to g_get_user_cache_dir(); where the browser's AdBlockListUpdater
  * downloads refreshed lists. Loaded instead of the shipped copy when its
  * engine.version stamp is higher (same rule as the UI process). */
-#define ATL_UPDATED_SUBDIR "org.sailfishos/browser/adblock"
+#define ATL_UPDATED_SUBDIR "org.atlantic/atlanticbrowser/adblock"
 #define ATL_TOGGLE_MESSAGE "atlantic-adblock-set-enabled"
 #define ATL_ALLOWLIST_MESSAGE "atlantic-adblock-set-allowlist"
 

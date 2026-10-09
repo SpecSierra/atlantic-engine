@@ -49,11 +49,11 @@ blacklist /usr/sbin
 blacklist /usr/local/sbin
 
 # ── Browser data directories ────────────────────────────────────────────────
-mkdir ${HOME}/.local/share/org.sailfishos/browser
-mkdir ${HOME}/.cache/org.sailfishos/browser
+mkdir ${HOME}/.local/share/org.atlantic/atlanticbrowser
+mkdir ${HOME}/.cache/org.atlantic/atlanticbrowser
 mkdir ${HOME}/.config/atlantic-browser
-whitelist ${HOME}/.local/share/org.sailfishos/browser
-whitelist ${HOME}/.cache/org.sailfishos/browser
+whitelist ${HOME}/.local/share/org.atlantic/atlanticbrowser
+whitelist ${HOME}/.cache/org.atlantic/atlanticbrowser
 whitelist ${HOME}/.config/atlantic-browser
 whitelist ${HOME}/Downloads
 
