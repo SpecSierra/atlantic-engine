@@ -77,6 +77,7 @@ tile via an element's document position: `layer_y = css_y × 2.5`; tiles are 102
 | Page overlays (`mw-mf-page-center__mask`, `main-menu-mask`) | computed style | opacity 0 **and** visibility hidden; would be 80% black anyway, not pure black |
 | `buffer->canvas()` returning null (skips the paint silently) | `NO-CANVAS` log | never |
 | Damage-limited fragment path | needs an identity transform; would draw one union rect | doesn't match the picture |
+| One readback per burst of whole-tile replays is enough (cheaper than one per tile) | `WEBKIT_TILE_GPU_READBACK_SYNC=2`, build 752 (engine `337c38e`, reverted): only the replay that empties the queue reads back | **12/12 black** (per-tile readback 0/6 on the same build, readback off 3/3 on 751). Each tile needs its own readback |
 
 Earlier (build 716 sweep): seen in every GPU mode incl. gpu-sync, with the scroll ladder
 on or off; pool cap / pool off / upload budget off don't cure it.
