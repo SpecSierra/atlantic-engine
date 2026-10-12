@@ -135,6 +135,8 @@ readonly WEBKIT_SOURCE_PATCHES=(
     "patches/webkit/webkit-tile-gpu-readback-sync-env.patch"
     # AFTER every WebKitWebSourceGStreamer.cpp patch (soup-referer).
     "patches/webkit/webkit-gst-ts-continuity-fix.patch"
+    # AFTER ts-continuity-fix (WebKitWebSourceGStreamer.cpp).
+    "patches/webkit/webkit-gst-range-ignored-skip.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

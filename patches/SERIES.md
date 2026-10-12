@@ -10,9 +10,9 @@ Each patch carries its own rationale as a header comment at the top of the patch
 
 | | Count |
 |---|---|
-| Patches | 51 |
+| Patches | 52 |
 | …portability / build fixes | 4 |
-| …behaviour | 47 |
+| …behaviour | 48 |
 | Distinct source files touched | 1297 |
 | Env flags introduced | 103 |
 
@@ -28,6 +28,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp` | 4 |
 | `Source/WebCore/page/scrolling/ScrollingTree.cpp` | 3 |
 | `Source/WebCore/page/scrolling/ScrollingTree.h` | 3 |
+| `Source/WebCore/platform/graphics/gstreamer/WebKitWebSourceGStreamer.cpp` | 3 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp` | 3 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp` | 3 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h` | 3 |
@@ -35,7 +36,6 @@ Files edited by more than one patch — every one is an ordering constraint.
 | `Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp` | 3 |
 | `Source/WebCore/page/EventHandler.cpp` | 2 |
 | `Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp` | 2 |
-| `Source/WebCore/platform/graphics/gstreamer/WebKitWebSourceGStreamer.cpp` | 2 |
 | `Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h` | 2 |
 | `Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h` | 2 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h` | 2 |
@@ -94,6 +94,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | 45 | `webkit-tile-op-log-env.patch` | 1 | `WEBKIT_SKIA_ENABLE_CPU_RENDERING`<br>`WEBKIT_TILE_ALLOC_SYNC`<br>`WEBKIT_TILE_RESET_LOG` | WEBKIT_TILE_RESET_LOG=4 (diagnostic, default OFF): print every op of each whole-tile recording just before it is replayed, and keep the level-3 pixel readback to level 3 only (the readback hides the b… |
 | 46 | `webkit-tile-gpu-readback-sync-env.patch` | 1 | `WEBKIT_TILE_ALLOC_SYNC`<br>`WEBKIT_TILE_GPU_READBACK_SYNC` | WEBKIT_TILE_GPU_READBACK_SYNC=1 (default OFF): read one pixel back from each whole-tile GPU replay right after playback. |
 | 47 | `webkit-gst-ts-continuity-fix.patch` | 1 | `WEBKIT_GST_TS_CC_FIX` | WEBKIT_GST_TS_CC_FIX (default ON, =0 disables): keep MPEG-TS continuity counters continuous across HLS fragments in WebKitWebSrc. |
+| 48 | `webkit-gst-range-ignored-skip.patch` | 1 | — | <video> fails on servers that ignore Range requests. |
 
 ## Portability / build fixes
 

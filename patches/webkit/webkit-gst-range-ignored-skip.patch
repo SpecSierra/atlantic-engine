@@ -1,0 +1,79 @@
+# <video> fails on servers that ignore Range requests.
+#
+# A server may answer a Range request with 200 and the whole resource (RFC 9110
+# allows it). WebKitWebSrc treated that as fatal: "Received unexpected 200 HTTP
+# status code for range request", MediaError code 4. Any MP4 with its moov atom
+# at the end needs a seek to the end before it can play, so such files never
+# start (samplelib.com/sample-mp4.html, nginx without range support; seen on the
+# Jolla Phone 2, build 749, but device-independent).
+#
+# On a 200 to a range request, drop the leading bytes up to the requested position
+# and carry on. The resource stays seekable, at the price of re-downloading from
+# the start on every seek or loader restart.
+#
+# ---
+diff --git a/Source/WebCore/platform/graphics/gstreamer/WebKitWebSourceGStreamer.cpp b/Source/WebCore/platform/graphics/gstreamer/WebKitWebSourceGStreamer.cpp
+--- a/Source/WebCore/platform/graphics/gstreamer/WebKitWebSourceGStreamer.cpp
++++ b/Source/WebCore/platform/graphics/gstreamer/WebKitWebSourceGStreamer.cpp
+@@ -102,6 +102,7 @@
+         WallTime downloadStartTime { WallTime::nan() };
+         uint64_t totalDownloadedBytes { 0 };
+         bool doesHaveEOS { false }; // Set both when we reach stopPosition and on errors (including on responseReceived).
++        uint64_t bytesToSkip { 0 }; // Leading bytes of a 200 response to a range request, dropped in dataReceived().
+         bool isDownloadSuspended { false }; // Set to true from the network handler when the high water level is reached.
+ 
+         // Obtained by means of GstContext queries before making the first HTTP request, unless it
+@@ -1226,17 +1227,24 @@
+         return;
+     }
+ 
++    members->bytesToSkip = 0;
+     if (members->requestedPosition) {
+         // Seeking ... we expect a 206 == PARTIAL_CONTENT
+-        if (response.httpStatusCode() != httpStatus206PartialContent) {
++        if (response.httpStatusCode() == httpStatus200OK) {
++            // The server ignored the Range header and is sending the whole resource (allowed by
++            // RFC 9110). Drop the bytes in front of the requested position instead of failing:
++            // an MP4 with its moov at the end needs this seek before it can play at all.
++            GST_WARNING_OBJECT(src.get(), "R%u: Server ignored the range request, skipping %" G_GUINT64_FORMAT " bytes", m_requestNumber, members->requestedPosition);
++            members->bytesToSkip = members->requestedPosition;
++        } else if (response.httpStatusCode() != httpStatus206PartialContent) {
+             // Range request completely failed.
+             GST_ELEMENT_ERROR(src.get(), RESOURCE, READ, ("R%u: Received unexpected %d HTTP status code for range request", m_requestNumber, response.httpStatusCode()), (nullptr));
+             members->doesHaveEOS = true;
+             members->responseCondition.notifyOne();
+             completionHandler(ShouldContinuePolicyCheck::No);
+             return;
+-        }
+-        GST_DEBUG_OBJECT(src.get(), "R%u: Range request succeeded", m_requestNumber);
++        } else
++            GST_DEBUG_OBJECT(src.get(), "R%u: Range request succeeded", m_requestNumber);
+     }
+ 
+     members->isSeekable = length > 0 && g_ascii_strcasecmp("none", response.httpHeaderField(HTTPHeaderName::AcceptRanges).utf8().data());
+@@ -1337,7 +1345,16 @@
+         members->downloadStartTime = WallTime::now();
+     }
+ 
+-    int length = data.size();
++    auto dataSpan = data.span();
++    if (members->bytesToSkip) {
++        size_t skipped = std::min<uint64_t>(members->bytesToSkip, dataSpan.size());
++        members->bytesToSkip -= skipped;
++        dataSpan = dataSpan.subspan(skipped);
++        if (dataSpan.empty())
++            return;
++    }
++
++    int length = dataSpan.size();
+     GST_LOG_OBJECT(src.get(), "R%u: Have %d bytes of data", m_requestNumber, length);
+ 
+     members->readPosition += length;
+@@ -1347,7 +1364,6 @@
+         gst_structure_new("webkit-network-statistics", "read-position", G_TYPE_UINT64, members->readPosition, "size", G_TYPE_UINT64, members->size.value_or(0), nullptr)));
+ 
+     checkUpdateBlocksize(length);
+-    auto dataSpan = data.span();
+     GstBuffer* buffer = gstBufferNewWrappedFast(fastMemDup(dataSpan.data(), dataSpan.size()), length);
+     gst_adapter_push(members->adapter.get(), buffer);
+ 
