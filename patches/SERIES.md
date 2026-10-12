@@ -10,11 +10,11 @@ Each patch carries its own rationale as a header comment at the top of the patch
 
 | | Count |
 |---|---|
-| Patches | 53 |
+| Patches | 54 |
 | …portability / build fixes | 4 |
-| …behaviour | 49 |
+| …behaviour | 50 |
 | Distinct source files touched | 1297 |
-| Env flags introduced | 104 |
+| Env flags introduced | 105 |
 
 ## Hot files
 
@@ -22,7 +22,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 
 | Source file | Patches |
 |---|---|
-| `Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp` | 6 |
+| `Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp` | 7 |
 | `Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp` | 5 |
 | `Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp` | 5 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp` | 4 |
@@ -97,6 +97,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | 47 | `webkit-gst-ts-continuity-fix.patch` | 1 | `WEBKIT_GST_TS_CC_FIX` | WEBKIT_GST_TS_CC_FIX (default ON, =0 disables): keep MPEG-TS continuity counters continuous across HLS fragments in WebKitWebSrc. |
 | 48 | `webkit-gst-range-ignored-skip.patch` | 1 | — | <video> fails on servers that ignore Range requests. |
 | 49 | `webkit-touch-no-hover-env.patch` | 1 | `WEBKIT_TOUCH_NO_HOVER` | Touch devices: a touchstart must not set :hover. |
+| 50 | `webkit-tile-gl-state-log-env.patch` | 1 | `WEBKIT_TILE_ALLOC_SYNC`<br>`WEBKIT_TILE_GPU_EXPERIMENT`<br>`WEBKIT_TILE_GPU_READBACK_SYNC`<br>`WEBKIT_TILE_RESET_LOG` | Black tiles on the Jolla Phone 2: GL-state log and three experiments (diagnostic, everything default OFF). |
 
 ## Portability / build fixes
 
