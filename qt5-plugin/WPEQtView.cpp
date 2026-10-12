@@ -93,6 +93,11 @@ void WPEQtView::setWebContentSurfaceVisible(bool visible)
         m_subsurface->setVisible(visible);
 }
 
+bool WPEQtView::sceneGraphComposited() const
+{
+    return !(m_subsurface && m_subsurface->isValid());
+}
+
 void* WPEQtView::webContentSurface() const
 {
     return m_subsurface ? m_subsurface->webContentSurface() : nullptr;

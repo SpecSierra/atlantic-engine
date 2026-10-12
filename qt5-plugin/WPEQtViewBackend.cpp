@@ -431,6 +431,8 @@ void WPEQtViewBackend::didRenderFrame()
 void WPEQtViewBackend::displayImage(struct wpe_fdo_egl_exported_image* image)
 {
     ATL_FTRACE("recv");
+    if (m_view)
+        m_view->noteFrameArrived();
     // Direct-composite path: render straight into the wl_subsurface and run the
     // frame-complete handshake here, decoupled from Qt's render loop. This
     // bypasses the QSG texture-node re-composite of the web content and avoids

@@ -23,6 +23,7 @@
 #include <QQmlEngine>
 #include <QQuickItem>
 #include <QUrl>
+#include <atomic>
 #include <memory>
 #include <wpe/webkit.h>
 
@@ -130,6 +131,15 @@ public:
     // subsurface is active. See WPEWaylandSubsurface::webContentSurface.
     void* webContentSurface() const;
 
+    // Counts the frames the page has handed over. An embedder compares two
+    // readings to learn whether the picture changed, without a per-frame signal.
+    quint32 frameSerial() const { return m_frameSerial.load(std::memory_order_relaxed); }
+    void noteFrameArrived() { m_frameSerial.fetch_add(1, std::memory_order_relaxed); }
+    // True when the page is drawn by this item's scene-graph node, so
+    // QQuickItem::grabToImage() captures it. False on the direct-composite
+    // subsurface path, where the item contributes nothing to the scene.
+    bool sceneGraphComposited() const;
+
 public Q_SLOTS:
     // Direct-composite only: show/hide the web content surface. The chrome cannot
     // be stacked above the web surface on lipstick, so the UI hides the web surface
@@ -208,6 +218,7 @@ private:
     // once the web subsurface exists. M1 validation hook (defers to createChromeOverlayNow).
     void maybeCreateChromeOverlay();
     bool m_webKitVisible { true };
+    std::atomic<quint32> m_frameSerial { 0 };
     bool m_privateBrowsing { false };
     bool m_errorOccured { false };
     qreal m_pendingDeviceScaleFactor { 1.0 };
