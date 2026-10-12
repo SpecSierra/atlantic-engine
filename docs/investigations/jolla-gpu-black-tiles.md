@@ -2,12 +2,62 @@
 
 **Date:** 2026-09-25 → 2026-09-27 · **Device:** Jolla Phone 2 (MT6858, Mali-G610 MC2,
 dpr 2.5, 1032 px wide), engine 2.54.0, builds 716–722
-**Status:** **root cause OPEN.** Mitigation `WEBKIT_TILE_GPU_READBACK_SYNC=1` (722)
-prevents it (0/12 vs 7/18) and keeps most of the GPU win (heavy +15.5% fps vs CPU).
-**Now the J2 default** (browser `gpu-mali` mode, 2026-09-27): compositor-thread GPU
-paint + readback + low-res off, picked at runtime from the GL renderer (Mali); the
-Adreno is pinned to CPU paint. Escape hatches: `WEBKIT_SKIA_ENABLE_CPU_RENDERING=1` or
-`ATLANTIC_GPU_CONSERVATIVE=1` (CPU paint), `ATLANTIC_GPU_KEEP_LOWRES=1`.
+**Status:** **root-caused 2026-10-12 (builds 752-756).** The paint is never lost: a tile
+painted in the painting GL context is not yet visible to the compositor's context when
+that first samples it, so the composite is black, and at rest nothing composites again.
+Only a read of the tile's framebuffer makes it visible in time, and the read does not
+have to block. Fix: `WEBKIT_TILE_GPU_READBACK_ASYNC=1` (one pixel into a pixel-pack
+buffer after each GPU tile paint), set by the browser's `gpu-mali` mode in place of the
+synchronous `WEBKIT_TILE_GPU_READBACK_SYNC=1`. See *Root cause* below. Why the Mali
+driver behaves this way is not known; the fix does not depend on it.
+Escape hatches: `WEBKIT_SKIA_ENABLE_CPU_RENDERING=1` or `ATLANTIC_GPU_CONSERVATIVE=1`
+(CPU paint), `ATLANTIC_GPU_KEEP_LOWRES=1`, `WEBKIT_TILE_GPU_READBACK_SYNC=1` (old path).
+
+## Root cause (2026-10-12)
+
+With the readback off the repro is close to 100% on builds 751-756 (cold Commons
+launch, four flicks, margins scored for black; 19 of 22 control runs).
+
+**The paint is not lost.** Reproduce a black band, then make the compositor draw again
+without repainting any tile: a short touch scroll, or a small `position: fixed`
+animated element added from the inspector. The band heals, and the level-2 log shows
+no `[tilepaint]` for the affected tiles. So the tile texture holds the right content;
+the frame that first used it sampled it too early and came out black, and at rest no
+further frame is produced. Later partial updates only redraw their own rect, which is
+why they showed "on top of the black".
+
+**What makes the content visible in time** (readback off, black runs):
+
+| Change, in the painting context unless noted | Black |
+|---|---|
+| nothing | 19/22 |
+| `glFlush` after the tile's flush | 6/6 |
+| `glFinish` after the tile's flush | 6/6 |
+| blocking wait on the tile's fence | 6/6 |
+| compositor: client wait on the fence instead of the server wait | 6/6 |
+| keep the tile's Skia surface (its framebuffer) alive 8 more tiles | 5/6 |
+| compositor: 1, 2, 3 follow-up composites (ran at +10, +24, +35 ms) | 5/6, 6/6, 6/6 |
+| one Skia readback per burst of tiles instead of per tile | 12/12 |
+| `GrDirectContext::resetContext()` before playback | 6/6 |
+| fresh texture per tile + `glFinish` after allocating it | 5/5 |
+| raw `glReadPixels` of one pixel of the tile framebuffer | **0/6** |
+| the same read into a pixel-pack buffer (returns at once) | **0/14** |
+
+So the GPU being finished is not what counts (fence waits and `glFinish` fail), nor a
+second look by the compositor (follow-up composites fail). A read of the tile's own
+framebuffer is, one per tile, and it may be asynchronous. The lost-paint theories
+(allocation race, early framebuffer deletion, stale Skia state, MSAA) are all dead. The
+`[tilegl]` log of build 753 showed no GL error on black tiles, and that they are
+recycled textures as often as fresh ones.
+
+**Cost.** gdb put the synchronous readback at 11 of 29 busy compositor-thread samples
+during a scroll with repaints. imageboards.net, reload then six flicks, touch hover
+restored (worst case), stalled time per run: synchronous 1.4-2.4 s (8 runs),
+asynchronous 0.5-1.7 s (8 runs), no readback 0.6-1.1 s (4 runs, black tiles).
+
+Instruments that did not work: gdb cannot call GL functions on this device (the
+inferior call aborts inside libhybris), and a scripted `scrollBy` is not a clean
+"redraw only" trigger because it repaints the whole layer.
 
 ## Why it matters
 

@@ -848,7 +848,7 @@ atlantic_export_browser_env() {
     # from a GPU capability probe in main.cpp (configureGpuModeFromCapabilities):
     # CPU painting on conservative stacks — e.g. the libhybris Adreno 610 —,
     # "gpu-mali" on Mali (Jolla Phone 2: compositor-thread GPU painting with
-    # WEBKIT_TILE_GPU_READBACK_SYNC=1 and low-res tiles off, overriding the
+    # WEBKIT_TILE_GPU_READBACK_ASYNC=1 and low-res tiles off, overriding the
     # WEBKIT_LOWRES_TILE_SCALE default below; see
     # docs/investigations/jolla-gpu-black-tiles.md), and multi-threaded GPU
     # painting on other surfaceless-capable stacks (desktop).

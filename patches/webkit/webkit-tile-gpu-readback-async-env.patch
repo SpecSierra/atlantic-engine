@@ -1,0 +1,103 @@
+# Black tiles on the Jolla Phone 2: make a GPU-painted tile visible to the
+# compositor with an asynchronous one-pixel read instead of a synchronous one.
+#
+# Root-caused on builds 752-756 (2026-10-12): the paint is never lost. A tile
+# painted in the painting GL context is not yet visible to the compositor's
+# context when that samples it a few ms later, so the composite is black, and at
+# rest nothing composites again. A black band heals with no tile repainted as
+# soon as something redraws a while later (a short touch scroll, a small
+# animated element). With the readback off, black runs out of N on the Commons
+# protocol:
+#   nothing                         3/3, 4/4, 3/3, 3/3, 1/3, 2/3 (builds 751-756)
+#   glFlush / glFinish after flush  6/6, 6/6
+#   blocking wait on the tile fence 6/6 (painting side), 6/6 (compositor side)
+#   surface kept alive 8 more tiles 5/6
+#   1..3 follow-up composites       5/6, 6/6, 6/6 (they ran, +10/+24/+35 ms)
+#   one readback per burst          12/12
+#   raw glReadPixels, synchronous   0/6
+#   glReadPixels into a pack buffer 0/14
+# So what counts is a read of the tile's framebuffer, not the GPU being done,
+# and the read need not block.
+#
+# WEBKIT_TILE_GPU_READBACK_ASYNC=1 (default OFF; the browser sets it in gpu-mali
+# mode) does that read after every GPU tile paint. It replaces
+# WEBKIT_TILE_GPU_READBACK_SYNC=1, which gdb put at 38% of the compositor
+# thread's busy samples during a scroll with repaints. imageboards.net, reload
+# and six flicks with touch hover restored, stalled time per run: sync 1.4-2.4 s
+# (8 runs), async 0.5-1.7 s (8 runs), no readback 0.6-1.1 s (4 runs).
+#
+# ---
+diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp
+@@ -30,6 +30,7 @@
+ #include "CoordinatedTileBuffer.h"
+ 
+ #include <cstdlib>
++#include <cstring>
+ 
+ #if USE(COORDINATED_GRAPHICS)
+ 
+@@ -225,6 +226,53 @@
+     return m_recorder->getCanvas();
+ }
+ 
++// WEBKIT_TILE_GPU_READBACK_ASYNC=1 (default OFF): after a GPU tile paint is
++// flushed, read one pixel of the tile's framebuffer into a pixel-pack buffer.
++//
++// On the Jolla Phone 2 (Mali-G610, libhybris) a tile painted in this context is
++// not yet visible to the compositor's context when that samples it a few ms
++// later: the composite comes out black, and at rest nothing composites again
++// ("black tiles"). The paint is not lost; any later redraw shows it. What makes
++// the content visible in time is a read of the tile's framebuffer. Waiting for
++// the GPU does not: glFlush, glFinish and a blocking wait on the tile's fence
++// all leave it black, and so does compositing again right away. The read does
++// not have to be synchronous, so it goes to a pixel-pack buffer and returns at
++// once, where WEBKIT_TILE_GPU_READBACK_SYNC makes the CPU wait for the pixel.
++// See docs/investigations/jolla-gpu-black-tiles.md in atlantic-engine.
++static bool tileGpuReadbackAsync()
++{
++    static const bool enabled = [] {
++        const char* env = getenv("WEBKIT_TILE_GPU_READBACK_ASYNC");
++        return env && *env && *env != '0';
++    }();
++    return enabled;
++}
++
++static void readTileFramebufferAsync(GrDirectContext& grContext)
++{
++    // One buffer per painting thread, i.e. per Skia GL context. Needs GLES 3.
++    static thread_local GLuint packBuffer = 0;
++    static thread_local bool unsupported = false;
++    if (unsupported)
++        return;
++    if (!packBuffer) {
++        auto* version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
++        if (!version || !strstr(version, "OpenGL ES 3")) {
++            unsupported = true;
++            return;
++        }
++        glGenBuffers(1, &packBuffer);
++        glBindBuffer(GL_PIXEL_PACK_BUFFER, packBuffer);
++        glBufferData(GL_PIXEL_PACK_BUFFER, 4, nullptr, GL_STREAM_READ);
++    } else
++        glBindBuffer(GL_PIXEL_PACK_BUFFER, packBuffer);
++    // Skia leaves the tile's framebuffer bound after flushing its surface.
++    glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
++    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
++    // The pack-buffer binding changed behind Skia's back.
++    grContext.resetContext(kMisc_GrGLBackendState);
++}
++
+ void CoordinatedAcceleratedTileBuffer::completePainting()
+ {
+     if (m_surface) {
+@@ -236,6 +284,8 @@
+         }
+ 
+         m_fence = SkiaUtilities::flushAndSubmitSurfaceWithFence(grContext, m_surface.get());
++        if (tileGpuReadbackAsync())
++            readTileFramebufferAsync(*grContext);
+     } else if (m_recorder)
+         m_displayList = m_recorder->detach();
+ 
