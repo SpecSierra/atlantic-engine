@@ -137,6 +137,8 @@ readonly WEBKIT_SOURCE_PATCHES=(
     "patches/webkit/webkit-gst-ts-continuity-fix.patch"
     # AFTER ts-continuity-fix (WebKitWebSourceGStreamer.cpp).
     "patches/webkit/webkit-gst-range-ignored-skip.patch"
+    # AFTER load-responsiveness (Document.cpp).
+    "patches/webkit/webkit-touch-no-hover-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

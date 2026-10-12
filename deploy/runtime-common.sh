@@ -571,6 +571,13 @@ atlantic_export_browser_env() {
     # dispatch fake mouse-moves (real mouse events unaffected). 0 = stock.
     export WEBKIT_NO_FAKE_MOUSE_MOVE="${WEBKIT_NO_FAKE_MOUSE_MOVE:-1}"
 
+    # Honoured by webkit-touch-no-hover-env.patch. Stock WebKit sets :hover on
+    # whatever a touchstart lands on and clears it at touchend, so each flick
+    # runs the page's :hover transitions under the finger (60-90 ms frames on
+    # imageboards.net cards). 1 = touch never changes :hover; a tap still
+    # hovers through its synthetic mouse move. 0 = stock.
+    export WEBKIT_TOUCH_NO_HOVER="${WEBKIT_TOUCH_NO_HOVER:-1}"
+
     # Honoured by webkit-independent-scroll.patch. Never fall back to
     # main-thread scrolling because of slow-repaint content (non-composited
     # fixed/sticky elements, background-attachment:fixed). Without it, such pages

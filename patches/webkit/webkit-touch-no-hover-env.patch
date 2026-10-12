@@ -1,0 +1,73 @@
+# Touch devices: a touchstart must not set :hover.
+#
+# Upstream sets :hover on whatever a touchstart lands on and clears it at
+# touchend, so every flick runs the page's :hover styles and their transitions on
+# the element under the finger, once in and once out. On imageboards.net
+# (.board-card:hover = transform + 24px box-shadow, 0.12s transition) each
+# transition frame cost 60-90 ms on the Jolla Phone 2: 21-24 main-thread frame
+# gaps over 30 ms in six flicks after a reload, against 9 with the :hover rule
+# neutralised from the inspector (build 749).
+#
+# Phone browsers only hover from a tap. WPE already does that part: the synthetic
+# click of a tap sends a mouse move first, so tap-to-open :hover menus keep
+# working. WEBKIT_TOUCH_NO_HOVER=1 (default 1 in runtime-common.sh, 0 = stock)
+# makes touch events leave :hover alone; :active is unaffected.
+#
+# ---
+diff --git a/Source/WebCore/dom/Document.cpp b/Source/WebCore/dom/Document.cpp
+--- a/Source/WebCore/dom/Document.cpp
++++ b/Source/WebCore/dom/Document.cpp
+@@ -384,6 +384,7 @@
+ #include <algorithm>
+ #include <ctime>
+ #include <ranges>
++#include <cstdlib>
+ #include <wtf/ASCIICType.h>
+ #include <wtf/Assertions.h>
+ #include <wtf/Borrow.h>
+@@ -9878,6 +9879,21 @@
+     return nullptr;
+ }
+ 
++// A finger is not a pointer that hovers. Upstream sets :hover on whatever a
++// touchstart lands on and clears it at touchend, so every flick runs the page's
++// :hover styles (and their transitions) on the element under the finger, twice.
++// Phone browsers only hover from a tap, and WPE already does that part: its
++// synthetic click sends a mouse move first. WEBKIT_TOUCH_NO_HOVER=1 makes touch
++// events leave :hover alone (:active is unaffected).
++static bool touchEventsLeaveHoverAlone()
++{
++    static bool enabled = [] {
++        const char* env = getenv("WEBKIT_TOUCH_NO_HOVER");
++        return env && *env && *env != '0';
++    }();
++    return enabled;
++}
++
+ void Document::updateHoverActiveState(const HitTestRequest& request, Element* innerElement, CaptureChange captureElementChanged)
+ {
+     ASSERT(!request.readOnly());
+@@ -9942,11 +9958,12 @@
+     while (newHoveredElement && !newHoveredElement->renderer())
+         newHoveredElement = newHoveredElement->parentElementInComposedTree();
+ 
+-    m_hoveredElement = newHoveredElement;
++    bool keepHover = request.touchEvent() && touchEventsLeaveHoverAlone();
++    m_hoveredElement = keepHover ? oldHoveredElement : newHoveredElement;
+ 
+     RefPtr commonAncestor = findNearestCommonComposedAncestorForHover(oldHoveredElement.get(), newHoveredElement.get());
+ 
+-    if (oldHoveredElement != newHoveredElement) {
++    if (!keepHover && oldHoveredElement != newHoveredElement) {
+         for (CheckedPtr element = oldHoveredElement.get(); element; element = element->parentElementInComposedTree()) {
+             if (element.get() == commonAncestor.get())
+                 break;
+@@ -9975,7 +9992,7 @@
+             elementsToSetActive.append(*element);
+         if (element == commonAncestor)
+             sawCommonAncestor = true;
+-        if (!sawCommonAncestor)
++        if (!sawCommonAncestor && !keepHover)
+             elementsToSetHover.append(*element);
+         if (atTopLayerBoundary)
+             break;

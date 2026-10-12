@@ -10,11 +10,11 @@ Each patch carries its own rationale as a header comment at the top of the patch
 
 | | Count |
 |---|---|
-| Patches | 52 |
+| Patches | 53 |
 | …portability / build fixes | 4 |
-| …behaviour | 48 |
+| …behaviour | 49 |
 | Distinct source files touched | 1297 |
-| Env flags introduced | 103 |
+| Env flags introduced | 104 |
 
 ## Hot files
 
@@ -34,6 +34,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h` | 3 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp` | 3 |
 | `Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp` | 3 |
+| `Source/WebCore/dom/Document.cpp` | 2 |
 | `Source/WebCore/page/EventHandler.cpp` | 2 |
 | `Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp` | 2 |
 | `Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h` | 2 |
@@ -95,6 +96,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | 46 | `webkit-tile-gpu-readback-sync-env.patch` | 1 | `WEBKIT_TILE_ALLOC_SYNC`<br>`WEBKIT_TILE_GPU_READBACK_SYNC` | WEBKIT_TILE_GPU_READBACK_SYNC=1 (default OFF): read one pixel back from each whole-tile GPU replay right after playback. |
 | 47 | `webkit-gst-ts-continuity-fix.patch` | 1 | `WEBKIT_GST_TS_CC_FIX` | WEBKIT_GST_TS_CC_FIX (default ON, =0 disables): keep MPEG-TS continuity counters continuous across HLS fragments in WebKitWebSrc. |
 | 48 | `webkit-gst-range-ignored-skip.patch` | 1 | — | <video> fails on servers that ignore Range requests. |
+| 49 | `webkit-touch-no-hover-env.patch` | 1 | `WEBKIT_TOUCH_NO_HOVER` | Touch devices: a touchstart must not set :hover. |
 
 ## Portability / build fixes
 
