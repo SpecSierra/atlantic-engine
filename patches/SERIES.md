@@ -10,9 +10,9 @@ Each patch carries its own rationale as a header comment at the top of the patch
 
 | | Count |
 |---|---|
-| Patches | 56 |
+| Patches | 57 |
 | …portability / build fixes | 4 |
-| …behaviour | 52 |
+| …behaviour | 53 |
 | Distinct source files touched | 1297 |
 | Env flags introduced | 106 |
 
@@ -28,11 +28,11 @@ Files edited by more than one patch — every one is an ordering constraint.
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp` | 4 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp` | 4 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h` | 4 |
+| `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp` | 4 |
 | `Source/WebCore/page/scrolling/ScrollingTree.cpp` | 3 |
 | `Source/WebCore/page/scrolling/ScrollingTree.h` | 3 |
 | `Source/WebCore/platform/graphics/gstreamer/WebKitWebSourceGStreamer.cpp` | 3 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp` | 3 |
-| `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp` | 3 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp` | 3 |
 | `Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp` | 3 |
 | `Source/WebCore/dom/Document.cpp` | 2 |
@@ -100,6 +100,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | 50 | `webkit-tile-gl-state-log-env.patch` | 1 | `WEBKIT_TILE_ALLOC_SYNC`<br>`WEBKIT_TILE_GPU_EXPERIMENT`<br>`WEBKIT_TILE_GPU_READBACK_SYNC`<br>`WEBKIT_TILE_RESET_LOG` | Black tiles on the Jolla Phone 2: GL-state log and three experiments (diagnostic, everything default OFF). |
 | 51 | `webkit-tile-surface-release-experiment-env.patch` | 1 | `WEBKIT_TILE_GPU_EXPERIMENT`<br>`WEBKIT_TILE_GPU_READBACK_SYNC` | Black tiles on the Jolla Phone 2: experiments between a tile's flush and the release of its Skia surface (diagnostic, default OFF). |
 | 52 | `webkit-tile-gpu-recomposite-env.patch` | 3 | `WEBKIT_TILE_GPU_READBACK_SYNC`<br>`WEBKIT_TILE_GPU_RECOMPOSITE` | Black tiles on the Jolla Phone 2 are a stale first composite, not lost paint. |
+| 53 | `webkit-tile-visibility-experiment-env.patch` | 1 | `WEBKIT_TILE_GPU_EXPERIMENT`<br>`WEBKIT_TILE_GPU_READBACK_SYNC`<br>`WEBKIT_TILE_GPU_RECOMPOSITE` | Black tiles on the Jolla Phone 2: ways to make a painted tile visible to the compositor before its first composite without a synchronous readback (diagnostic, default OFF). |
 
 ## Portability / build fixes
 

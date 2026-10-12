@@ -1,0 +1,72 @@
+# Black tiles on the Jolla Phone 2: ways to make a painted tile visible to the
+# compositor before its first composite without a synchronous readback
+# (diagnostic, default OFF).
+#
+# Build 755: WEBKIT_TILE_GPU_RECOMPOSITE=1/2/3 does NOT cure (5/6, 6/6, 6/6
+# black) although the follow-up composites ran and were presented (frame trace:
+# +10, +24, +35 ms after the adopt). Once the compositor context has sampled a
+# tile too early it keeps seeing the stale content for a while, so recompositing
+# is no fix; the content must be visible before the first composite. Only a read
+# of the tile framebuffer does that so far (raw glReadPixels 0/6).
+#
+# WEBKIT_TILE_GPU_EXPERIMENT, with WEBKIT_TILE_GPU_READBACK_SYNC=0:
+#   8  block on the tile's fence in the painting context
+#   9  glReadPixels of one pixel into a pixel-pack buffer (asynchronous read)
+#  10  compositor side: client-wait on the fence instead of the server wait
+#
+# ---
+diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp
+@@ -237,6 +237,14 @@
+ //   5  raw glReadPixels of one pixel from the tile framebuffer
+ //   6  glFlush
+ //   7  glFinish
++// Build 754: 4 = 5/6 black, 5 = 0/6, 6 = 6/6, 7 = 6/6. Build 755 showed the
++// paint is not lost: the first composite samples the tile too early and keeps
++// seeing stale content for a while (three more composites over 35 ms stay
++// black). So the content has to become visible before the first composite,
++// preferably without the CPU waiting for a pixel:
++//   8  block on the tile's fence here (is "GPU job done" enough?)
++//   9  glReadPixels of one pixel into a pixel-pack buffer (asynchronous read)
++//  10  compositor side: client-wait on the fence instead of the server wait
+ static int tileSurfaceReleaseExperiment()
+ {
+     static const int mode = [] {
+@@ -285,6 +293,24 @@
+         case 7:
+             glFinish();
+             break;
++        case 8:
++            if (m_fence)
++                m_fence->clientWait();
++            break;
++        case 9: {
++            static thread_local GLuint packBuffer = 0;
++            if (!packBuffer) {
++                glGenBuffers(1, &packBuffer);
++                glBindBuffer(GL_PIXEL_PACK_BUFFER, packBuffer);
++                glBufferData(GL_PIXEL_PACK_BUFFER, 4, nullptr, GL_STREAM_READ);
++            } else
++                glBindBuffer(GL_PIXEL_PACK_BUFFER, packBuffer);
++            glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
++            glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
++            // The pack-buffer binding changed behind Skia's back.
++            grContext->resetContext();
++            break;
++        }
+         default:
+             break;
+         }
+@@ -299,7 +325,10 @@
+     if (!m_fence)
+         return;
+ 
+-    m_fence->serverWait();
++    if (tileSurfaceReleaseExperiment() == 10)
++        m_fence->clientWait();
++    else
++        m_fence->serverWait();
+     m_fence = nullptr;
+ }
+ #endif
