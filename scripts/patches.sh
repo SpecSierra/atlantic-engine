@@ -143,6 +143,8 @@ readonly WEBKIT_SOURCE_PATCHES=(
     "patches/webkit/webkit-tile-gl-state-log-env.patch"
     # AFTER every CoordinatedTileBuffer.cpp patch (tile-upload, tile-reset-log).
     "patches/webkit/webkit-tile-surface-release-experiment-env.patch"
+    # AFTER every CoordinatedBackingStoreTile.* and ThreadedCompositor.cpp patch.
+    "patches/webkit/webkit-tile-gpu-recomposite-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

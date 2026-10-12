@@ -10,11 +10,11 @@ Each patch carries its own rationale as a header comment at the top of the patch
 
 | | Count |
 |---|---|
-| Patches | 55 |
+| Patches | 56 |
 | …portability / build fixes | 4 |
-| …behaviour | 51 |
+| …behaviour | 52 |
 | Distinct source files touched | 1297 |
-| Env flags introduced | 105 |
+| Env flags introduced | 106 |
 
 ## Hot files
 
@@ -23,15 +23,15 @@ Files edited by more than one patch — every one is an ordering constraint.
 | Source file | Patches |
 |---|---|
 | `Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp` | 7 |
+| `Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp` | 6 |
 | `Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp` | 5 |
-| `Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp` | 5 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp` | 4 |
+| `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp` | 4 |
+| `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h` | 4 |
 | `Source/WebCore/page/scrolling/ScrollingTree.cpp` | 3 |
 | `Source/WebCore/page/scrolling/ScrollingTree.h` | 3 |
 | `Source/WebCore/platform/graphics/gstreamer/WebKitWebSourceGStreamer.cpp` | 3 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp` | 3 |
-| `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp` | 3 |
-| `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h` | 3 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp` | 3 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp` | 3 |
 | `Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp` | 3 |
@@ -99,6 +99,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | 49 | `webkit-touch-no-hover-env.patch` | 1 | `WEBKIT_TOUCH_NO_HOVER` | Touch devices: a touchstart must not set :hover. |
 | 50 | `webkit-tile-gl-state-log-env.patch` | 1 | `WEBKIT_TILE_ALLOC_SYNC`<br>`WEBKIT_TILE_GPU_EXPERIMENT`<br>`WEBKIT_TILE_GPU_READBACK_SYNC`<br>`WEBKIT_TILE_RESET_LOG` | Black tiles on the Jolla Phone 2: GL-state log and three experiments (diagnostic, everything default OFF). |
 | 51 | `webkit-tile-surface-release-experiment-env.patch` | 1 | `WEBKIT_TILE_GPU_EXPERIMENT`<br>`WEBKIT_TILE_GPU_READBACK_SYNC` | Black tiles on the Jolla Phone 2: experiments between a tile's flush and the release of its Skia surface (diagnostic, default OFF). |
+| 52 | `webkit-tile-gpu-recomposite-env.patch` | 3 | `WEBKIT_TILE_GPU_READBACK_SYNC`<br>`WEBKIT_TILE_GPU_RECOMPOSITE` | Black tiles on the Jolla Phone 2 are a stale first composite, not lost paint. |
 
 ## Portability / build fixes
 
