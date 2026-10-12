@@ -10,9 +10,9 @@ Each patch carries its own rationale as a header comment at the top of the patch
 
 | | Count |
 |---|---|
-| Patches | 54 |
+| Patches | 55 |
 | …portability / build fixes | 4 |
-| …behaviour | 50 |
+| …behaviour | 51 |
 | Distinct source files touched | 1297 |
 | Env flags introduced | 105 |
 
@@ -32,6 +32,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp` | 3 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp` | 3 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h` | 3 |
+| `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp` | 3 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp` | 3 |
 | `Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp` | 3 |
 | `Source/WebCore/dom/Document.cpp` | 2 |
@@ -41,7 +42,6 @@ Files edited by more than one patch — every one is an ordering constraint.
 | `Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h` | 2 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h` | 2 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp` | 2 |
-| `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp` | 2 |
 | `Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.cpp` | 2 |
 
 ## Behaviour patches
@@ -98,6 +98,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | 48 | `webkit-gst-range-ignored-skip.patch` | 1 | — | <video> fails on servers that ignore Range requests. |
 | 49 | `webkit-touch-no-hover-env.patch` | 1 | `WEBKIT_TOUCH_NO_HOVER` | Touch devices: a touchstart must not set :hover. |
 | 50 | `webkit-tile-gl-state-log-env.patch` | 1 | `WEBKIT_TILE_ALLOC_SYNC`<br>`WEBKIT_TILE_GPU_EXPERIMENT`<br>`WEBKIT_TILE_GPU_READBACK_SYNC`<br>`WEBKIT_TILE_RESET_LOG` | Black tiles on the Jolla Phone 2: GL-state log and three experiments (diagnostic, everything default OFF). |
+| 51 | `webkit-tile-surface-release-experiment-env.patch` | 1 | `WEBKIT_TILE_GPU_EXPERIMENT`<br>`WEBKIT_TILE_GPU_READBACK_SYNC` | Black tiles on the Jolla Phone 2: experiments between a tile's flush and the release of its Skia surface (diagnostic, default OFF). |
 
 ## Portability / build fixes
 

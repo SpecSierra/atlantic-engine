@@ -141,6 +141,8 @@ readonly WEBKIT_SOURCE_PATCHES=(
     "patches/webkit/webkit-touch-no-hover-env.patch"
     # AFTER every SkiaPaintingEngine.cpp patch (tile-gpu-readback-sync, tile-op-log).
     "patches/webkit/webkit-tile-gl-state-log-env.patch"
+    # AFTER every CoordinatedTileBuffer.cpp patch (tile-upload, tile-reset-log).
+    "patches/webkit/webkit-tile-surface-release-experiment-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(
