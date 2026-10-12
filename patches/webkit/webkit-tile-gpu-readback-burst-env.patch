@@ -1,0 +1,105 @@
+# WEBKIT_TILE_GPU_READBACK_SYNC=2 (experimental, not a default): one readback
+# per burst of whole-tile GPU replays instead of one per tile.
+#
+# The per-tile readback (mode 1, webkit-tile-gpu-readback-sync-env.patch) is the
+# black-tile mitigation on the Jolla Phone 2. gdb sampling on build 751 during
+# flicks with repaints put 11 of 29 busy compositor-thread samples inside it
+# (GrGLGpu::readOrTransferPixelsFrom), and turning it off removed about a third
+# of the stalled time on imageboards.net (1.74/1.41/1.14 s -> 1.17/0.57/1.00 s).
+#
+# Replays are queued from the main thread during a layer flush and run later, so
+# a count of queued whole-tile GPU replays tells each replay whether another is
+# waiting behind it; in mode 2 only the one that empties the queue reads back.
+# Mode 1 is unchanged. Whether mode 2 still prevents black tiles is NOT known:
+# run the protocol in docs/investigations/jolla-gpu-black-tiles.md first.
+#
+# ---
+diff --git a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
+--- a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
++++ b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
+@@ -391,15 +391,57 @@
+ // fences off, and flushing the allocating context all failed. Costs one GPU
+ // round trip per whole-tile paint. See
+ // docs/investigations/jolla-gpu-black-tiles.md in atlantic-engine.
+-static bool tileGpuReadbackSync()
++//
++// WEBKIT_TILE_GPU_READBACK_SYNC=2 (experimental): one readback per burst of
++// whole-tile replays instead of one per tile. Replays are queued from the main
++// thread during a layer flush and run later, so a counter of queued whole-tile
++// GPU replays tells a replay whether more are waiting behind it; only the one
++// that empties the queue reads back. gdb on the Jolla Phone 2 (build 751) put
++// 11 of 29 busy compositor-thread samples in this readback while a repaint
++// coincides with a scroll. Whether one readback per burst still prevents the
++// black tiles is NOT known: check with the protocol in
++// docs/investigations/jolla-gpu-black-tiles.md before making it a default.
++static int tileGpuReadbackSyncMode()
+ {
+-    static const bool enabled = [] {
++    static const int mode = [] {
+         const char* env = getenv("WEBKIT_TILE_GPU_READBACK_SYNC");
+-        return env && *env && strcmp(env, "0");
++        return env ? atoi(env) : 0;
+     }();
+-    return enabled;
++    return mode;
+ }
+ 
++static std::atomic<unsigned> s_queuedWholeTileGpuReplays { 0 };
++
++// Held by a queued whole-tile GPU replay. A replay that is dropped without
++// running (run loop torn down) still leaves the count, or mode 2 would never
++// read back again in this process.
++class QueuedWholeTileGpuReplay {
++public:
++    explicit QueuedWholeTileGpuReplay(bool counted)
++        : m_counted(counted)
++    {
++        if (m_counted)
++            s_queuedWholeTileGpuReplays.fetch_add(1);
++    }
++    QueuedWholeTileGpuReplay(QueuedWholeTileGpuReplay&& other)
++        : m_counted(std::exchange(other.m_counted, false))
++    {
++    }
++    QueuedWholeTileGpuReplay(const QueuedWholeTileGpuReplay&) = delete;
++    ~QueuedWholeTileGpuReplay() { leave(); }
++
++    // True when no other whole-tile GPU replay is queued behind this one.
++    bool leave()
++    {
++        if (!std::exchange(m_counted, false))
++            return false;
++        return s_queuedWholeTileGpuReplays.fetch_sub(1) == 1;
++    }
++
++private:
++    bool m_counted;
++};
++
+ // WEBKIT_TILE_ALLOC_SYNC=1 (glFlush) / 2 (glFinish), default OFF.
+ //
+ // createBuffer() runs on the MAIN thread (updateBackingStore -> replay) with the
+@@ -584,7 +626,13 @@
+     auto buffer = createBuffer(renderingMode, bufferSize, recording->contentsOpaque());
+     buffer->beginPainting();
+ 
+-    auto rasterTask = [platformLayer = WTF::move(platformLayer), buffer = Ref { buffer }, tileRect, dirtyRect, bufferSize, lowResScale, recording = WTF::move(recording), threadSafeGrContext = WTF::move(threadSafeGrContext)]() mutable {
++    // See tileGpuReadbackSyncMode(): counted here, on the queueing thread, so a
++    // replay can tell whether another whole-tile GPU replay is queued behind it.
++    const bool countsForReadback = dirtyRect == tileRect && buffer->isBackedByOpenGL() && !useDDLBuffer && tileGpuReadbackSyncMode() > 0;
++    QueuedWholeTileGpuReplay queuedReplay(countsForReadback);
++
++    auto rasterTask = [platformLayer = WTF::move(platformLayer), buffer = Ref { buffer }, tileRect, dirtyRect, bufferSize, lowResScale, countsForReadback, queuedReplay = WTF::move(queuedReplay), recording = WTF::move(recording), threadSafeGrContext = WTF::move(threadSafeGrContext)]() mutable {
++        const bool lastQueuedWholeTile = queuedReplay.leave();
+         // WEBKIT_TILE_RESET_LOG>=2: log every whole-tile replay (a tile under a
+         // black band had exactly one, which came out black); >=3 also reads
+         // back three pixels right after playback. A missing canvas skips the
+@@ -635,7 +683,7 @@
+                 replayCanvas->removeCanvas(canvas);
+             } else
+                 replayPicture(recording->picture(), canvas, recording->recordRect(), tileRect, dirtyRect, isDDLBuffer);
+-            if (dirtyRect == tileRect && buffer->isBackedByOpenGL() && !isDDLBuffer && tileGpuReadbackSync()) {
++            if (countsForReadback && !isDDLBuffer && (tileGpuReadbackSyncMode() == 1 || lastQueuedWholeTile)) {
+                 uint32_t pixel = 0;
+                 canvas->readPixels(SkImageInfo::MakeN32Premul(1, 1), &pixel, 4, 0, 0);
+             }

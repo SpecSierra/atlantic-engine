@@ -139,6 +139,8 @@ readonly WEBKIT_SOURCE_PATCHES=(
     "patches/webkit/webkit-gst-range-ignored-skip.patch"
     # AFTER load-responsiveness (Document.cpp).
     "patches/webkit/webkit-touch-no-hover-env.patch"
+    # AFTER every SkiaPaintingEngine.cpp patch (tile-gpu-readback-sync, tile-op-log).
+    "patches/webkit/webkit-tile-gpu-readback-burst-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(
