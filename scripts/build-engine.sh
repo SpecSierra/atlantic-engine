@@ -18,7 +18,7 @@ if [ ! -f "${WPE_PREFIX}/lib/libwpe-1.0.so" ]; then
     rm -rf build
     CC="ccache gcc" CXX="ccache g++" PKG_CONFIG_PATH="${WPE_PREFIX}/lib/pkgconfig" \
     meson setup build \
-        --native-file "${BUILD_TOOLS}/native-meson.ini" \
+        --native-file "${ATL_NATIVE_MESON_FILE}" \
         --prefix "${WPE_PREFIX}" \
         --libdir lib \
         --buildtype release \
@@ -46,7 +46,7 @@ if [ ! -f "${WPE_PREFIX}/lib/libepoxy.so" ]; then
     rm -rf build
     CC="ccache gcc" CXX="ccache g++" PKG_CONFIG_PATH="${WPE_PREFIX}/lib/pkgconfig" \
     meson setup build \
-        --native-file "${BUILD_TOOLS}/native-meson.ini" \
+        --native-file "${ATL_NATIVE_MESON_FILE}" \
         --prefix "${WPE_PREFIX}" \
         --libdir lib \
         --buildtype release \
@@ -69,7 +69,7 @@ if [ ! -f "${WPE_PREFIX}/lib/libWPEBackend-fdo-1.0.so" ]; then
     rm -rf build
     CC="ccache gcc" CXX="ccache g++" PKG_CONFIG_PATH="${WPE_PREFIX}/lib/pkgconfig" \
     meson setup build \
-        --native-file "${BUILD_TOOLS}/native-meson.ini" \
+        --native-file "${ATL_NATIVE_MESON_FILE}" \
         --prefix "${WPE_PREFIX}" \
         --libdir lib \
         --buildtype release

@@ -85,6 +85,25 @@ Successful `master` builds publish the same rpm-md tree to the `gh-pages` branch
 `https://specsierra.github.io/atlantic-engine/aarch64/`. That is how the phone gets
 updates ([DEVICE.md](DEVICE.md)).
 
+## armv7hl (32-bit) build
+
+Older phones run 32-bit (armv7hl) Sailfish OS. `.github/workflows/build-atlantic-armv7.yml`
+builds the same packages for them, **by hand only** (`workflow_dispatch`), on the same
+runner. `scripts/armv7/ci-build-armv7.sh` makes a 32-bit Ubuntu 24.04 (armhf) chroot once
+(`/opt/github-runner/cache/atlantic-armv7/armhf-noble`) and runs the usual `ci-build.sh`
+in it under `setarch linux32`. The host's cores run 32-bit ARM code natively, so this is
+a native build, not emulation, against Ubuntu's armhf libraries and the armv7hl SDK
+target. Everything that differs per architecture is in `scripts/arch.sh` (`ATL_ARCH`,
+library directory `lib` instead of `lib64`, CPU flags, toolchain files
+`*-armv7hl.cmake` / `native-meson-armv7hl.ini`). The browser takes the library directory
+as `SFOS_LIBDIR` (its `defaults.pri`).
+
+- GCC only: the Clang/ThinLTO toolchain is aarch64-only, and a 32-bit linker has 4 GB.
+- Caches, sysroot and ccache live apart under `/opt/github-runner/cache/atlantic-armv7`.
+- Not published to GitHub Pages (the aarch64 publish is `force_orphan` and would wipe
+  it): the RPMs are the run's artifact, and with `publish_preview` the assets of the
+  rolling `armv7hl-preview` pre-release.
+
 ## Packaging traps
 
 - **qmake `INSTALLS` never runs** in the native RPM path — browser data files must

@@ -11,6 +11,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/scripts/common.sh"
+export ATLANTIC_RUNTIME_LIBDIR="/usr/${ATL_LIBDIR}"
 source "${SCRIPT_DIR}/deploy/runtime-common.sh"
 
 cleanup_target() {
@@ -147,7 +148,7 @@ fpm_rpm() {
         -n "$name" \
         -v "$version" \
         --iteration "${iteration}" \
-        --architecture aarch64 \
+        --architecture "${ATL_RPM_ARCH}" \
         --rpm-summary "$summary" \
         --after-install "$post" \
         --before-remove "$preun" \
@@ -157,10 +158,10 @@ fpm_rpm() {
         --rpm-auto-add-exclude-directories /usr/lib/systemd \
         --rpm-auto-add-exclude-directories /usr/lib/systemd/system \
         --force \
-        --package "${OUT}/${name}-${version}-${iteration}.aarch64.rpm" \
+        --package "${OUT}/${name}-${version}-${iteration}.${ATL_RPM_ARCH}.rpm" \
         "$@" \
         -C "$stage_root" .
-    echo "    -> ${OUT}/${name}-${version}-${iteration}.aarch64.rpm"
+    echo "    -> ${OUT}/${name}-${version}-${iteration}.${ATL_RPM_ARCH}.rpm"
 }
 
 # ===========================================================================
@@ -168,12 +169,12 @@ fpm_rpm() {
 # ===========================================================================
 echo "--- Staging libwpe ---"
 S="${STAGING}/libwpe"; rm -rf "$S"; mkdir -p "$S"
-stage_shared_library_family "${WPE_PREFIX}/lib/libwpe-1.0.so" /usr/lib64 "$S"
+stage_shared_library_family "${WPE_PREFIX}/lib/libwpe-1.0.so" /usr/${ATL_LIBDIR} "$S"
 # devel files (include in same RPM for simplicity)
 stage_cp "${WPE_PREFIX}/include/wpe-1.0"             /usr/include "$S"
-mkdir -p "${S}/usr/lib64/pkgconfig"
-cp -a "${WPE_PREFIX}/lib/pkgconfig/wpe-1.0.pc"      "${S}/usr/lib64/pkgconfig/"
-sed -i "s|${WPE_PREFIX}|/usr|g"                      "${S}/usr/lib64/pkgconfig/wpe-1.0.pc"
+mkdir -p "${S}/usr/${ATL_LIBDIR}/pkgconfig"
+cp -a "${WPE_PREFIX}/lib/pkgconfig/wpe-1.0.pc"      "${S}/usr/${ATL_LIBDIR}/pkgconfig/"
+sed -i "s|${WPE_PREFIX}|/usr|g"                      "${S}/usr/${ATL_LIBDIR}/pkgconfig/wpe-1.0.pc"
 
 fpm_rpm libwpe "$LIBWPE_VERSION" "WPE platform library for Sailfish OS" "$S"
 
@@ -182,12 +183,12 @@ fpm_rpm libwpe "$LIBWPE_VERSION" "WPE platform library for Sailfish OS" "$S"
 # ===========================================================================
 echo "--- Staging libepoxy ---"
 S="${STAGING}/libepoxy"; rm -rf "$S"; mkdir -p "$S"
-stage_shared_library_family "${WPE_PREFIX}/lib/libepoxy.so" /usr/lib64 "$S"
-patch_staged_library_family "${S}/usr/lib64/libepoxy.so"
+stage_shared_library_family "${WPE_PREFIX}/lib/libepoxy.so" /usr/${ATL_LIBDIR} "$S"
+patch_staged_library_family "${S}/usr/${ATL_LIBDIR}/libepoxy.so"
 stage_cp "${WPE_PREFIX}/include/epoxy"               /usr/include "$S"
-mkdir -p "${S}/usr/lib64/pkgconfig"
-cp -a "${WPE_PREFIX}/lib/pkgconfig/epoxy.pc"         "${S}/usr/lib64/pkgconfig/"
-sed -i "s|${WPE_PREFIX}|/usr|g"                      "${S}/usr/lib64/pkgconfig/epoxy.pc"
+mkdir -p "${S}/usr/${ATL_LIBDIR}/pkgconfig"
+cp -a "${WPE_PREFIX}/lib/pkgconfig/epoxy.pc"         "${S}/usr/${ATL_LIBDIR}/pkgconfig/"
+sed -i "s|${WPE_PREFIX}|/usr|g"                      "${S}/usr/${ATL_LIBDIR}/pkgconfig/epoxy.pc"
 
 fpm_rpm libepoxy "$LIBEPOXY_VERSION" "OpenGL function pointer management for Sailfish OS" "$S"
 
@@ -196,12 +197,12 @@ fpm_rpm libepoxy "$LIBEPOXY_VERSION" "OpenGL function pointer management for Sai
 # ===========================================================================
 echo "--- Staging wpebackend-fdo ---"
 S="${STAGING}/wpebackend-fdo"; rm -rf "$S"; mkdir -p "$S"
-stage_shared_library_family "${WPE_PREFIX}/lib/libWPEBackend-fdo-1.0.so" /usr/lib64 "$S"
-patch_staged_library_family "${S}/usr/lib64/libWPEBackend-fdo-1.0.so"
+stage_shared_library_family "${WPE_PREFIX}/lib/libWPEBackend-fdo-1.0.so" /usr/${ATL_LIBDIR} "$S"
+patch_staged_library_family "${S}/usr/${ATL_LIBDIR}/libWPEBackend-fdo-1.0.so"
 stage_cp "${WPE_PREFIX}/include/wpe-fdo-1.0"              /usr/include "$S"
-mkdir -p "${S}/usr/lib64/pkgconfig"
-cp -a "${WPE_PREFIX}/lib/pkgconfig/wpebackend-fdo-1.0.pc"    "${S}/usr/lib64/pkgconfig/"
-sed -i "s|${WPE_PREFIX}|/usr|g" "${S}/usr/lib64/pkgconfig/wpebackend-fdo-1.0.pc"
+mkdir -p "${S}/usr/${ATL_LIBDIR}/pkgconfig"
+cp -a "${WPE_PREFIX}/lib/pkgconfig/wpebackend-fdo-1.0.pc"    "${S}/usr/${ATL_LIBDIR}/pkgconfig/"
+sed -i "s|${WPE_PREFIX}|/usr|g" "${S}/usr/${ATL_LIBDIR}/pkgconfig/wpebackend-fdo-1.0.pc"
 
 fpm_rpm wpebackend-fdo "$WPEBACKEND_FDO_VERSION" "WPE backend (freedesktop.org/Wayland) for Sailfish OS" "$S" \
     --depends libwpe --depends libepoxy
@@ -239,23 +240,23 @@ echo "--- Staging wpewebkit2 ---"
 S="${STAGING}/wpewebkit2"; rm -rf "$S"; mkdir -p "$S"
 
 # Main library — patch the staged copy rather than mutating the source prefix.
-stage_shared_library_family "${WPE_PREFIX}/lib/libWPEWebKit-2.0.so" /usr/lib64 "$S"
-patch_staged_library_family "${S}/usr/lib64/libWPEWebKit-2.0.so"
-patch_webkit_runtime_paths "$(readlink -f "${S}/usr/lib64/libWPEWebKit-2.0.so")"
+stage_shared_library_family "${WPE_PREFIX}/lib/libWPEWebKit-2.0.so" /usr/${ATL_LIBDIR} "$S"
+patch_staged_library_family "${S}/usr/${ATL_LIBDIR}/libWPEWebKit-2.0.so"
+patch_webkit_runtime_paths "$(readlink -f "${S}/usr/${ATL_LIBDIR}/libWPEWebKit-2.0.so")"
 
 # WOFF2 runtime shared libraries are required when USE_WOFF2=ON.
-# Bundle them into /usr/lib64 so Atlantic can start on stock SFOS images.
-stage_shared_library_family "/usr/lib/aarch64-linux-gnu/libwoff2common.so" /usr/lib64 "$S"
-stage_shared_library_family "/usr/lib/aarch64-linux-gnu/libwoff2dec.so" /usr/lib64 "$S"
-patch_staged_library_family "${S}/usr/lib64/libwoff2common.so"
-patch_staged_library_family "${S}/usr/lib64/libwoff2dec.so"
+# Bundle them into /usr/${ATL_LIBDIR} so Atlantic can start on stock SFOS images.
+stage_shared_library_family "/usr/lib/${ATL_MULTIARCH}/libwoff2common.so" /usr/${ATL_LIBDIR} "$S"
+stage_shared_library_family "/usr/lib/${ATL_MULTIARCH}/libwoff2dec.so" /usr/${ATL_LIBDIR} "$S"
+patch_staged_library_family "${S}/usr/${ATL_LIBDIR}/libwoff2common.so"
+patch_staged_library_family "${S}/usr/${ATL_LIBDIR}/libwoff2dec.so"
 
 # InjectedBundle — staged in both the install path AND the compile-time prefix
 # (WPEWebProcess binary has /opt/wpe-sfos hard-coded as the injected-bundle dir)
-mkdir -p "${S}/usr/lib64/wpe-webkit-2.0"
+mkdir -p "${S}/usr/${ATL_LIBDIR}/wpe-webkit-2.0"
 mkdir -p "${S}${PACKAGE_RUNTIME_PREFIX}/lib/wpe-webkit-2.0/injected-bundle"
 cp -a "${WPE_PREFIX}/lib/wpe-webkit-2.0/injected-bundle/libWPEInjectedBundle.so" \
-      "${S}/usr/lib64/wpe-webkit-2.0/"
+      "${S}/usr/${ATL_LIBDIR}/wpe-webkit-2.0/"
 cp -a "${WPE_PREFIX}/lib/wpe-webkit-2.0/injected-bundle/libWPEInjectedBundle.so" \
       "${S}${PACKAGE_RUNTIME_PREFIX}/lib/wpe-webkit-2.0/injected-bundle/"
 
@@ -276,6 +277,8 @@ done
 # Shared runtime environment for generated wrappers.
 mkdir -p "${S}${PACKAGE_RUNTIME_PREFIX}/libexec/atlantic"
 install -m 755 "${SCRIPT_DIR}/deploy/runtime-common.sh" \
+    "${S}${PACKAGE_RUNTIME_PREFIX}/libexec/atlantic/runtime-common.sh"
+sed -i "s#ATLANTIC_RUNTIME_LIBDIR:-/usr/lib64}#ATLANTIC_RUNTIME_LIBDIR:-/usr/${ATL_LIBDIR}}#" \
     "${S}${PACKAGE_RUNTIME_PREFIX}/libexec/atlantic/runtime-common.sh"
 install -m 644 "${SCRIPT_DIR}/deploy/pulse-client.conf" \
     "${S}${PACKAGE_RUNTIME_PREFIX}/libexec/atlantic/pulse-client.conf"
@@ -318,10 +321,10 @@ fi
 
 # devel headers and pkg-config
 stage_cp "${WPE_PREFIX}/include/wpe-webkit-2.0"            /usr/include "$S"
-mkdir -p "${S}/usr/lib64/pkgconfig"
+mkdir -p "${S}/usr/${ATL_LIBDIR}/pkgconfig"
 for pc in wpe-webkit-2.0.pc wpe-web-process-extension-2.0.pc; do
-    cp -a "${WPE_PREFIX}/lib/pkgconfig/${pc}" "${S}/usr/lib64/pkgconfig/"
-    sed -i "s|${WPE_PREFIX}|/usr|g"          "${S}/usr/lib64/pkgconfig/${pc}"
+    cp -a "${WPE_PREFIX}/lib/pkgconfig/${pc}" "${S}/usr/${ATL_LIBDIR}/pkgconfig/"
+    sed -i "s|${WPE_PREFIX}|/usr|g"          "${S}/usr/${ATL_LIBDIR}/pkgconfig/${pc}"
 done
 
 # libseccomp: libWPEWebKit links it unconditionally now that the bubblewrap
@@ -342,19 +345,19 @@ fpm_rpm wpewebkit2 "$LEGACY_WPEWEBKIT_VERSION" "WPE WebKit ${LEGACY_WPEWEBKIT_VE
 echo "--- Staging wpewebkit2-qt5 ---"
 S="${STAGING}/wpewebkit2-qt5"; rm -rf "$S"; mkdir -p "$S"
 
-mkdir -p "${S}/usr/lib64/qt5/qml/org/wpewebkit/qtwpe"
+mkdir -p "${S}/usr/${ATL_LIBDIR}/qt5/qml/org/wpewebkit/qtwpe"
 cp -a "${WPE_PREFIX}/lib/qt5/qml/org/wpewebkit/qtwpe/libqtwpe.so" \
-      "${S}/usr/lib64/qt5/qml/org/wpewebkit/qtwpe/"
+      "${S}/usr/${ATL_LIBDIR}/qt5/qml/org/wpewebkit/qtwpe/"
 cp -a "${WPE_PREFIX}/lib/qt5/qml/org/wpewebkit/qtwpe/qmldir" \
-      "${S}/usr/lib64/qt5/qml/org/wpewebkit/qtwpe/"
-maybe_patch_glibc_versions "${S}/usr/lib64/qt5/qml/org/wpewebkit/qtwpe/libqtwpe.so"
-if ! patchelf --print-needed "${S}/usr/lib64/qt5/qml/org/wpewebkit/qtwpe/libqtwpe.so" | grep -qx 'libEGL.so.1'; then
+      "${S}/usr/${ATL_LIBDIR}/qt5/qml/org/wpewebkit/qtwpe/"
+maybe_patch_glibc_versions "${S}/usr/${ATL_LIBDIR}/qt5/qml/org/wpewebkit/qtwpe/libqtwpe.so"
+if ! patchelf --print-needed "${S}/usr/${ATL_LIBDIR}/qt5/qml/org/wpewebkit/qtwpe/libqtwpe.so" | grep -qx 'libEGL.so.1'; then
     patchelf --add-needed libEGL.so.1 \
-        "${S}/usr/lib64/qt5/qml/org/wpewebkit/qtwpe/libqtwpe.so"
+        "${S}/usr/${ATL_LIBDIR}/qt5/qml/org/wpewebkit/qtwpe/libqtwpe.so"
 fi
 # Flat symlink so the browser binary can find libqtwpe.so via ldconfig
-ln -sfn /usr/lib64/qt5/qml/org/wpewebkit/qtwpe/libqtwpe.so \
-        "${S}/usr/lib64/libqtwpe.so"
+ln -sfn /usr/${ATL_LIBDIR}/qt5/qml/org/wpewebkit/qtwpe/libqtwpe.so \
+        "${S}/usr/${ATL_LIBDIR}/libqtwpe.so"
 
 fpm_rpm wpewebkit2-qt5 "$LEGACY_WPEWEBKIT_VERSION" "WPE WebKit Qt5 QML plugin for Sailfish OS" "$S" \
     --depends wpewebkit2
@@ -368,21 +371,21 @@ fpm_rpm wpewebkit2-qt5 "$LEGACY_WPEWEBKIT_VERSION" "WPE WebKit Qt5 QML plugin fo
 
 echo "--- Staging wpe-sfos-compat ---"
 S="${STAGING}/wpe-sfos-compat"; rm -rf "$S"; mkdir -p "$S"
-mkdir -p "${S}/usr/lib64/wpe-compat"
+mkdir -p "${S}/usr/${ATL_LIBDIR}/wpe-compat"
 # Copy all compat shims
 for so in "${COMPAT_BUILD}"/*.so "${COMPAT_BUILD}"/*.so.[0-9]*; do
-    [ -f "$so" ] && cp -a "$so" "${S}/usr/lib64/wpe-compat/"
+    [ -f "$so" ] && cp -a "$so" "${S}/usr/${ATL_LIBDIR}/wpe-compat/"
 done
 
 # GStreamer droid camera device provider — must live in the scanned plugin
-# path (GST_PLUGIN_SYSTEM_PATH_1_0=/usr/lib64/gstreamer-1.0), not wpe-compat.
-mkdir -p "${S}/usr/lib64/gstreamer-1.0"
+# path (GST_PLUGIN_SYSTEM_PATH_1_0=/usr/${ATL_LIBDIR}/gstreamer-1.0), not wpe-compat.
+mkdir -p "${S}/usr/${ATL_LIBDIR}/gstreamer-1.0"
 cp -a "${COMPAT_BUILD}/gstreamer-1.0/libgstdroidcamdeviceprovider.so" \
-      "${S}/usr/lib64/gstreamer-1.0/"
-maybe_patch_glibc_versions "${S}/usr/lib64/gstreamer-1.0/libgstdroidcamdeviceprovider.so"
+      "${S}/usr/${ATL_LIBDIR}/gstreamer-1.0/"
+maybe_patch_glibc_versions "${S}/usr/${ATL_LIBDIR}/gstreamer-1.0/libgstdroidcamdeviceprovider.so"
 
 # Create versioned symlinks for bundled runtime libs
-(cd "${S}/usr/lib64/wpe-compat"
+(cd "${S}/usr/${ATL_LIBDIR}/wpe-compat"
     ln -sfn libsoup-3.0.so.0.7.1    libsoup-3.0.so.0
     ln -sfn libsoup-3.0.so.0.7.1    libsoup-3.0.so
     ln -sfn libbrotlidec.so.1.1.0   libbrotlidec.so.1
@@ -404,9 +407,9 @@ maybe_patch_glibc_versions "${S}/usr/lib64/gstreamer-1.0/libgstdroidcamdevicepro
 
 # Spellcheck support files: enchant loads its backend from the Ubuntu-baked
 # module path, and hunspell finds dictionaries under /usr/share/hunspell.
-install -d -m 755 "${S}/usr/lib/aarch64-linux-gnu/enchant-2" "${S}/usr/share/hunspell"
+install -d -m 755 "${S}/usr/lib/${ATL_MULTIARCH}/enchant-2" "${S}/usr/share/hunspell"
 install -m 755 "${COMPAT_BUILD}/enchant-2/enchant_hunspell.so" \
-    "${S}/usr/lib/aarch64-linux-gnu/enchant-2/enchant_hunspell.so"
+    "${S}/usr/lib/${ATL_MULTIARCH}/enchant-2/enchant_hunspell.so"
 install -m 644 "${COMPAT_BUILD}/hunspell/en_US.aff" "${COMPAT_BUILD}/hunspell/en_US.dic" \
     "${S}/usr/share/hunspell/"
 
@@ -533,14 +536,14 @@ chmod 755 "${S}/usr/bin/atlantic-browser"
 cp -a "${BROWSER_SRC}/build_browser/atlantic-browser" "${S}/usr/bin/atlantic-browser.bin"
 
 # libsailfishbrowser (versioned + symlinks — SONAME is libsailfishbrowser.so.1)
-mkdir -p "${S}/usr/lib64"
-cp -a "${BROWSER_SRC}/build_wpe/libsailfishbrowser.so.1.0.0" "${S}/usr/lib64/"
-ln -sfn libsailfishbrowser.so.1.0.0 "${S}/usr/lib64/libsailfishbrowser.so.1.0"
-ln -sfn libsailfishbrowser.so.1.0.0 "${S}/usr/lib64/libsailfishbrowser.so.1"
-ln -sfn libsailfishbrowser.so.1.0.0 "${S}/usr/lib64/libsailfishbrowser.so"
+mkdir -p "${S}/usr/${ATL_LIBDIR}"
+cp -a "${BROWSER_SRC}/build_wpe/libsailfishbrowser.so.1.0.0" "${S}/usr/${ATL_LIBDIR}/"
+ln -sfn libsailfishbrowser.so.1.0.0 "${S}/usr/${ATL_LIBDIR}/libsailfishbrowser.so.1.0"
+ln -sfn libsailfishbrowser.so.1.0.0 "${S}/usr/${ATL_LIBDIR}/libsailfishbrowser.so.1"
+ln -sfn libsailfishbrowser.so.1.0.0 "${S}/usr/${ATL_LIBDIR}/libsailfishbrowser.so"
 
 # Adblock engine shared library
-cp -a "${SCRIPT_DIR}/adblock-engine/target/release/libatlantic_adblock.so" "${S}/usr/lib64/"
+cp -a "${SCRIPT_DIR}/adblock-engine/target/release/libatlantic_adblock.so" "${S}/usr/${ATL_LIBDIR}/"
 
 # Adblock WebProcess extension — does the network blocking inside the WebProcess
 # (the only place that sees every subresource). Links libatlantic_adblock so the
@@ -549,16 +552,16 @@ cp -a "${SCRIPT_DIR}/adblock-engine/target/release/libatlantic_adblock.so" "${S}
 echo "--- Building adblock web-process extension ---"
 EXT_BUILD="${STAGING}/web-extension-build"
 rm -rf "${EXT_BUILD}"
-PKG_CONFIG_PATH="${WPE_PREFIX}/lib/pkgconfig:${WPE_PREFIX}/lib/aarch64-linux-gnu/pkgconfig" \
+PKG_CONFIG_PATH="${WPE_PREFIX}/lib/pkgconfig:${WPE_PREFIX}/lib/${ATL_MULTIARCH}/pkgconfig" \
 cmake -B "${EXT_BUILD}" -S "${SCRIPT_DIR}/web-extension" -G Ninja \
-    -DCMAKE_TOOLCHAIN_FILE="${SCRIPT_DIR}/sfos-toolchain.cmake" \
+    -DCMAKE_TOOLCHAIN_FILE="${ATL_QT_TOOLCHAIN}" \
     -DCMAKE_BUILD_TYPE=Release \
     -DATLANTIC_ADBLOCK_LIBDIR="${SCRIPT_DIR}/adblock-engine/target/release"
 ninja -C "${EXT_BUILD}"
-mkdir -p "${S}/usr/lib64/atlantic-browser/web-extensions"
+mkdir -p "${S}/usr/${ATL_LIBDIR}/atlantic-browser/web-extensions"
 cp -a "${EXT_BUILD}/libatlantic-adblock-extension.so" \
-      "${S}/usr/lib64/atlantic-browser/web-extensions/"
-maybe_patch_glibc_versions "${S}/usr/lib64/atlantic-browser/web-extensions/libatlantic-adblock-extension.so"
+      "${S}/usr/${ATL_LIBDIR}/atlantic-browser/web-extensions/"
+maybe_patch_glibc_versions "${S}/usr/${ATL_LIBDIR}/atlantic-browser/web-extensions/libatlantic-adblock-extension.so"
 
 # Adblock engine cache (FlatBuffers .dat) + scriptlet/redirect resources
 # (resources are not part of the serialized engine; loaded at runtime by both
@@ -669,20 +672,21 @@ cp -a "${BROWSER_SRC}/build_browser/atlantic-browser_eng_en.qm" "${S}/usr/share/
 # shell wrappers can't cross the sandbox boundary:
 #   - env <NAME=VALUE>: the full runtime env, GENERATED from runtime-common.sh
 #     (single source of truth) so it never drifts. LD_LIBRARY_PATH here resolves
-#     the wpe-compat libs incl. libjpeg.so.8 — no /usr/lib64 copy / ld.so.conf.
+#     the wpe-compat libs incl. libjpeg.so.8 — no /usr/${ATL_LIBDIR} copy / ld.so.conf.
 #   - NO `cpu` pin: firejail's cpu directive applies to the whole jail, so the
 #     old `cpu 4,5,6,7` starved the browser onto 4 of 8 cores (helpers
 #     included) — see the helper-launcher comment above for the device A/B.
 #   - noblacklist: GPU/hybris nodes Base's disable-common.inc would hide.
 #   - whitelist /usr/share/atlantic-browser: Base whitelist-LOCKS /usr/share.
-#     (NEVER whitelist under /usr/lib64 — firejail then locks the whole dir and
+#     (NEVER whitelist under /usr/${ATL_LIBDIR} — firejail then locks the whole dir and
 #     hides libQt5*.)
 #   - data dirs (org.atlantic/atlanticbrowser; the stock browser's
 #     org.sailfishos/browser stays whitelisted for the migration release only)
 #     + Downloads.
 #   - dbus-user.own: the browser's real bus names (under org.atlantic, which the
 #     template's OrganizationName permits).
-PROFILE_ENV_LINES="$(env -i sh -c '. "'"${SCRIPT_DIR}"'/deploy/runtime-common.sh"
+PROFILE_ENV_LINES="$(env -i sh -c 'ATLANTIC_RUNTIME_LIBDIR="'"${ATLANTIC_RUNTIME_LIBDIR}"'"
+. "'"${SCRIPT_DIR}"'/deploy/runtime-common.sh"
 export ATLANTIC_LD_PRELOAD="'"${WPE_COMPAT_PRELOAD}"'"
 export ATLANTIC_LD_LIBRARY_PATH="'"${WPE_HELPER_LIBRARY_PATH}"'"
 export XDG_RUNTIME_DIR=/run/user/100000
@@ -766,6 +770,8 @@ dbus-user.call com.jolla.settings=com.jolla.settings.ui.showTransfers@/com/jolla
 PROFHDR
 printf '%s\n' "${PROFILE_ENV_LINES}"
 } > "${S}/etc/sailjail/permissions/atlantic-browser.profile"
+# The profile header above names /usr/lib64 literally.
+sed -i "s#/usr/lib64/#/usr/${ATL_LIBDIR}/#g" "${S}/etc/sailjail/permissions/atlantic-browser.profile"
 
 # SFOS PulseAudio policy classification for WebKit audio streams — without it
 # OHM corks browser audio ~0.5 s after each stream starts (see the file's

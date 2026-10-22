@@ -7,6 +7,7 @@ source "${REPO_ROOT}/scripts/patches.sh"
 export REPO_ROOT
 export WORK="${WORK:-$(cd "${REPO_ROOT}/.." && pwd)}"
 export BUILD_TOOLS="${BUILD_TOOLS:-${REPO_ROOT}}"
+source "${REPO_ROOT}/scripts/arch.sh"
 export BROWSER_SRC="${BROWSER_SRC:-${WORK}/atlantic-browser}"
 export CI_CACHE_ROOT="${CI_CACHE_ROOT:-/opt/github-runner/cache/atlantic-build}"
 export WPE_PREFIX="${WPE_PREFIX:-/opt/wpe-sfos}"

@@ -31,7 +31,8 @@ replace_sysroot_with_copy() {
 # The public SFOS SDK target is a stock runtime image: it ships the runtime
 # libraries (libgbm, libsoup3, transfer engine, dsme, ...) but NOT their -devel
 # headers/.pc files, which the WPE Qt5 plugin and the browser UI need at compile
-# time. Install them into the sysroot using its own zypper (aarch64 host -> no
+# time. Install them into the sysroot using its own zypper (the host runs the
+# sysroot's binaries natively, aarch64 or 32-bit ARM -> no
 # QEMU needed):
 #   mesa-llvmpipe-libgbm-devel    -> gbm.h               (WPE Qt5 plugin)
 #   libsoup3-devel                -> libsoup/soup.h      (WPE Qt5 plugin)
@@ -50,13 +51,13 @@ ensure_sysroot_devel() {
     local ver="${SFOS_SYSROOT_VERSION}"
     local repos="${root}/etc/zypp/repos.d"
     local base="https://releases.jolla.com"
-    local arch="aarch64"
+    local arch="${ATL_ARCH}"
     local m
 
     if [ -f "${root}/usr/include/gbm.h" ] && [ -e "${root}/usr/include/libsoup/soup.h" ] \
-       && [ -f "${root}/usr/lib64/pkgconfig/nemotransferengine-qt5.pc" ] \
-       && [ -f "${root}/usr/lib64/pkgconfig/dsme_dbus_if.pc" ] \
-       && [ -f "${root}/usr/lib64/pkgconfig/sqlcipher.pc" ]; then
+       && [ -f "${root}/usr/${ATL_LIBDIR}/pkgconfig/nemotransferengine-qt5.pc" ] \
+       && [ -f "${root}/usr/${ATL_LIBDIR}/pkgconfig/dsme_dbus_if.pc" ] \
+       && [ -f "${root}/usr/${ATL_LIBDIR}/pkgconfig/sqlcipher.pc" ]; then
         echo "  Sysroot dev headers already present."
         return 0
     fi
@@ -116,7 +117,10 @@ EOF
 
 echo ""
 echo "--- [0] Setting up 64 GB swap ---"
-if ! swapon --show | grep -q /swapfile; then
+if [ "${ATL_SKIP_SWAP:-0}" = "1" ]; then
+    # The armv7hl build runs in a chroot on the same host, whose swap it shares.
+    echo "Skipped (ATL_SKIP_SWAP=1)"
+elif ! swapon --show | grep -q /swapfile; then
     fallocate -l 64G /swapfile
     chmod 600 /swapfile
     mkswap /swapfile
@@ -180,7 +184,7 @@ fi
 echo "Build tools ready."
 
 echo ""
-echo "--- [2] Setting up SFOS ${SFOS_SYSROOT_VERSION} aarch64 sysroot ---"
+echo "--- [2] Setting up SFOS ${SFOS_SYSROOT_VERSION} ${ATL_ARCH} sysroot ---"
 current_sysroot_version="$(sysroot_version_of "${SYSROOT}" || true)"
 local_source_version=""
 if [ "${LOCAL_SFOS_SOURCE_SYSROOT}" != "${SYSROOT}" ]; then
@@ -196,8 +200,8 @@ elif [ -n "${local_source_version}" ] && [ "${local_source_version}" = "${SFOS_S
 else
     if [ ! -d "${SYSROOT}/usr/include" ]; then
         mkdir -p "${SYSROOT}"
-        sysroot_url="https://releases.sailfishos.org/sdk/targets/Sailfish_OS-${PUBLIC_SFOS_BASE_VERSION}-Sailfish_SDK_Target-aarch64.tar.7z"
-        sysroot_tar="/tmp/Sailfish_OS-${PUBLIC_SFOS_BASE_VERSION}-Sailfish_SDK_Target-aarch64.tar"
+        sysroot_url="https://releases.sailfishos.org/sdk/targets/Sailfish_OS-${PUBLIC_SFOS_BASE_VERSION}-Sailfish_SDK_Target-${ATL_ARCH}.tar.7z"
+        sysroot_tar="/tmp/Sailfish_OS-${PUBLIC_SFOS_BASE_VERSION}-Sailfish_SDK_Target-${ATL_ARCH}.tar"
         echo "  Downloading public base sysroot ${PUBLIC_SFOS_BASE_VERSION}..."
         curl -L --progress-bar "${sysroot_url}" -o /tmp/sfos-sysroot.tar.7z
         echo "  Extracting..."

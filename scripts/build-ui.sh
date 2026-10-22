@@ -14,11 +14,11 @@ fi
 echo ""
 echo "--- [11] Setting up Qt5 symlinks ---"
 ln -sfn "${SYSROOT}/usr/share/qt5" /usr/share/qt5 2>/dev/null || true
-ln -sfn "${SYSROOT}/usr/lib64/qt5" /usr/lib64/qt5 2>/dev/null || true
+ln -sfn "${SYSROOT}/usr/${ATL_LIBDIR}/qt5" "/usr/${ATL_LIBDIR}/qt5" 2>/dev/null || true
 ln -sfn "${SYSROOT}/usr/include/qt5" /usr/include/qt5 2>/dev/null || true
 for lib in libQt5Core.so.5 libQt5Xml.so.5 libicui18n.so.70 libicuuc.so.70 libicudata.so.70 libpcre16.so.0; do
-    [ -f "${SYSROOT}/usr/lib64/${lib}" ] && \
-        ln -sfn "${SYSROOT}/usr/lib64/${lib}" "/usr/lib/${lib}" 2>/dev/null || true
+    [ -f "${SYSROOT}/usr/${ATL_LIBDIR}/${lib}" ] && \
+        ln -sfn "${SYSROOT}/usr/${ATL_LIBDIR}/${lib}" "/usr/lib/${lib}" 2>/dev/null || true
 done
 
 echo ""
@@ -27,9 +27,9 @@ cd "${BROWSER_SRC}"
 rm -rf build_browser build_wpe
 mkdir -p build_browser build_wpe
 
-export PATH="${SYSROOT}/usr/lib64/qt5/bin:${PATH}"
+export PATH="${SYSROOT}/usr/${ATL_LIBDIR}/qt5/bin:${PATH}"
 export PKG_CONFIG_SYSROOT_DIR="${SYSROOT}"
-export PKG_CONFIG_PATH="${SYSROOT}/usr/lib64/pkgconfig:${WPE_PREFIX}/lib/pkgconfig"
+export PKG_CONFIG_PATH="${SYSROOT}/usr/${ATL_LIBDIR}/pkgconfig:${WPE_PREFIX}/lib/pkgconfig"
 
 rm -rf build
 mkdir build
@@ -42,7 +42,8 @@ qmake -spec "${SYSROOT}/usr/share/qt5/mkspecs/linux-g++" \
     "QMAKE_LINK=ccache g++ --sysroot=${SYSROOT}" \
     "WPE_SFOS_PREFIX=${WPE_PREFIX}" \
     "SFOS_SYSROOT=${SYSROOT}" \
-    "WPE_SOURCE_DIR=${WPE_SOURCE_DIR}"
+    "WPE_SOURCE_DIR=${WPE_SOURCE_DIR}" \
+    "SFOS_LIBDIR=${ATL_LIBDIR}"
 
 mkdir -p apps
 cd apps
@@ -54,7 +55,8 @@ qmake -spec "${SYSROOT}/usr/share/qt5/mkspecs/linux-g++" \
     "QMAKE_LINK=ccache g++ --sysroot=${SYSROOT}" \
     "WPE_SFOS_PREFIX=${WPE_PREFIX}" \
     "SFOS_SYSROOT=${SYSROOT}" \
-    "WPE_SOURCE_DIR=${WPE_SOURCE_DIR}"
+    "WPE_SOURCE_DIR=${WPE_SOURCE_DIR}" \
+    "SFOS_LIBDIR=${ATL_LIBDIR}"
 make -j"${NPROC}" sub-lib-all
 cp -a lib/libsailfishbrowser.so* "${BROWSER_SRC}/build_wpe/" 2>/dev/null || true
 make -j"${NPROC}" sub-browser-all

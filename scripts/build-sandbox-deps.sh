@@ -29,7 +29,7 @@ native_c_args() {
     python3 - "$@" <<'PYEOF'
 import ast, configparser, os, sys
 cfg = configparser.ConfigParser()
-cfg.read(os.path.join(os.environ["BUILD_TOOLS"], "native-meson.ini"))
+cfg.read(os.environ["ATL_NATIVE_MESON_FILE"])
 args = ast.literal_eval(cfg["built-in options"]["c_args"]) + list(sys.argv[1:])
 print("-Dc_args=[%s]" % ",".join(repr(a) for a in args))
 PYEOF
@@ -42,7 +42,7 @@ build_meson_release() {
     rm -rf build
     CC="ccache gcc" CXX="ccache g++" \
     meson setup build \
-        --native-file "${BUILD_TOOLS}/native-meson.ini" \
+        --native-file "${ATL_NATIVE_MESON_FILE}" \
         --prefix "${WPE_PREFIX}" \
         --buildtype release \
         "$@"

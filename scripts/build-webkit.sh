@@ -17,7 +17,7 @@ QT5_PLUGIN_SOURCE_DIR="${QT5_PLUGIN_SOURCE_DIR:-${QT5_PLUGIN_SOURCE_DIR_DEFAULT}
 
 resolve_sysroot_library() {
     local stem="$1"
-    local direct="${SYSROOT}/usr/lib64/${stem}.so"
+    local direct="${SYSROOT}/usr/${ATL_LIBDIR}/${stem}.so"
     local candidate
 
     if [ -e "${direct}" ]; then
@@ -25,13 +25,13 @@ resolve_sysroot_library() {
         return 0
     fi
 
-    for candidate in "${SYSROOT}/usr/lib64/${stem}.so".[0-9]*; do
+    for candidate in "${SYSROOT}/usr/${ATL_LIBDIR}/${stem}.so".[0-9]*; do
         [ -e "${candidate}" ] || continue
         readlink -f "${candidate}"
         return 0
     done
 
-    echo "ERROR: unable to resolve ${stem}.so under ${SYSROOT}/usr/lib64" >&2
+    echo "ERROR: unable to resolve ${stem}.so under ${SYSROOT}/usr/${ATL_LIBDIR}" >&2
     exit 1
 }
 
@@ -77,6 +77,10 @@ echo "--- [8] Building WPEWebKit ${WPE_WEBKIT_VERSION} (expect 60-90 min) ---"
 # WebKitCompilerFlags.cmake (GCC LTO is explicitly disabled there because it
 # dead-strips LLInt assembly symbols).  The default falls back to GCC.
 WEBKIT_COMPILER="${WEBKIT_COMPILER:-gcc}"
+if [ "${WEBKIT_COMPILER}" = "clang" ] && [ "${ATL_ARCH}" != "aarch64" ]; then
+    echo "ERROR: the Clang toolchain (sfos-toolchain-clang.cmake) is aarch64-only; build ${ATL_ARCH} with WEBKIT_COMPILER=gcc" >&2
+    exit 1
+fi
 if [ "${WEBKIT_COMPILER}" = "clang" ]; then
     WEBKIT_TOOLCHAIN_FILE="${BUILD_TOOLS}/sfos-toolchain-clang.cmake"
     echo "  Compiler: Clang 18 + lld (ThinLTO)"
@@ -85,7 +89,7 @@ if [ "${WEBKIT_COMPILER}" = "clang" ]; then
     # and misses the cache on second runs.
     export CCACHE_CPP2=1
 else
-    WEBKIT_TOOLCHAIN_FILE="${BUILD_TOOLS}/sfos-toolchain-native.cmake"
+    WEBKIT_TOOLCHAIN_FILE="${ATL_WEBKIT_TOOLCHAIN_GCC}"
     echo "  Compiler: GCC (no LTO)"
 fi
 
@@ -158,7 +162,7 @@ if [ ! -f "${WPE_PREFIX}/lib/libWPEWebKit-2.0.so" ]; then
     cd "${WPE_SOURCE_DIR}"
     apply_repo_patches 1 "${PWD}" "${WEBKIT_SOURCE_PATCHES[@]}"
 
-    PKG_CONFIG_PATH="${WPE_PREFIX}/lib/pkgconfig:${WPE_PREFIX}/lib/aarch64-linux-gnu/pkgconfig" \
+    PKG_CONFIG_PATH="${WPE_PREFIX}/lib/pkgconfig:${WPE_PREFIX}/lib/${ATL_MULTIARCH}/pkgconfig" \
     cmake -B WebKitBuild/Release -G Ninja \
         -DCMAKE_TOOLCHAIN_FILE="${WEBKIT_TOOLCHAIN_FILE}" \
         -DCMAKE_C_COMPILER_LAUNCHER=ccache \
@@ -245,7 +249,7 @@ if [ -n "${_qt5_plugin_hash}" ] && [ -f "${WPE_PREFIX}/lib/qt5/qml/org/wpewebkit
     fi
 fi
 if [ ! -f "${WPE_PREFIX}/lib/qt5/qml/org/wpewebkit/qtwpe/libqtwpe.so" ]; then
-    export PATH="${SYSROOT}/usr/lib64/qt5/bin:${PATH}"
+    export PATH="${SYSROOT}/usr/${ATL_LIBDIR}/qt5/bin:${PATH}"
 
     if [ ! -d "${WPE_SOURCE_DIR}/Source/WebKit/UIProcess/API/wpe/qt5" ]; then
         if [ ! -d "${QT5_PLUGIN_SOURCE_DIR}" ]; then
@@ -263,9 +267,9 @@ if [ ! -f "${WPE_PREFIX}/lib/qt5/qml/org/wpewebkit/qtwpe/libqtwpe.so" ]; then
 
     rm -rf build
 
-    PKG_CONFIG_PATH="${WPE_PREFIX}/lib/pkgconfig:${WPE_PREFIX}/lib/aarch64-linux-gnu/pkgconfig" \
+    PKG_CONFIG_PATH="${WPE_PREFIX}/lib/pkgconfig:${WPE_PREFIX}/lib/${ATL_MULTIARCH}/pkgconfig" \
     cmake -B build -G Ninja \
-        -DCMAKE_TOOLCHAIN_FILE="${BUILD_TOOLS}/sfos-toolchain.cmake" \
+        -DCMAKE_TOOLCHAIN_FILE="${ATL_QT_TOOLCHAIN}" \
         -DCMAKE_C_COMPILER_LAUNCHER=ccache \
         -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
         -DCMAKE_BUILD_TYPE=Release \
