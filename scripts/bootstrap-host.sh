@@ -152,7 +152,7 @@ apt-get install -y \
     libdrm-dev libgbm-dev libcap-dev \
     libsoup-3.0-dev libsystemd-dev \
     libgstreamer-plugins-bad1.0-dev libnice-dev hunspell-en-us libenchant-2-dev \
-    libgcrypt20-dev libgpg-error-dev \
+    libgcrypt20-dev libgpg-error-dev libssl-dev \
     libtasn1-6-dev \
     libwoff-dev libopenjp2-7-dev \
     liblcms2-dev libhyphen-dev \
