@@ -13,6 +13,15 @@ fi
 
 echo ""
 echo "--- [11] Setting up Qt5 symlinks ---"
+# A real directory in the way (the armhf chroot gets /usr/share/qt5/translations
+# from Ubuntu packages) would make ln put the link INSIDE it, and qmake would
+# then find no Qt modules; move such a non-Qt directory aside first.
+for qt_dir in /usr/share/qt5; do
+    if [ -d "${qt_dir}" ] && [ ! -L "${qt_dir}" ] && [ ! -e "${qt_dir}/mkspecs" ]; then
+        rm -rf "${qt_dir}.distro"
+        mv "${qt_dir}" "${qt_dir}.distro"
+    fi
+done
 ln -sfn "${SYSROOT}/usr/share/qt5" /usr/share/qt5 2>/dev/null || true
 ln -sfn "${SYSROOT}/usr/${ATL_LIBDIR}/qt5" "/usr/${ATL_LIBDIR}/qt5" 2>/dev/null || true
 ln -sfn "${SYSROOT}/usr/include/qt5" /usr/include/qt5 2>/dev/null || true
