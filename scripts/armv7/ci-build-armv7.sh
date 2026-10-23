@@ -37,12 +37,15 @@ if [ ! -x "${CHROOT}/usr/bin/apt-get" ]; then
     mkdir -p "${CHROOT}"
     setarch linux32 debootstrap --arch=armhf --variant=buildd \
         --components=main,universe "${UBUNTU_SUITE}" "${CHROOT}" "${UBUNTU_MIRROR}"
-    cat > "${CHROOT}/etc/apt/sources.list" <<EOF
+fi
+# Written on every run, not only at creation: debootstrap lists the release
+# pocket alone, and without -updates the copied runtime libs stay at release
+# versions (mesa 24.0.5's libgbm links libxcb-randr, which SFOS lacks).
+cat > "${CHROOT}/etc/apt/sources.list" <<EOF
 deb ${UBUNTU_MIRROR} ${UBUNTU_SUITE} main universe
 deb ${UBUNTU_MIRROR} ${UBUNTU_SUITE}-updates main universe
 deb ${UBUNTU_MIRROR} ${UBUNTU_SUITE}-security main universe
 EOF
-fi
 
 # ── Mounts: the kernel's, and the build's directories at the same paths ─────
 mounted=()
@@ -93,7 +96,7 @@ in_chroot() {
 }
 
 # ── What ci-build.sh needs before bootstrap-host.sh installs the rest ───────
-in_chroot sh -c 'apt-get update -qq && apt-get install -y -qq ca-certificates curl wget git ccache build-essential python3 p7zip-full xz-utils >/dev/null'
+in_chroot sh -c 'apt-get update -qq && apt-get dist-upgrade -y -qq >/dev/null && apt-get install -y -qq ca-certificates curl wget git ccache build-essential python3 p7zip-full xz-utils >/dev/null'
 if ! in_chroot sh -c '[ -x /root/.cargo/bin/cargo ]'; then
     echo "--- Installing Rust (armv7) in the chroot ---"
     in_chroot sh -c 'curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable'
