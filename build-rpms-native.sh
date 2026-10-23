@@ -150,7 +150,7 @@ fpm_rpm() {
     # (.gnu.version_r only, so the compat shim's own version definitions don't count).
     local glibc_floor
     glibc_floor="$(find "$stage_root" -type f -print0 \
-        | xargs -0 -r sh -c 'for f; do head -c4 "$f" 2>/dev/null | grep -q "^.ELF" && readelf -V -W "$f" 2>/dev/null; done' _ \
+        | xargs -0 -r sh -c 'for f; do head -c4 "$f" 2>/dev/null | grep -q "^.ELF" && readelf -V -W "$f" 2>/dev/null; done; :' _ \
         | awk '/^Version needs section/ {n=1; next} /^Version (definition|symbols) section/ {n=0} n' \
         | { grep -oE 'Name: GLIBC_[0-9]+\.[0-9]+' || true; } | sed 's/.*GLIBC_//' | sort -uV | tail -n1)"
     local glibc_dep=()
