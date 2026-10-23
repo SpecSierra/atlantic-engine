@@ -143,6 +143,22 @@ fpm_rpm() {
     printf '#!/bin/sh\n/sbin/ldconfig || :\n%s\n' "${FPM_POSTUN_EXTRA:-}" > "$postun"
     printf '#!/bin/sh\n%s\n' "${FPM_POSTTRANS_EXTRA:-:}" > "$posttrans"
 
+    # fpm does no automatic Requires, so nothing stops the package installing
+    # on an SFOS whose glibc is too old (5.0 ships 2.30; 5.1 moved to 2.41) —
+    # it would then fail at launch with "version 'GLIBC_2.34' not found".
+    # Require the highest GLIBC_ symbol version any ELF in the package needs
+    # (.gnu.version_r only, so the compat shim's own version definitions don't count).
+    local glibc_floor
+    glibc_floor="$(find "$stage_root" -type f -print0 \
+        | xargs -0 -r sh -c 'for f; do head -c4 "$f" 2>/dev/null | grep -q "^.ELF" && readelf -V -W "$f" 2>/dev/null; done' _ \
+        | awk '/^Version needs section/ {n=1; next} /^Version (definition|symbols) section/ {n=0} n' \
+        | { grep -oE 'Name: GLIBC_[0-9]+\.[0-9]+' || true; } | sed 's/.*GLIBC_//' | sort -uV | tail -n1)"
+    local glibc_dep=()
+    if [ -n "$glibc_floor" ]; then
+        glibc_dep=(--depends "glibc >= ${glibc_floor}")
+        echo "    glibc floor for ${name}: ${glibc_floor}"
+    fi
+
     echo "==> Building RPM: ${name}-${version}-${iteration}"
     fpm -s dir -t rpm \
         -n "$name" \
@@ -159,6 +175,7 @@ fpm_rpm() {
         --rpm-auto-add-exclude-directories /usr/lib/systemd/system \
         --force \
         --package "${OUT}/${name}-${version}-${iteration}.${ATL_RPM_ARCH}.rpm" \
+        "${glibc_dep[@]}" \
         "$@" \
         -C "$stage_root" .
     echo "    -> ${OUT}/${name}-${version}-${iteration}.${ATL_RPM_ARCH}.rpm"
