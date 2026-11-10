@@ -25,8 +25,9 @@ rm -rf "${raw}"
 mkdir -p "${raw}"
 
 # %m: one file per instrumented binary, which every process of that binary
-# merges its counters into (under a file lock) as it exits.
-export LLVM_PROFILE_FILE="${raw}/atlantic-%m.profraw"
+# merges its counters into (under a file lock) as it exits. Each session gets
+# its own directory: a process killed in mid-write leaves a truncated file
+# that every later merge into it would reject.
 
 # Each session runs twice, once per painting path, because the two target
 # phones differ: the Adreno one paints tiles on the CPU, the Mali one through
@@ -34,6 +35,9 @@ export LLVM_PROFILE_FILE="${raw}/atlantic-%m.profraw"
 for painting in cpu gpu; do
     for workload in "${here}"/workloads/*.txt; do
         echo "=== $(basename "${workload}") [${painting} painting] ==="
+        session_raw="${raw}/${painting}-$(basename "${workload}" .txt)"
+        mkdir -p "${session_raw}"
+        export LLVM_PROFILE_FILE="${session_raw}/atlantic-%m.profraw"
         if [ "${painting}" = cpu ]; then
             export WEBKIT_SKIA_ENABLE_CPU_RENDERING=1
         else
@@ -48,7 +52,7 @@ for painting in cpu gpu; do
 done
 
 shopt -s nullglob
-raw_files=("${raw}"/*.profraw)
+raw_files=("${raw}"/*/*.profraw)
 if [ "${#raw_files[@]}" -eq 0 ]; then
     echo "ERROR: the training run left no profile in ${raw}" >&2
     exit 1
@@ -56,7 +60,9 @@ fi
 ls -l "${raw_files[@]}"
 
 mkdir -p "$(dirname "${output}")"
-llvm-profdata-18 merge -o "${output}.tmp" "${raw_files[@]}"
+# -failure-mode=all: skip a session's damaged file instead of failing; the
+# executed-functions gate below decides whether what is left is enough.
+llvm-profdata-18 merge -failure-mode=all -o "${output}.tmp" "${raw_files[@]}"
 llvm-profdata-18 show "${output}.tmp" | tee "${output}.txt"
 
 # A profile in which almost nothing ran means the engine never got to load a
