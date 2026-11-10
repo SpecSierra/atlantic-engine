@@ -1,0 +1,264 @@
+# webkit-offscreen-animation-throttle-env.patch: stop compositing at full frame
+# rate for an animation nobody can see.
+#
+# The compositor re-requests a frame for as long as ANY animation runs anywhere
+# in the layer tree, visible or not. One infinite CSS animation scrolled out of
+# view is enough: Wikipedia's mobile pages carry a pulsating dot in the header,
+# so a page scrolled past it keeps compositing ~90 frames a second while idle —
+# compositor thread, GPU and the embedder's present loop all busy for nothing.
+#
+# WEBKIT_OFFSCREEN_ANIMATION_INTERVAL_MS=<ms> (default 0 = upstream, max 1000):
+# when a frame's only pending reason is an animation and no animated layer (nor
+# anything in its subtree, now or ~50 ms ahead) intersects the surface, the
+# next animation frame waits that long instead of being requested at once.
+# 100 gives 10 Hz. Every composite still samples animations at the current
+# time, so nothing drifts; any other reason to composite (scroll, rendering
+# update, video) is unaffected and runs at full rate; a layer that animates
+# onto the surface is picked up at the next tick or by the look-ahead.
+#
+# Covers both compositor back ends: SkiaCompositingLayer (the 2.54 default) and
+# TextureMapperLayer (WEBKIT_USE_SKIA_FOR_COMPOSITION=0).
+# ATLANTIC_FRAME_TRACE=1 logs "web anim-offscreen" when a wait starts.
+#
+# Verify on device: idle fps on a scrolled Wikipedia article, and that a
+# visible spinner / CSS transition still runs at full rate.
+#
+# ---
+diff --git a/Source/WebCore/platform/graphics/skia/SkiaCompositingLayer.cpp b/Source/WebCore/platform/graphics/skia/SkiaCompositingLayer.cpp
+--- a/Source/WebCore/platform/graphics/skia/SkiaCompositingLayer.cpp
++++ b/Source/WebCore/platform/graphics/skia/SkiaCompositingLayer.cpp
+@@ -480,6 +480,47 @@ std::optional<SkiaCompositingLayer::AnimationsState> SkiaCompositingLayer::syncA
+     return state;
+ }
+ 
++bool SkiaCompositingLayer::subtreeIntersectsRect(const FloatRect& surfaceRect) const
++{
++    // An empty layer that clips shows nothing of its subtree.
++    if (m_rect.isEmpty() && m_masksToBounds)
++        return false;
++
++    // The future transform (where an animation puts the layer ~50 ms from now)
++    // counts too, so a layer flying in is caught before it arrives.
++    auto paintedRect = paintedLayerRect();
++    if (!paintedRect.isEmpty()
++        && (m_transforms.combined.mapRect(paintedRect).intersects(surfaceRect) || m_transforms.futureCombined.mapRect(paintedRect).intersects(surfaceRect)))
++        return true;
++
++    for (auto& child : m_children) {
++        if (child->subtreeIntersectsRect(surfaceRect))
++            return true;
++    }
++    return false;
++}
++
++bool SkiaCompositingLayer::runningAnimationsIntersectRect(const FloatRect& surfaceRect) const
++{
++    bool isAnimated = (m_animationsState && m_animationsState->isRunning)
++        || (m_mask && m_mask->m_animationsState && m_mask->m_animationsState->isRunning);
++    if (isAnimated) {
++        // A replica draws the layer a second time somewhere else; do not try to
++        // work out where.
++        if (m_replica || subtreeIntersectsRect(surfaceRect))
++            return true;
++    }
++
++    if (m_replica && m_replica->runningAnimationsIntersectRect(surfaceRect))
++        return true;
++
++    for (auto& child : m_children) {
++        if (child->runningAnimationsIntersectRect(surfaceRect))
++            return true;
++    }
++    return false;
++}
++
+ bool SkiaCompositingLayer::computeTransformsAndAnimations(const TransformationMatrix& parentTransform, const TransformationMatrix& futureParentTransform, MonotonicTime time)
+ {
+     m_animationsState = syncAnimations(time);
+diff --git a/Source/WebCore/platform/graphics/skia/SkiaCompositingLayer.h b/Source/WebCore/platform/graphics/skia/SkiaCompositingLayer.h
+--- a/Source/WebCore/platform/graphics/skia/SkiaCompositingLayer.h
++++ b/Source/WebCore/platform/graphics/skia/SkiaCompositingLayer.h
+@@ -128,6 +128,10 @@ public:
+     // no prior damage repaints the whole target. Returns whether any animation is still running.
+     bool paint(SkCanvas&, std::optional<Damage>& frameDamage, const std::optional<Damage>& priorTargetDamage = std::nullopt, std::optional<SkColor> clearColor = std::nullopt);
+ 
++    // Whether a layer with a running animation, or anything it carries, paints
++    // inside |surfaceRect|. Valid after paint(), which computes the transforms.
++    bool runningAnimationsIntersectRect(const FloatRect& surfaceRect) const;
++
+ private:
+     using ScopedFlush = SkiaCompositingLayerImageSetBatch::ScopedFlush;
+ 
+@@ -151,6 +155,7 @@ private:
+     Ref<SkiaCompositingLayer> backdropRoot();
+ 
+     bool computeTransformsAndAnimations(const TransformationMatrix& parentTransform, const TransformationMatrix& futureParentTransform, MonotonicTime);
++    bool subtreeIntersectsRect(const FloatRect& surfaceRect) const;
+ 
+ #if ENABLE(DAMAGE_TRACKING)
+     // Where every layer that has painted last frame and where it is painting now, keyed by an identifier
+diff --git a/Source/WebCore/platform/graphics/texmap/TextureMapperLayer.cpp b/Source/WebCore/platform/graphics/texmap/TextureMapperLayer.cpp
+--- a/Source/WebCore/platform/graphics/texmap/TextureMapperLayer.cpp
++++ b/Source/WebCore/platform/graphics/texmap/TextureMapperLayer.cpp
+@@ -1530,6 +1530,37 @@ bool TextureMapperLayer::descendantsOrSelfHaveRunningAnimations() const
+         });
+ }
+ 
++bool TextureMapperLayer::subtreeIntersectsRect(const FloatRect& surfaceRect) const
++{
++    if (!m_state.size.isEmpty() && m_layerTransforms.combined.mapRect(layerRect()).intersects(surfaceRect))
++        return true;
++
++    return std::ranges::any_of(m_children,
++        [&](TextureMapperLayer* child) {
++            return child->subtreeIntersectsRect(surfaceRect);
++        });
++}
++
++bool TextureMapperLayer::runningAnimationsIntersectRect(const FloatRect& surfaceRect) const
++{
++    if (m_animations.hasRunningAnimations()) {
++        // A replica draws the layer a second time somewhere else; do not try to
++        // work out where.
++        if (m_state.replicaLayer || subtreeIntersectsRect(surfaceRect))
++            return true;
++    }
++
++    if (m_state.replicaLayer && m_state.replicaLayer->runningAnimationsIntersectRect(surfaceRect))
++        return true;
++    if (m_state.backdropLayer && m_state.backdropLayer->m_animations.hasRunningAnimations() && subtreeIntersectsRect(surfaceRect))
++        return true;
++
++    return std::ranges::any_of(m_children,
++        [&](TextureMapperLayer* child) {
++            return child->runningAnimationsIntersectRect(surfaceRect);
++        });
++}
++
+ bool TextureMapperLayer::applyAnimationsRecursively(MonotonicTime time)
+ {
+     bool hasRunningAnimations = syncAnimations(time);
+diff --git a/Source/WebCore/platform/graphics/texmap/TextureMapperLayer.h b/Source/WebCore/platform/graphics/texmap/TextureMapperLayer.h
+--- a/Source/WebCore/platform/graphics/texmap/TextureMapperLayer.h
++++ b/Source/WebCore/platform/graphics/texmap/TextureMapperLayer.h
+@@ -112,6 +112,9 @@ public:
+     WEBCORE_EXPORT bool applyAnimationsRecursively(MonotonicTime);
+     bool syncAnimations(MonotonicTime);
+     WEBCORE_EXPORT bool descendantsOrSelfHaveRunningAnimations() const;
++    // Whether a layer with a running animation, or anything it carries, covers
++    // part of |surfaceRect|. Valid after paint(), which computes the transforms.
++    WEBCORE_EXPORT bool runningAnimationsIntersectRect(const FloatRect& surfaceRect) const;
+ 
+     WEBCORE_EXPORT void prepareForPainting(TextureMapper&);
+     WEBCORE_EXPORT void paint(TextureMapper&);
+@@ -200,6 +203,7 @@ private:
+ #endif
+ 
+     bool isVisible() const;
++    bool subtreeIntersectsRect(const FloatRect& surfaceRect) const;
+ 
+     bool shouldBlend() const;
+ 
+diff --git a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
+@@ -45,6 +45,7 @@
+ #include <WebCore/SkiaDamageRegion.h>
+ #include <WebCore/TextureMapperLayer.h>
+ #include <WebCore/TransformationMatrix.h>
++#include <algorithm>
+ #include <cstdlib>
+ #include <cstdio>
+ #include <ctime>
+@@ -107,6 +108,7 @@ ThreadedCompositor::ThreadedCompositor(WebPage& webPage, LayerTreeHost& layerTre
+     , m_sceneState(&sceneState)
+     , m_flipY(!m_surface->shouldPaintMirrored())
+     , m_renderTimer(m_workQueue->runLoop(), "ThreadedCompositor::RenderTimer"_s, this, &ThreadedCompositor::renderLayerTree)
++    , m_offscreenAnimationTimer(m_workQueue->runLoop(), "ThreadedCompositor::OffscreenAnimationTimer"_s, this, &ThreadedCompositor::offscreenAnimationTimerFired)
+ {
+     ASSERT(RunLoop::isMain());
+ 
+@@ -196,6 +198,7 @@ void ThreadedCompositor::invalidate()
+ 
+     m_didCompositeRunLoopObserver->invalidate();
+     m_workQueue->dispatchSync([this] {
++        m_offscreenAnimationTimer.stop();
+         if (!m_useSkia && (!m_context || !m_context->makeContextCurrent()))
+             return;
+ 
+@@ -491,7 +494,46 @@ void ThreadedCompositor::paintToTextureMapper(const TransformationMatrix& matrix
+     m_textureMapper->endPainting();
+ 
+     if (sceneHasRunningAnimations)
++        requestAnimationComposition(currentRootLayer.runningAnimationsIntersectRect(clipRect));
++}
++
++// WEBKIT_OFFSCREEN_ANIMATION_INTERVAL_MS (default 0 = upstream): how often to
++// composite when the only reason is an animation none of whose layers is on
++// the surface. Upstream composites at the full frame rate for as long as any
++// animation runs anywhere in the layer tree, so one infinite CSS animation
++// scrolled out of view (a "live" dot in a page header) keeps the compositor,
++// the GPU and the embedder's present loop at 60-90 fps on an idle page. The
++// animation still advances — every composite samples it at the current time —
++// and a layer that moves onto the surface is noticed at the next tick.
++static Seconds offscreenAnimationInterval()
++{
++    static const Seconds interval = [] {
++        const char* env = getenv("WEBKIT_OFFSCREEN_ANIMATION_INTERVAL_MS");
++        int milliseconds = env ? atoi(env) : 0;
++        return Seconds::fromMilliseconds(std::clamp(milliseconds, 0, 1000));
++    }();
++    return interval;
++}
++
++void ThreadedCompositor::requestAnimationComposition(bool animatedContentOnSurface)
++{
++    ASSERT(m_workQueue->runLoop().isCurrent());
++    auto interval = offscreenAnimationInterval();
++    if (animatedContentOnSurface || !interval) {
++        m_offscreenAnimationTimer.stop();
+         requestComposition(CompositionReason::Animation);
++        return;
++    }
++
++    if (atlFrameTrace() && !m_offscreenAnimationTimer.isActive())
++        fprintf(stderr, "[ftrace] web anim-offscreen wait=%.0fms\n", interval.milliseconds());
++    if (!m_offscreenAnimationTimer.isActive())
++        m_offscreenAnimationTimer.startOneShot(interval);
++}
++
++void ThreadedCompositor::offscreenAnimationTimerFired()
++{
++    requestComposition(CompositionReason::Animation);
+ }
+ 
+ #if ENABLE(DAMAGE_TRACKING)
+@@ -585,7 +627,7 @@ TargetContents ThreadedCompositor::paintToSkiaCanvas(const TransformationMatrix&
+         PlatformDisplay::sharedDisplay().skiaGrContext()->flushAndSubmit(surface, GrSyncCpu::kNo);
+ 
+     if (hasRunningAnimations)
+-        requestComposition(CompositionReason::Animation);
++        requestAnimationComposition(rootLayer.runningAnimationsIntersectRect(FloatRect({ }, size)));
+ 
+     return TargetContents::Valid;
+ }
+diff --git a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.h b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.h
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.h
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.h
+@@ -130,6 +130,8 @@ private:
+     void scheduleUpdateLocked();
+     void flushCompositingState(const OptionSet<WebCore::CompositionReason>&);
+     void renderLayerTree();
++    void requestAnimationComposition(bool animatedContentOnSurface);
++    void offscreenAnimationTimerFired();
+     TargetContents paintToCurrentGLContext(const WebCore::TransformationMatrix&, const WebCore::IntSize&, const OptionSet<WebCore::CompositionReason>&);
+     void paintToTextureMapper(const WebCore::TransformationMatrix&, const WebCore::IntSize&, const OptionSet<WebCore::CompositionReason>&);
+     TargetContents paintToSkiaCanvas(const WebCore::TransformationMatrix&, const WebCore::IntSize&, const OptionSet<WebCore::CompositionReason>&);
+@@ -193,6 +195,7 @@ private:
+     } m_attributes;
+ 
+     RunLoop::Timer m_renderTimer;
++    RunLoop::Timer m_offscreenAnimationTimer;
+     std::unique_ptr<WebCore::TextureMapper> m_textureMapper;
+ 
+     struct {

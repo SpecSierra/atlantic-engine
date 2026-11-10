@@ -10,11 +10,11 @@ Each patch carries its own rationale as a header comment at the top of the patch
 
 | | Count |
 |---|---|
-| Patches | 58 |
+| Patches | 59 |
 | …portability / build fixes | 4 |
-| …behaviour | 54 |
-| Distinct source files touched | 1300 |
-| Env flags introduced | 108 |
+| …behaviour | 55 |
+| Distinct source files touched | 1304 |
+| Env flags introduced | 110 |
 
 ## Hot files
 
@@ -23,8 +23,8 @@ Files edited by more than one patch — every one is an ordering constraint.
 | Source file | Patches |
 |---|---|
 | `Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp` | 6 |
+| `Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp` | 6 |
 | `Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp` | 5 |
-| `Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp` | 5 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp` | 4 |
 | `Source/WebCore/page/scrolling/ScrollingTree.cpp` | 3 |
 | `Source/WebCore/page/scrolling/ScrollingTree.h` | 3 |
@@ -44,6 +44,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp` | 2 |
 | `Source/WebKit/UIProcess/API/libwpe/TouchGestureController.cpp` | 2 |
 | `Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.cpp` | 2 |
+| `Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.h` | 2 |
 
 ## Behaviour patches
 
@@ -103,6 +104,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | 52 | `webkit-touch-slop-env.patch` | 1 | `WEBKIT_TOUCH_SLOP_PX`<br>`WEBKIT_TOUCH_SLOP_SUBTRACT` | how far a finger travels before a touch becomes a scroll, and what the first scroll step is. |
 | 53 | `webkit-find-match-cache.patch` | 1 | — | find-in-page highlighted the matches of the PREVIOUS search text. |
 | 54 | `webkit-scrollbar-no-hit-test-env.patch` | 1 | `WEBKIT_SCROLLBAR_NO_HIT_TEST`<br>`WEBKIT_SCROLLBAR_SCALE` | taps must not land on the overlay scrollbar. |
+| 55 | `webkit-offscreen-animation-throttle-env.patch` | 6 | `ATLANTIC_FRAME_TRACE`<br>`WEBKIT_OFFSCREEN_ANIMATION_INTERVAL_MS`<br>`WEBKIT_USE_SKIA_FOR_COMPOSITION` | stop compositing at full frame rate for an animation nobody can see. |
 
 ## Portability / build fixes
 

@@ -150,6 +150,9 @@ readonly WEBKIT_SOURCE_PATCHES=(
     "patches/webkit/webkit-find-match-cache.patch"
     # WEBKIT_SCROLLBAR_NO_HIT_TEST=1: taps never land on the overlay scrollbar.
     "patches/webkit/webkit-scrollbar-no-hit-test-env.patch"
+    # WEBKIT_OFFSCREEN_ANIMATION_INTERVAL_MS: animation-only frames for layers
+    # that are not on the surface are composited at a low rate. Default off.
+    "patches/webkit/webkit-offscreen-animation-throttle-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(
