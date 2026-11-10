@@ -1,0 +1,183 @@
+# webkit-bfcache-no-store-env.patch: let "Cache-Control: no-store" pages into
+# the back/forward cache, safely.
+#
+# WebKit refuses to keep an HTTPS main document served with no-store in the
+# back/forward cache. Most news sites send that header, so Back on them is a
+# full reload — seconds on a phone — instead of an instant restore. Chrome
+# has cached such pages since 2025 under two conditions, reproduced here:
+#
+#   - the page is restored only within 3 minutes of leaving it;
+#   - and only if the HttpOnly cookies sent to its URL are exactly what they
+#     were when it was cached. HttpOnly cookies are what carry a login, so a
+#     page from before a log-out (or a switch of account) never comes back.
+#     If the cookies cannot be read, the page is not restored.
+#
+# Otherwise the entry is dropped and the navigation loads normally.
+#
+# WEBKIT_BFCACHE_NO_STORE=1 turns it on; default off = upstream. Cost when on:
+# one synchronous cookie query to the NetworkProcess when such a page is cached
+# and one when it is restored.
+#
+# Verify on device: Back on a no-store news site is instant; log in to a site,
+# navigate away, log out in another tab, go Back -> the page must reload.
+#
+# ---
+diff --git a/Source/WebCore/history/BackForwardCache.cpp b/Source/WebCore/history/BackForwardCache.cpp
+--- a/Source/WebCore/history/BackForwardCache.cpp
++++ b/Source/WebCore/history/BackForwardCache.cpp
+@@ -153,7 +153,7 @@ static bool canCacheLocalFrame(LocalFrame& frame, DiagnosticLoggingClient& diagn
+         logBackForwardCacheFailureDiagnosticMessage(diagnosticLoggingClient, DiagnosticLoggingKeys::isErrorPageKey());
+         isCacheable = false;
+     }
+-    if (frame.isMainFrame() && document && document->url().protocolIs("https"_s) && documentLoader->response().cacheControlContainsNoStore()) {
++    if (!CachedPage::cachesNoStorePages() && frame.isMainFrame() && document && document->url().protocolIs("https"_s) && documentLoader->response().cacheControlContainsNoStore()) {
+         PCLOG("   -Frame is HTTPS, and cache control prohibits storing"_s);
+         logBackForwardCacheFailureDiagnosticMessage(diagnosticLoggingClient, DiagnosticLoggingKeys::httpsNoStoreKey());
+         isCacheable = false;
+@@ -622,7 +622,7 @@ std::unique_ptr<CachedPage> BackForwardCache::take(BackForwardFrameItemIdentifie
+ 
+     RELEASE_LOG(BackForwardCache, "BackForwardCache::take frameItemID: %s, size: %u / %u", identifier.toString().utf8().data(), pageCount(), maxSize());
+ 
+-    if (cachedPage->hasExpired() || (page && page->isResourceCachingDisabledByWebInspector())) {
++    if (cachedPage->hasExpired() || !cachedPage->mayRestoreNoStorePage() || (page && page->isResourceCachingDisabledByWebInspector())) {
+         LOG(BackForwardCache, "Not restoring page from back/forward cache because cache entry has expired");
+         logBackForwardCacheFailureDiagnosticMessage(page, DiagnosticLoggingKeys::expiredKey());
+         return nullptr;
+@@ -664,7 +664,7 @@ CachedPage* BackForwardCache::get(HistoryItem& item, Page* page)
+     }, [&](UniqueRef<CachedPage>& cachedPage) -> CachedPage* {
+         if (page && &cachedPage->page() != page)
+             return nullptr;
+-        if (cachedPage->hasExpired() || (page && page->isResourceCachingDisabledByWebInspector())) {
++        if (cachedPage->hasExpired() || !cachedPage->mayRestoreNoStorePage() || (page && page->isResourceCachingDisabledByWebInspector())) {
+             LOG(BackForwardCache, "Not restoring page for %s from back/forward cache because cache entry has expired", item.url().string().ascii().data());
+             logBackForwardCacheFailureDiagnosticMessage(page, DiagnosticLoggingKeys::expiredKey());
+             remove(item);
+diff --git a/Source/WebCore/history/CachedPage.cpp b/Source/WebCore/history/CachedPage.cpp
+--- a/Source/WebCore/history/CachedPage.cpp
++++ b/Source/WebCore/history/CachedPage.cpp
+@@ -43,13 +43,19 @@
+ #include "Navigation.h"
+ #include "NavigationNavigationType.h"
+ #include "Node.h"
++#include "Cookie.h"
++#include "CookieJar.h"
+ #include "Page.h"
+ #include "PageTransitionEvent.h"
+ #include "ScriptDisallowedScope.h"
+ #include "SelectionRestorationMode.h"
+ #include "Settings.h"
+ #include "VisitedLinkState.h"
++#include <algorithm>
++#include <cstdlib>
+ #include <wtf/StdLibExtras.h>
++#include <wtf/text/MakeString.h>
++#include <wtf/text/StringBuilder.h>
+ #include <wtf/TZoneMallocInlines.h>
+ 
+ #if PLATFORM(IOS_FAMILY)
+@@ -62,9 +68,61 @@ using namespace JSC;
+ 
+ WTF_MAKE_TZONE_ALLOCATED_IMPL(CachedPage);
+ 
++bool CachedPage::cachesNoStorePages()
++{
++    static const bool enabled = [] {
++        const char* env = getenv("WEBKIT_BFCACHE_NO_STORE");
++        return env && env[0] == '1';
++    }();
++    return enabled;
++}
++
++// How long a no-store page may be restored from the cache (Chrome: 3 minutes).
++static constexpr Seconds noStoreRestoreWindow { 180_s };
++
++static bool isHTTPSNoStoreDocument(Document* document)
++{
++    if (!document || !document->url().protocolIs("https"_s))
++        return false;
++    RefPtr loader = document->loader();
++    return loader && loader->response().cacheControlContainsNoStore();
++}
++
++// The HttpOnly cookies the document's URL is sent with: what carries a login.
++// nullopt when they cannot be read, which never matches.
++static std::optional<String> httpOnlyCookieState(Page& page, Document* document)
++{
++    if (!document)
++        return std::nullopt;
++    Vector<Cookie> cookies;
++    if (!page.cookieJar().getRawCookies(*document, document->url(), cookies))
++        return std::nullopt;
++
++    Vector<String> entries;
++    for (auto& cookie : cookies) {
++        if (cookie.httpOnly)
++            entries.append(makeString(cookie.domain, '\t', cookie.path, '\t', cookie.name, '\t', cookie.value));
++    }
++    std::ranges::sort(entries, WTF::codePointCompareLessThan);
++    StringBuilder builder;
++    for (auto& entry : entries)
++        builder.append(entry, '\n');
++    return builder.toString();
++}
++
+ CachedPage::CachedPage(Page& page)
+     : m_page(page)
+     , m_expirationTime(MonotonicTime::now() + page.settings().backForwardCacheExpirationInterval())
++    , m_isNoStorePage([&] {
++        RefPtr localFrame = page.localMainFrame();
++        return cachesNoStorePages() && localFrame && isHTTPSNoStoreDocument(protect(localFrame->document()).get());
++    }())
++    , m_noStoreCookieState([&]() -> std::optional<String> {
++        if (!m_isNoStorePage)
++            return std::nullopt;
++        RefPtr localFrame = page.localMainFrame();
++        return httpOnlyCookieState(page, protect(localFrame->document()).get());
++    }())
+     , m_cachedMainFrame(makeUnique<CachedFrame>(protect(page.mainFrame())))
+     , m_loadedSubresourceDomains([&] {
+         RefPtr localFrame = page.localMainFrame();
+@@ -241,4 +299,17 @@ bool CachedPage::hasExpired() const
+     return MonotonicTime::now() > m_expirationTime;
+ }
+ 
++bool CachedPage::mayRestoreNoStorePage() const
++{
++    if (!m_isNoStorePage)
++        return true;
++    if (!m_noStoreCookieState)
++        return false;
++    auto cachedAt = m_expirationTime - m_page->settings().backForwardCacheExpirationInterval();
++    if (MonotonicTime::now() - cachedAt > noStoreRestoreWindow)
++        return false;
++    auto current = httpOnlyCookieState(m_page.get(), document());
++    return current && *current == *m_noStoreCookieState;
++}
++
+ } // namespace WebCore
+diff --git a/Source/WebCore/history/CachedPage.h b/Source/WebCore/history/CachedPage.h
+--- a/Source/WebCore/history/CachedPage.h
++++ b/Source/WebCore/history/CachedPage.h
+@@ -55,6 +55,12 @@ public:
+     DocumentLoader* documentLoader() const { return m_cachedMainFrame->documentLoader(); }
+ 
+     bool hasExpired() const;
++
++    // WEBKIT_BFCACHE_NO_STORE: false for a "Cache-Control: no-store" page kept
++    // too long, or whose HttpOnly cookies are no longer what they were when it
++    // was cached (the user logged out, or in as someone else, meanwhile).
++    bool mayRestoreNoStorePage() const;
++    WEBCORE_EXPORT static bool cachesNoStorePages();
+     
+     CachedFrame* cachedMainFrame() const LIFETIME_BOUND { return m_cachedMainFrame.get(); }
+ 
+@@ -77,6 +83,9 @@ private:
+ 
+     WeakRef<Page> m_page;
+     MonotonicTime m_expirationTime;
++    // Both set before m_cachedMainFrame suspends the document.
++    bool m_isNoStorePage { false };
++    std::optional<String> m_noStoreCookieState;
+     std::unique_ptr<CachedFrame> m_cachedMainFrame;
+     std::optional<BackForwardItemIdentifier> m_itemID;
+ #if ENABLE(VIDEO)

@@ -159,6 +159,9 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # WEBKIT_SCROLL_STEP_ALWAYS_COMPOSITES=1: every scrolling-thread step
     # requests a composite. Default off.
     "patches/webkit/webkit-scroll-step-always-composites-env.patch"
+    # WEBKIT_BFCACHE_NO_STORE=1: no-store pages enter the back/forward cache
+    # (3 minutes, HttpOnly cookies unchanged). Default off.
+    "patches/webkit/webkit-bfcache-no-store-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

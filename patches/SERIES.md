@@ -10,11 +10,11 @@ Each patch carries its own rationale as a header comment at the top of the patch
 
 | | Count |
 |---|---|
-| Patches | 61 |
+| Patches | 62 |
 | …portability / build fixes | 4 |
-| …behaviour | 57 |
-| Distinct source files touched | 1305 |
-| Env flags introduced | 113 |
+| …behaviour | 58 |
+| Distinct source files touched | 1308 |
+| Env flags introduced | 114 |
 
 ## Hot files
 
@@ -107,6 +107,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | 55 | `webkit-offscreen-animation-throttle-env.patch` | 6 | `ATLANTIC_FRAME_TRACE`<br>`WEBKIT_OFFSCREEN_ANIMATION_INTERVAL_MS`<br>`WEBKIT_USE_SKIA_FOR_COMPOSITION` | stop compositing at full frame rate for an animation nobody can see. |
 | 56 | `webkit-egl-blob-cache-env.patch` | 1 | `WEBKIT_EGL_BLOB_CACHE_DIR`<br>`WEBKIT_EGL_BLOB_CACHE_LOG` | keep the GPU driver's compiled shaders on disk (EGL_ANDROID_blob_cache). |
 | 57 | `webkit-scroll-step-always-composites-env.patch` | 1 | `ATLANTIC_FRAME_TRACE`<br>`WEBKIT_SCROLL_STEP_ALWAYS_COMPOSITES` | a scroll step on the scrolling thread could be applied to the layers without any frame showing it. |
+| 58 | `webkit-bfcache-no-store-env.patch` | 3 | `WEBKIT_BFCACHE_NO_STORE` | let "Cache-Control: no-store" pages into the back/forward cache, safely. |
 
 ## Portability / build fixes
 
