@@ -141,6 +141,9 @@ readonly WEBKIT_SOURCE_PATCHES=(
     "patches/webkit/webkit-touch-no-hover-env.patch"
     # AFTER every CoordinatedTileBuffer.cpp patch (tile-upload, tile-reset-log).
     "patches/webkit/webkit-tile-gpu-readback-async-env.patch"
+    # Deadlock fix (main thread vs scrolling thread) when a backdrop filter
+    # toggles during a scroll. Upstream bug, no flag.
+    "patches/webkit/webkit-scene-layers-lock-order.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

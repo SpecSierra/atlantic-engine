@@ -10,10 +10,10 @@ Each patch carries its own rationale as a header comment at the top of the patch
 
 | | Count |
 |---|---|
-| Patches | 54 |
+| Patches | 55 |
 | …portability / build fixes | 4 |
-| …behaviour | 50 |
-| Distinct source files touched | 1297 |
+| …behaviour | 51 |
+| Distinct source files touched | 1298 |
 | Env flags introduced | 105 |
 
 ## Hot files
@@ -98,6 +98,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | 48 | `webkit-gst-range-ignored-skip.patch` | 1 | — | <video> fails on servers that ignore Range requests. |
 | 49 | `webkit-touch-no-hover-env.patch` | 1 | `WEBKIT_TOUCH_NO_HOVER` | Touch devices: a touchstart must not set :hover. |
 | 50 | `webkit-tile-gpu-readback-async-env.patch` | 1 | `WEBKIT_TILE_GPU_READBACK_ASYNC`<br>`WEBKIT_TILE_GPU_READBACK_SYNC` | Black tiles on the Jolla Phone 2: make a GPU-painted tile visible to the compositor with an asynchronous one-pixel read instead of a synchronous one. |
+| 51 | `webkit-scene-layers-lock-order.patch` | 1 | — | a page froze for good, taking no more touches, when a layer gained or lost a backdrop filter while it scrolled. |
 
 ## Portability / build fixes
 

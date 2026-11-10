@@ -1,0 +1,52 @@
+# webkit-scene-layers-lock-order.patch: a page froze for good, taking no more
+# touches, when a layer gained or lost a backdrop filter while it scrolled.
+#
+# Lock-order inversion between two threads:
+#  - main thread: GraphicsLayerCoordinated::updateBackdropFilters() runs with
+#    the layer's lock held and creates the backdrop CoordinatedPlatformLayer,
+#    whose constructor calls Client::attachLayer() -> LayerTreeHost ->
+#    CoordinatedSceneState::addLayer(), which takes m_layersLock.
+#    Order: layer lock, then m_layersLock.
+#  - scrolling thread: LayerTreeHost::requestComposition() calls
+#    CoordinatedSceneState::flushPendingState(), which took m_layersLock and,
+#    still holding it, each layer's lock in CoordinatedPlatformLayer::
+#    flushPendingState(). Order: m_layersLock, then layer lock.
+# The scrolling thread holds the scrolling tree's lock at that point, so the
+# EventDispatcher blocks behind it too: no input, no frames.
+#
+# Fix: snapshot the layer set under m_layersLock, release it, then flush each
+# layer. The Refs in the snapshot keep the layers alive; a layer removed in
+# between is flushed once more, which is harmless.
+#
+# Upstream 2.54.2 has the same code. No flag: it is a deadlock fix.
+#
+# ---
+diff --git a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/CoordinatedSceneState.cpp b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/CoordinatedSceneState.cpp
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/CoordinatedSceneState.cpp
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/CoordinatedSceneState.cpp
+@@ -30,6 +30,7 @@
+ #include <WebCore/CoordinatedPlatformLayer.h>
+ #include <wtf/MainThread.h>
+ #include <wtf/TZoneMallocInlines.h>
++#include <wtf/Vector.h>
+ 
+ namespace WebKit {
+ using namespace WebCore;
+@@ -107,8 +108,15 @@ bool CoordinatedSceneState::flush()
+ void CoordinatedSceneState::flushPendingState()
+ {
+     Locker stateLock { m_stateLock };
+-    Locker layersLock { m_layersLock };
+-    for (Ref layer : m_layers)
++    // Never hold m_layersLock while taking a layer's own lock: the main thread
++    // takes them the other way round (a layer that gains a backdrop creates the
++    // backdrop layer, and so reaches addLayer(), under its own lock).
++    Vector<Ref<CoordinatedPlatformLayer>> layers;
++    {
++        Locker layersLock { m_layersLock };
++        layers = copyToVector(m_layers);
++    }
++    for (auto& layer : layers)
+         layer->flushPendingState();
+ }
+ 
