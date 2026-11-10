@@ -153,6 +153,9 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # WEBKIT_OFFSCREEN_ANIMATION_INTERVAL_MS: animation-only frames for layers
     # that are not on the surface are composited at a low rate. Default off.
     "patches/webkit/webkit-offscreen-animation-throttle-env.patch"
+    # WEBKIT_EGL_BLOB_CACHE_DIR: on-disk cache for the GPU driver's compiled
+    # shaders (EGL_ANDROID_blob_cache). Default off.
+    "patches/webkit/webkit-egl-blob-cache-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

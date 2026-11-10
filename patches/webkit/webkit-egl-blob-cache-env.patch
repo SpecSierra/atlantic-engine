@@ -1,0 +1,269 @@
+# webkit-egl-blob-cache-env.patch: keep the GPU driver's compiled shaders on
+# disk (EGL_ANDROID_blob_cache).
+#
+# Android GPU drivers (Adreno, Mali) do not persist compiled shaders or program
+# binaries themselves. They hand each one to the application through
+# EGL_ANDROID_blob_cache and ask for it back the next time; Android's EGL
+# wrapper backs that with a file per app. Under libhybris nobody registers the
+# callbacks, so every WebProcess compiles every shader from source again —
+# during the first scrolls of every new page process, on the compositor thread.
+#
+# WEBKIT_EGL_BLOB_CACHE_DIR=<dir> (unset = off = upstream): GLDisplay registers
+# get/set callbacks backed by <dir>/egl-blob-cache.bin, shared by all engine
+# processes (flock, append-only records, loaded once per process, 32 MB cap,
+# a torn tail is trimmed on load). Nothing happens if the display does not
+# advertise the extension. The entry point is looked up with
+# eglGetProcAddress(), not libepoxy, whose stub aborts when a symbol is
+# missing. WEBKIT_EGL_BLOB_CACHE_LOG=1 logs load/store/miss.
+#
+# The directory must be writable inside the sandbox and private to the app.
+# Verify on device with the log: second launch should show "N blobs" > 0 and
+# no "store" lines on a page already visited.
+#
+# ---
+diff --git a/Source/WebCore/platform/graphics/egl/GLDisplay.cpp b/Source/WebCore/platform/graphics/egl/GLDisplay.cpp
+--- a/Source/WebCore/platform/graphics/egl/GLDisplay.cpp
++++ b/Source/WebCore/platform/graphics/egl/GLDisplay.cpp
+@@ -24,6 +24,19 @@
+ #include "GLContext.h"
+ #include "Logging.h"
+ #include <array>
++#include <cerrno>
++#include <cstdio>
++#include <cstdint>
++#include <cstdlib>
++#include <cstring>
++#include <fcntl.h>
++#include <mutex>
++#include <string>
++#include <sys/file.h>
++#include <sys/stat.h>
++#include <sys/uio.h>
++#include <unistd.h>
++#include <unordered_map>
+ #include <wtf/Locker.h>
+ #include <wtf/MainThread.h>
+ #include <wtf/text/CStringView.h>
+@@ -71,6 +84,214 @@ typedef EGLBoolean (EGLAPIENTRYP PFNEGLDESTROYIMAGEKHRPROC) (EGLDisplay, EGLImag
+ 
+ namespace WebCore {
+ 
++// ── On-disk EGL blob cache (EGL_ANDROID_blob_cache) ─────────────────────────
++// Android GPU drivers do not keep compiled shaders/program binaries anywhere
++// themselves: they hand them to the application through this extension and ask
++// for them back next time. Android's own EGL wrapper backs it with a file; on
++// libhybris nobody does, so every WebProcess recompiles every shader it uses,
++// in the middle of the first scrolls of each page process.
++//
++// WEBKIT_EGL_BLOB_CACHE_DIR=<dir> (unset = off) stores the blobs in
++// <dir>/egl-blob-cache.bin, shared by all processes of the engine. The file is
++// a header followed by append-only records; a process loads it once at EGL
++// initialisation and appends what the driver gives it afterwards. Keys are the
++// driver's own and already include whatever it needs to reject a stale blob
++// (it validates every blob it is handed back), so a driver update only costs
++// dead entries until the size cap restarts the file.
++namespace EGLBlobCache {
++
++static constexpr char magic[8] = { 'A', 'T', 'L', 'B', 'L', 'O', 'B', '1' };
++static constexpr size_t maxKeySize = 64 * 1024;
++static constexpr size_t maxValueSize = 2 * 1024 * 1024;
++static constexpr size_t maxFileSize = 32 * 1024 * 1024;
++
++struct State {
++    std::mutex lock;
++    std::unordered_map<std::string, std::string> blobs;
++    int fd { -1 };
++    size_t fileSize { 0 };
++    bool log { false };
++};
++
++static State& state()
++{
++    static State* s = new State;
++    return *s;
++}
++
++static bool readFully(int fd, void* buffer, size_t size)
++{
++    auto* bytes = static_cast<uint8_t*>(buffer);
++    while (size) {
++        ssize_t n = read(fd, bytes, size);
++        if (n < 0 && errno == EINTR)
++            continue;
++        if (n <= 0)
++            return false;
++        bytes += n;
++        size -= n;
++    }
++    return true;
++}
++
++// Called with the file locked exclusively. Leaves the file valid: a header and
++// whole records only.
++static void load(State& s)
++{
++    struct stat st;
++    if (fstat(s.fd, &st))
++        return;
++
++    auto restart = [&] {
++        s.blobs.clear();
++        if (!ftruncate(s.fd, 0) && pwrite(s.fd, magic, sizeof(magic), 0) == static_cast<ssize_t>(sizeof(magic)))
++            s.fileSize = sizeof(magic);
++        else
++            s.fileSize = 0;
++    };
++
++    char header[sizeof(magic)];
++    if (static_cast<size_t>(st.st_size) < sizeof(magic) || static_cast<size_t>(st.st_size) > maxFileSize
++        || lseek(s.fd, 0, SEEK_SET) || !readFully(s.fd, header, sizeof(header)) || memcmp(header, magic, sizeof(magic))) {
++        restart();
++        return;
++    }
++
++    size_t offset = sizeof(magic);
++    const size_t end = st.st_size;
++    while (offset < end) {
++        uint32_t sizes[2];
++        if (end - offset < sizeof(sizes) || !readFully(s.fd, sizes, sizeof(sizes)))
++            break;
++        size_t keySize = sizes[0], valueSize = sizes[1];
++        if (!keySize || keySize > maxKeySize || valueSize > maxValueSize || end - offset - sizeof(sizes) < keySize + valueSize)
++            break;
++        std::string key(keySize, '\0');
++        std::string value(valueSize, '\0');
++        if (!readFully(s.fd, key.data(), keySize) || !readFully(s.fd, value.data(), valueSize))
++            break;
++        s.blobs[std::move(key)] = std::move(value);
++        offset += sizeof(sizes) + keySize + valueSize;
++    }
++
++    // A record cut short (a process killed mid-write) would hide everything
++    // appended after it: drop the tail.
++    if (offset < end && ftruncate(s.fd, offset))
++        restart();
++    else
++        s.fileSize = offset;
++}
++
++static void setBlob(const void* key, EGLsizeiANDROID keySize, const void* value, EGLsizeiANDROID valueSize)
++{
++    if (!key || !value || keySize <= 0 || valueSize < 0 || static_cast<size_t>(keySize) > maxKeySize || static_cast<size_t>(valueSize) > maxValueSize)
++        return;
++
++    auto& s = state();
++    std::lock_guard<std::mutex> locker(s.lock);
++    std::string keyString(static_cast<const char*>(key), keySize);
++    std::string valueString(static_cast<const char*>(value), valueSize);
++    auto it = s.blobs.find(keyString);
++    if (it != s.blobs.end() && it->second == valueString)
++        return;
++    s.blobs[keyString] = valueString;
++
++    if (s.fd < 0 || !s.fileSize)
++        return;
++
++    uint32_t sizes[2] = { static_cast<uint32_t>(keySize), static_cast<uint32_t>(valueSize) };
++    size_t recordSize = sizeof(sizes) + keySize + valueSize;
++    if (flock(s.fd, LOCK_EX))
++        return;
++    struct stat st;
++    // Other processes append too; past the cap nothing more is stored until a
++    // later start finds the file oversized and restarts it.
++    if (!fstat(s.fd, &st) && static_cast<size_t>(st.st_size) + recordSize <= maxFileSize) {
++        struct iovec parts[3] = {
++            { sizes, sizeof(sizes) },
++            { const_cast<void*>(key), static_cast<size_t>(keySize) },
++            { const_cast<void*>(value), static_cast<size_t>(valueSize) },
++        };
++        ssize_t written = writev(s.fd, parts, 3);
++        if (written >= 0 && static_cast<size_t>(written) != recordSize) {
++            // Short write: take the partial record back out.
++            if (ftruncate(s.fd, st.st_size)) { }
++        }
++    }
++    flock(s.fd, LOCK_UN);
++    if (s.log)
++        fprintf(stderr, "[eglblob] store key=%d value=%d\n", static_cast<int>(keySize), static_cast<int>(valueSize));
++}
++
++static EGLsizeiANDROID getBlob(const void* key, EGLsizeiANDROID keySize, void* value, EGLsizeiANDROID valueSize)
++{
++    if (!key || keySize <= 0)
++        return 0;
++
++    auto& s = state();
++    std::lock_guard<std::mutex> locker(s.lock);
++    auto it = s.blobs.find(std::string(static_cast<const char*>(key), keySize));
++    if (it == s.blobs.end()) {
++        if (s.log)
++            fprintf(stderr, "[eglblob] miss key=%d\n", static_cast<int>(keySize));
++        return 0;
++    }
++    // The driver asks with a buffer that may be too small, and retries with
++    // the size returned here.
++    if (value && static_cast<size_t>(valueSize) >= it->second.size())
++        memcpy(value, it->second.data(), it->second.size());
++    return it->second.size();
++}
++
++static void install(EGLDisplay display, const char* extensionsString)
++{
++    const char* directory = getenv("WEBKIT_EGL_BLOB_CACHE_DIR");
++    if (!directory || !*directory)
++        return;
++
++    // The functions may be set once per display, and one cache serves the process.
++    static std::once_flag once;
++    std::call_once(once, [&] {
++        auto& s = state();
++        const char* logEnv = getenv("WEBKIT_EGL_BLOB_CACHE_LOG");
++        s.log = logEnv && logEnv[0] == '1';
++
++        if (!extensionsString || !strstr(extensionsString, "EGL_ANDROID_blob_cache")) {
++            if (s.log)
++                fprintf(stderr, "[eglblob] EGL_ANDROID_blob_cache not offered by this display\n");
++            return;
++        }
++
++        // Not through libepoxy: where the symbol cannot be resolved its
++        // dispatch stub aborts the process.
++        using SetBlobCacheFuncs = void (*)(EGLDisplay, EGLSetBlobFuncANDROID, EGLGetBlobFuncANDROID);
++        auto setBlobCacheFuncs = reinterpret_cast<SetBlobCacheFuncs>(eglGetProcAddress("eglSetBlobCacheFuncsANDROID"));
++        if (!setBlobCacheFuncs) {
++            if (s.log)
++                fprintf(stderr, "[eglblob] eglSetBlobCacheFuncsANDROID not found\n");
++            return;
++        }
++
++        std::string path = std::string(directory) + "/egl-blob-cache.bin";
++        {
++            std::lock_guard<std::mutex> locker(s.lock);
++            s.fd = open(path.c_str(), O_RDWR | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
++            if (s.fd >= 0) {
++                if (!flock(s.fd, LOCK_EX)) {
++                    load(s);
++                    flock(s.fd, LOCK_UN);
++                }
++            }
++            if (s.log)
++                fprintf(stderr, "[eglblob] %s: %zu blobs, %zu bytes%s\n", path.c_str(), s.blobs.size(), s.fileSize, s.fd < 0 ? " (cannot open: memory only)" : "");
++        }
++
++        setBlobCacheFuncs(display, setBlob, getBlob);
++    });
++}
++
++} // namespace EGLBlobCache
++
+ RefPtr<GLDisplay> GLDisplay::create(EGLDisplay eglDisplay)
+ {
+ #if !USE(GRAPHICS_LAYER_WC)
+@@ -94,6 +315,7 @@ GLDisplay::GLDisplay(EGLDisplay eglDisplay)
+     m_version.minor = minorVersion;
+ 
+     const char* extensionsString = eglQueryString(m_display, EGL_EXTENSIONS);
++    EGLBlobCache::install(m_display, extensionsString);
+     auto displayExtensions = StringView::fromLatin1(extensionsString).split(' ');
+     auto findExtension = [&](auto extensionName) {
+         return std::any_of(displayExtensions.begin(), displayExtensions.end(), [&](auto extensionEntry) {

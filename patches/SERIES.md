@@ -10,11 +10,11 @@ Each patch carries its own rationale as a header comment at the top of the patch
 
 | | Count |
 |---|---|
-| Patches | 59 |
+| Patches | 60 |
 | …portability / build fixes | 4 |
-| …behaviour | 55 |
-| Distinct source files touched | 1304 |
-| Env flags introduced | 110 |
+| …behaviour | 56 |
+| Distinct source files touched | 1305 |
+| Env flags introduced | 112 |
 
 ## Hot files
 
@@ -105,6 +105,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | 53 | `webkit-find-match-cache.patch` | 1 | — | find-in-page highlighted the matches of the PREVIOUS search text. |
 | 54 | `webkit-scrollbar-no-hit-test-env.patch` | 1 | `WEBKIT_SCROLLBAR_NO_HIT_TEST`<br>`WEBKIT_SCROLLBAR_SCALE` | taps must not land on the overlay scrollbar. |
 | 55 | `webkit-offscreen-animation-throttle-env.patch` | 6 | `ATLANTIC_FRAME_TRACE`<br>`WEBKIT_OFFSCREEN_ANIMATION_INTERVAL_MS`<br>`WEBKIT_USE_SKIA_FOR_COMPOSITION` | stop compositing at full frame rate for an animation nobody can see. |
+| 56 | `webkit-egl-blob-cache-env.patch` | 1 | `WEBKIT_EGL_BLOB_CACHE_DIR`<br>`WEBKIT_EGL_BLOB_CACHE_LOG` | keep the GPU driver's compiled shaders on disk (EGL_ANDROID_blob_cache). |
 
 ## Portability / build fixes
 
