@@ -1,0 +1,94 @@
+# webkit-touch-slop-env.patch: how far a finger travels before a touch becomes
+# a scroll, and what the first scroll step is.
+#
+# WPE's TouchGestureController turns a touch into a scroll once it has moved
+# Scrollbar::pixelsPerLineStep() = 40 DEVICE px on either axis. On a 2.5-3x
+# phone that is 13-16 dp, about twice Android's 8 dp touch slop: the page does
+# not move for the first 40 px of a drag. And when it does, the first scroll
+# step is measured from the touch-down point, so the page jumps by the whole
+# slop in one frame.
+#
+#   WEBKIT_TOUCH_SLOP_PX=<n>      slop in device px (unset = stock 40).
+#                                 8 dp is 20 on the Jolla Phone, 22 on the
+#                                 Xperia 10 II.
+#   WEBKIT_TOUCH_SLOP_SUBTRACT=1  measure the first step from where the finger
+#                                 crossed the slop (Android's slop subtraction)
+#                                 instead of from touch-down.
+#
+# Both default to upstream behaviour. The 200 ms rule (a touch held that long
+# scrolls on any movement) is unchanged.
+#
+# ---
+diff --git a/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.cpp b/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.cpp
+--- a/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.cpp
++++ b/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.cpp
+@@ -26,6 +26,9 @@
+ #include "config.h"
+ #include "TouchGestureController.h"
+ 
++#include <algorithm>
++#include <cstdlib>
++
+ #if USE(LIBWPE) && ENABLE(TOUCH_EVENTS)
+ 
+ #include <WebCore/Scrollbar.h>
+@@ -43,6 +46,36 @@ static constexpr uint32_t contextMenuThreshold { 500 };
+ 
+ WTF_MAKE_TZONE_ALLOCATED_IMPL(TouchGestureController);
+ 
++// Distance (device px, either axis) a touch has to travel before it becomes a
++// scroll. Stock WPE reuses the scrollbar's line step, 40 px: on a phone that
++// is roughly twice Android's 8 dp, so the page sits still for the first 40 px
++// of a drag. WEBKIT_TOUCH_SLOP_PX overrides it; unset keeps the stock value.
++static int touchSlopPixels()
++{
++    static const int slop = [] {
++        int value = WebCore::Scrollbar::pixelsPerLineStep();
++        if (const char* env = getenv("WEBKIT_TOUCH_SLOP_PX")) {
++            int parsed = atoi(env);
++            if (parsed > 0)
++                value = parsed;
++        }
++        return value;
++    }();
++    return slop;
++}
++
++// WEBKIT_TOUCH_SLOP_SUBTRACT=1: start the drag from the point where the finger
++// crossed the slop, instead of delivering the whole slop distance as the first
++// scroll step (a visible jump when the page finally starts to move).
++static bool touchSlopSubtract()
++{
++    static const bool enabled = [] {
++        const char* env = getenv("WEBKIT_TOUCH_SLOP_SUBTRACT");
++        return env && env[0] == '1';
++    }();
++    return enabled;
++}
++
+ TouchGestureController::EventVariant TouchGestureController::handleEvent(const struct wpe_input_touch_event_raw* touchPoint)
+ {
+     switch (touchPoint->type) {
+@@ -68,13 +101,18 @@ TouchGestureController::EventVariant TouchGestureController::handleEvent(const s
+             int32_t deltaY = touchPoint->y - m_start.y;
+             uint32_t deltaTime = touchPoint->time - m_start.time;
+ 
+-            int pixelsPerLineStep = WebCore::Scrollbar::pixelsPerLineStep();
+-            bool overThreshold = std::abs(deltaX) >= pixelsPerLineStep
+-                || std::abs(deltaY) >= pixelsPerLineStep
+-                || deltaTime >= scrollCaptureThreshold;
++            int slop = touchSlopPixels();
++            int travelled = std::max(std::abs(deltaX), std::abs(deltaY));
++            bool overThreshold = travelled >= slop || deltaTime >= scrollCaptureThreshold;
+             if (!overThreshold)
+                 break;
+ 
++            if (touchSlopSubtract() && travelled >= slop) {
++                // m_offset is what the first scroll step is measured from.
++                m_offset.x = m_start.x + deltaX * slop / travelled;
++                m_offset.y = m_start.y + deltaY * slop / travelled;
++            }
++
+             // Over threshold, bump the gestured event and directly fall through to handling it.
+             m_gesturedEvent = GesturedEvent::Axis;
+             [[fallthrough]];

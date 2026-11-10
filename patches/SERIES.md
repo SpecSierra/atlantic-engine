@@ -10,11 +10,11 @@ Each patch carries its own rationale as a header comment at the top of the patch
 
 | | Count |
 |---|---|
-| Patches | 55 |
+| Patches | 58 |
 | …portability / build fixes | 4 |
-| …behaviour | 51 |
-| Distinct source files touched | 1298 |
-| Env flags introduced | 105 |
+| …behaviour | 54 |
+| Distinct source files touched | 1300 |
+| Env flags introduced | 108 |
 
 ## Hot files
 
@@ -42,6 +42,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | `Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h` | 2 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h` | 2 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp` | 2 |
+| `Source/WebKit/UIProcess/API/libwpe/TouchGestureController.cpp` | 2 |
 | `Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.cpp` | 2 |
 
 ## Behaviour patches
@@ -99,6 +100,9 @@ Files edited by more than one patch — every one is an ordering constraint.
 | 49 | `webkit-touch-no-hover-env.patch` | 1 | `WEBKIT_TOUCH_NO_HOVER` | Touch devices: a touchstart must not set :hover. |
 | 50 | `webkit-tile-gpu-readback-async-env.patch` | 1 | `WEBKIT_TILE_GPU_READBACK_ASYNC`<br>`WEBKIT_TILE_GPU_READBACK_SYNC` | Black tiles on the Jolla Phone 2: make a GPU-painted tile visible to the compositor with an asynchronous one-pixel read instead of a synchronous one. |
 | 51 | `webkit-scene-layers-lock-order.patch` | 1 | — | a page froze for good, taking no more touches, when a layer gained or lost a backdrop filter while it scrolled. |
+| 52 | `webkit-touch-slop-env.patch` | 1 | `WEBKIT_TOUCH_SLOP_PX`<br>`WEBKIT_TOUCH_SLOP_SUBTRACT` | how far a finger travels before a touch becomes a scroll, and what the first scroll step is. |
+| 53 | `webkit-find-match-cache.patch` | 1 | — | find-in-page highlighted the matches of the PREVIOUS search text. |
+| 54 | `webkit-scrollbar-no-hit-test-env.patch` | 1 | `WEBKIT_SCROLLBAR_NO_HIT_TEST`<br>`WEBKIT_SCROLLBAR_SCALE` | taps must not land on the overlay scrollbar. |
 
 ## Portability / build fixes
 

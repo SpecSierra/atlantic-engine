@@ -144,6 +144,12 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # Deadlock fix (main thread vs scrolling thread) when a backdrop filter
     # toggles during a scroll. Upstream bug, no flag.
     "patches/webkit/webkit-scene-layers-lock-order.patch"
+    # Touch slop (WEBKIT_TOUCH_SLOP_PX / _SUBTRACT), default upstream.
+    "patches/webkit/webkit-touch-slop-env.patch"
+    # Find-in-page returned the previous search's matches. Upstream bug.
+    "patches/webkit/webkit-find-match-cache.patch"
+    # WEBKIT_SCROLLBAR_NO_HIT_TEST=1: taps never land on the overlay scrollbar.
+    "patches/webkit/webkit-scrollbar-no-hit-test-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

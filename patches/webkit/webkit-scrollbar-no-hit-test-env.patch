@@ -1,0 +1,48 @@
+# webkit-scrollbar-no-hit-test-env.patch: taps must not land on the overlay
+# scrollbar.
+#
+# WPE synthesises a mouse press for every tap, and hit testing lets an overlay
+# scrollbar claim it: the press goes to the scrollbar track (the page jumps)
+# and the element under the finger never gets its click. The overlay bar is
+# invisible at rest, so the user sees a dead strip along the right edge — and
+# with WEBKIT_SCROLLBAR_SCALE=3 (webkit-scrollbar.patch, shipped default) that
+# strip is three times wider, enough to cover close buttons.
+#
+# WEBKIT_SCROLLBAR_NO_HIT_TEST=1 makes overlay scrollbars display-only:
+# Scrollbar::shouldParticipateInHitTesting() returns false for them, which
+# every hit-test path (frame view, overflow layers, list boxes) already
+# honours. Classic non-overlay scrollbars are untouched. Default off =
+# upstream. Cost when on: a mouse cannot drag an overlay thumb.
+#
+# ---
+diff --git a/Source/WebCore/platform/Scrollbar.cpp b/Source/WebCore/platform/Scrollbar.cpp
+--- a/Source/WebCore/platform/Scrollbar.cpp
++++ b/Source/WebCore/platform/Scrollbar.cpp
+@@ -38,6 +38,7 @@
+ #include "ScrollbarTheme.h"
+ #include "ScrollbarsController.h"
+ #include <algorithm>
++#include <cstdlib>
+ 
+ #if PLATFORM(MAC)
+ #include "ScrollbarMac.h"
+@@ -484,6 +485,19 @@ bool Scrollbar::isMockScrollbar() const
+ 
+ bool Scrollbar::shouldParticipateInHitTesting()
+ {
++    // WEBKIT_SCROLLBAR_NO_HIT_TEST=1: overlay scrollbars are display-only.
++    // On a touchscreen nobody drags a scrollbar thumb, but WPE turns every tap
++    // into a mouse press, and a press on the (invisible, idle) overlay track is
++    // swallowed by the scrollbar: the page jumps and the tap never reaches the
++    // element under it. With WEBKIT_SCROLLBAR_SCALE=3 that dead strip is ~60
++    // CSS px wide along the right edge, where close buttons live.
++    static const bool overlayScrollbarsIgnoreHitTests = [] {
++        const char* env = getenv("WEBKIT_SCROLLBAR_NO_HIT_TEST");
++        return env && env[0] == '1';
++    }();
++    if (overlayScrollbarsIgnoreHitTests && isOverlayScrollbar())
++        return false;
++
+     // Non-overlay scrollbars should always participate in hit testing.
+     if (!isOverlayScrollbar())
+         return true;

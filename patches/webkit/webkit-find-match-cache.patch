@@ -1,0 +1,26 @@
+# webkit-find-match-cache.patch: find-in-page highlighted the matches of the
+# PREVIOUS search text.
+#
+# CachedMatchFinder caches one search: a match list, a match count, and the
+# key (text, options, limit) they belong to. countMatches() on a new search
+# replaced the count and the key but left the old match list in place, so the
+# findMatches() that follows saw a matching key and returned the stale list.
+# Typing "Norway" highlighted every "n", the matches of the first keystroke.
+#
+# countMatches() now drops the match list when it re-keys the cache.
+# Upstream 2.54.2 bug; no flag.
+#
+# ---
+diff --git a/Source/WebCore/editing/CachedMatchFinder.cpp b/Source/WebCore/editing/CachedMatchFinder.cpp
+--- a/Source/WebCore/editing/CachedMatchFinder.cpp
++++ b/Source/WebCore/editing/CachedMatchFinder.cpp
+@@ -298,6 +298,9 @@ Expected<unsigned, CachedMatchFinder::CacheUnusable> CachedMatchFinder::countMat
+     });
+ 
+     m_countCache = count;
++    // The keys below now describe THIS search. The match list still belongs to
++    // the previous one, and findMatches() would return it as a cache hit.
++    m_matchCache = std::nullopt;
+     m_searchResultCacheKeys.targetString = target;
+     m_searchResultCacheKeys.limit = limit;
+     m_searchResultCacheKeys.options = matchAffectingOptions(options);
