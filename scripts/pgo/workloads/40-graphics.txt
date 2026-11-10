@@ -1,0 +1,8 @@
+# Canvas, SVG, WebGL and CSS animation: the painting and compositing code.
+https://www.openstreetmap.org/#map=14/48.3904/-4.4861 40
+https://threejs.org/examples/webgl_animation_keyframes.html 30
+https://observablehq.com/@d3/gallery 40
+https://animate.style/ 30
+https://codepen.io/trending 30
+https://www.chartjs.org/docs/latest/samples/bar/vertical.html 30
+https://leafletjs.com/examples/choropleth/example.html 30

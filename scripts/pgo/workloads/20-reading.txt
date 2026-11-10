@@ -1,0 +1,10 @@
+# Text-heavy pages: parsing, style resolution, line layout, text shaping,
+# tile raster while scrolling.
+https://en.m.wikipedia.org/wiki/France 40
+https://fr.m.wikipedia.org/wiki/Bretagne 30
+https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_grid_layout 30
+https://news.ycombinator.com/ 20
+https://stackoverflow.com/questions/tagged/javascript 30
+https://github.com/WebKit/WebKit 30
+https://forum.sailfishos.org/ 30
+https://jolla.com/ 30

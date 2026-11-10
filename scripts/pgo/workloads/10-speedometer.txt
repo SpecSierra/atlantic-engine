@@ -1,0 +1,3 @@
+# Speedometer 3.1: DOM, style, layout and JavaScript under real frameworks.
+# The step ends when the summary page appears; the value printed is the score.
+https://browserbench.org/Speedometer3.1/?startAutomatically=true 2400 location.hash=="#summary"&&document.getElementById("result-number").textContent

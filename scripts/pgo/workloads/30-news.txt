@@ -1,0 +1,11 @@
+# Script- and image-heavy front pages: the slow sites people actually open.
+https://www.bbc.com/news 40
+https://www.theguardian.com/international 40
+https://www.lemonde.fr/ 40
+https://www.franceinfo.fr/ 40
+https://www.reddit.com/r/all/ 40
+https://www.cnn.com/ 40
+https://www.theverge.com/ 40
+https://www.amazon.fr/ 30
+https://m.youtube.com/ 40
+https://duckduckgo.com/?q=sailfish+os&ia=web 20

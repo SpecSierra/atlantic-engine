@@ -11,6 +11,7 @@ repo `SpecSierra/atlantic-browser`; the two ship together.
 | Atlantic Browser | **1.6.1** |
 | Local patches | 49 ([patches/SERIES.md](patches/SERIES.md)) |
 | Builds | CI only — push to `master` |
+| Engine toolchain | Clang 18, ThinLTO, `-O3`; PGO opt-in ([docs/BUILD.md](docs/BUILD.md#pgo-profile-guided-optimisation)) |
 | Packages | `https://specsierra.github.io/atlantic-engine/aarch64/` |
 
 ## Documentation

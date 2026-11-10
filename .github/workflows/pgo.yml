@@ -1,0 +1,174 @@
+name: PGO
+
+# Profile-guided optimisation of the engine, end to end, without publishing
+# anything (docs/BUILD.md, "PGO"):
+#
+#   1. build an instrumented WebKit                 (ATLANTIC_PGO=generate)
+#   2. run a browsing workload on it, headless, on this host -> the profile
+#   3. build the normal packages optimised with it  (ATLANTIC_PGO=use)
+#   4. Speedometer A/B on this host: last published build vs the PGO build
+#
+# The profile is left on the build host, where "Build Atlantic packages" picks
+# it up once that workflow sets ATLANTIC_PGO=use. The RPMs here are unsigned
+# test builds for the on-device A/B: this run's artifact, never the zypper repo.
+#
+# Manual runs only. A cold run takes a few hours and shares the single build
+# host with the package builds, which queue behind it.
+on:
+  workflow_dispatch:
+    inputs:
+      reuse_profile:
+        description: Skip steps 1-2 and rebuild with the profile already on the host
+        type: boolean
+        default: false
+      bench_rounds:
+        description: Speedometer runs per build in the host A/B (0 skips it)
+        type: string
+        default: "3"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlantic-pgo
+  cancel-in-progress: false
+
+jobs:
+  pgo:
+    name: Profile, build, compare
+    runs-on:
+      - self-hosted
+      - Linux
+      - ARM64
+      - atlantic
+    timeout-minutes: 600
+    env:
+      CI_ROOT: /opt/github-runner/builds/pgo-${{ github.run_id }}-${{ github.run_attempt }}
+      PGO_ROOT: /opt/github-runner/cache/atlantic-pgo
+      GEN_CACHE_ROOT: /opt/github-runner/cache/atlantic-pgo/generate
+      USE_CACHE_ROOT: /opt/github-runner/cache/atlantic-pgo/use
+      ATLANTIC_PGO_PROFILE: /opt/github-runner/cache/atlantic-pgo/profiles/atlantic.profdata
+      # The engine the phones run today, as left by the last package build.
+      BASELINE_PREFIX: /opt/github-runner/cache/atlantic-build/wpe-sfos-prefix
+      WORK: ${{ github.workspace }}/..
+      BUILD_TOOLS: ${{ github.workspace }}
+      BROWSER_SRC: ${{ github.workspace }}/../atlantic-browser
+      PUBLIC_SFOS_BASE_VERSION: 5.1.0.11
+      LOCAL_SFOS_SOURCE_SYSROOT: /opt/sfos-sysroot
+      NPROC: ""
+      CCACHE_DIR: /opt/github-runner/cache/ccache
+      CCACHE_MAXSIZE: 40G
+      CCACHE_NOHASHDIR: "1"
+      WEBKIT_COMPILER: clang
+      RPM_ITERATION: 0.pgo${{ github.run_number }}.${{ github.run_attempt }}
+      SYSROOT: /opt/github-runner/cache/sfos-sysroot-5.1.0.11
+      OUT: /opt/github-runner/builds/pgo-${{ github.run_id }}-${{ github.run_attempt }}/wpe-sfos-rpms
+      STAGING: /opt/github-runner/builds/pgo-${{ github.run_id }}-${{ github.run_attempt }}/wpe-sfos-stage
+      ARTIFACT_ROOT: ${{ github.workspace }}/artifacts
+
+    steps:
+      - name: Reclaim workspace from root-owned leftovers
+        run: sudo chown -R "$(id -u)":"$(id -g)" "${GITHUB_WORKSPACE}" || true
+
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Check out browser repo
+        run: |
+          set -euo pipefail
+          browser_src="$(realpath -m "${BROWSER_SRC}")"
+          sudo rm -rf "${browser_src}"
+          git clone --depth 1 --branch main https://github.com/SpecSierra/atlantic-browser.git "${browser_src}"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Reset build directories
+        run: |
+          set -euo pipefail
+          rm -rf "${ARTIFACT_ROOT}"
+          mkdir -p "${ARTIFACT_ROOT}/pgo"
+          sudo rm -rf "${CI_ROOT}"
+          sudo mkdir -p "${PGO_ROOT}/profiles"
+          df -h /opt/github-runner
+
+      - name: Build instrumented engine
+        if: ${{ !inputs.reuse_profile }}
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=CI_ROOT,WORK,BUILD_TOOLS,BROWSER_SRC,PUBLIC_SFOS_BASE_VERSION,LOCAL_SFOS_SOURCE_SYSROOT,SYSROOT,NPROC,CCACHE_DIR,CCACHE_MAXSIZE,CCACHE_NOHASHDIR \
+            CI_CACHE_ROOT="${GEN_CACHE_ROOT}" \
+            CCACHE_BASEDIR="${GEN_CACHE_ROOT}" \
+            WPE_PREFIX="${GEN_CACHE_ROOT}/wpe-sfos-prefix" \
+            bash "${GITHUB_WORKSPACE}/scripts/pgo/build-instrumented.sh" 2>&1 | tee "${ARTIFACT_ROOT}/pgo/build-instrumented.log"
+
+      - name: Train
+        if: ${{ !inputs.reuse_profile }}
+        run: |
+          set -euo pipefail
+          # Not as root: the engine under training loads arbitrary web pages.
+          PGO_WORKDIR="${RUNNER_TEMP}/pgo-train" \
+            bash "${GITHUB_WORKSPACE}/scripts/pgo/train.sh" \
+              "${GEN_CACHE_ROOT}/wpe-sfos-prefix" "${RUNNER_TEMP}/atlantic.profdata" 2>&1 \
+            | tee "${ARTIFACT_ROOT}/pgo/train.log"
+          {
+            cat "${RUNNER_TEMP}/atlantic.profdata.txt"
+            echo "recorded_at=$(date --iso-8601=seconds)"
+            echo "engine_commit=${GITHUB_SHA}"
+            grep -E '^(LEGACY_WPEWEBKIT_VERSION)=' "${GITHUB_WORKSPACE}/versions.env" || true
+          } > "${RUNNER_TEMP}/atlantic.profdata.info"
+          sudo install -m 644 "${RUNNER_TEMP}/atlantic.profdata" "${ATLANTIC_PGO_PROFILE}"
+          sudo install -m 644 "${RUNNER_TEMP}/atlantic.profdata.info" "${ATLANTIC_PGO_PROFILE}.info"
+          cp "${RUNNER_TEMP}/atlantic.profdata" "${RUNNER_TEMP}/atlantic.profdata.info" "${ARTIFACT_ROOT}/pgo/"
+          {
+            echo "### Profile"
+            echo '```'
+            cat "${RUNNER_TEMP}/atlantic.profdata.info"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Drop the instrumented tree
+        if: always()
+        run: sudo rm -rf "${GEN_CACHE_ROOT}/sources" "${GEN_CACHE_ROOT}/wpe-sfos-prefix" "${RUNNER_TEMP}/pgo-train" || true
+
+      - name: Build packages with the profile
+        run: |
+          set -euo pipefail
+          sudo --preserve-env=CI_ROOT,WORK,BUILD_TOOLS,BROWSER_SRC,PUBLIC_SFOS_BASE_VERSION,LOCAL_SFOS_SOURCE_SYSROOT,SYSROOT,OUT,STAGING,ARTIFACT_ROOT,NPROC,CCACHE_DIR,CCACHE_MAXSIZE,CCACHE_NOHASHDIR,RPM_ITERATION,WEBKIT_COMPILER,ATLANTIC_PGO_PROFILE \
+            ATLANTIC_PGO=use \
+            CI_CACHE_ROOT="${USE_CACHE_ROOT}" \
+            CCACHE_BASEDIR="${USE_CACHE_ROOT}" \
+            WPE_PREFIX="${USE_CACHE_ROOT}/wpe-sfos-prefix" \
+            bash "${GITHUB_WORKSPACE}/scripts/ci-build.sh"
+
+      - name: Host A/B (Speedometer, last published build vs PGO)
+        if: ${{ inputs.bench_rounds != '0' }}
+        run: |
+          set -euo pipefail
+          if [ ! -f "${BASELINE_PREFIX}/lib/libWPEWebKit-2.0.so" ]; then
+            echo "No baseline engine at ${BASELINE_PREFIX}; skipping the A/B" | tee -a "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          echo "### Host A/B" >> "${GITHUB_STEP_SUMMARY}"
+          PGO_WORKDIR="${RUNNER_TEMP}/pgo-bench" \
+            bash "${GITHUB_WORKSPACE}/scripts/pgo/bench.sh" \
+              "baseline=${BASELINE_PREFIX}" "pgo=${USE_CACHE_ROOT}/wpe-sfos-prefix" "${{ inputs.bench_rounds }}" 2>&1 \
+            | tee "${ARTIFACT_ROOT}/pgo/bench.log"
+          sed -n '/^| build/,$p' "${ARTIFACT_ROOT}/pgo/bench.log" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Drop the PGO build tree
+        if: always()
+        run: sudo rm -rf "${USE_CACHE_ROOT}/sources" "${USE_CACHE_ROOT}/wpe-sfos-prefix" "${RUNNER_TEMP}/pgo-bench" "${CI_ROOT}" || true
+
+      - name: Fix artifact ownership
+        if: always()
+        run: sudo chown -R "$(id -u)":"$(id -g)" "${ARTIFACT_ROOT}" || true
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: atlantic-pgo-${{ github.run_number }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 30

@@ -93,6 +93,78 @@ else
     echo "  Compiler: GCC (no LTO)"
 fi
 
+# ── Profile-guided optimisation ──────────────────────────────────────────────
+# ATLANTIC_PGO selects one of three builds (docs/BUILD.md, "PGO"):
+#   off       no profile involved.
+#   generate  an instrumented engine that records what it executes. For the
+#             training run on the build host only (scripts/pgo/train.sh) — it is
+#             slow and must never be packaged.
+#   use       the release build, optimised with the profile a training run left
+#             in ATLANTIC_PGO_PROFILE: hot paths inlined and laid out together,
+#             never-executed code compiled for size and moved out of the way.
+# Both need Clang: the profile is LLVM IR-level and rides through ThinLTO.
+ATLANTIC_PGO="${ATLANTIC_PGO:-off}"
+ATLANTIC_PGO_PROFILE="${ATLANTIC_PGO_PROFILE:-/opt/github-runner/cache/atlantic-pgo/profiles/atlantic.profdata}"
+pgo_cmake_args=()
+_pgo_stamp_input="${ATLANTIC_PGO}"
+case "${ATLANTIC_PGO}" in
+    off)
+        ;;
+    generate|use)
+        if [ "${WEBKIT_COMPILER}" != "clang" ]; then
+            echo "ERROR: ATLANTIC_PGO=${ATLANTIC_PGO} needs WEBKIT_COMPILER=clang" >&2
+            exit 1
+        fi
+        ;;&
+    generate)
+        echo "  PGO: INSTRUMENTED build (training only, not for packaging)"
+        # WebKit's helper processes leave through _exit(), which skips the
+        # profile runtime's atexit() flush: see scripts/pgo/pgo-exit-hook.c.
+        pgo_hook_object="${WPE_PREFIX}/lib/atlantic-pgo-exit-hook.o"
+        mkdir -p "${WPE_PREFIX}/lib"
+        clang-18 -O2 -fPIC -c "${BUILD_TOOLS}/scripts/pgo/pgo-exit-hook.c" -o "${pgo_hook_object}"
+        pgo_link_flags="-Wl,--wrap=_exit ${pgo_hook_object}"
+        pgo_cmake_args=(
+            -DCMAKE_C_FLAGS="-fprofile-generate"
+            -DCMAKE_CXX_FLAGS="-fprofile-generate"
+            -DCMAKE_EXE_LINKER_FLAGS="${pgo_link_flags}"
+            -DCMAKE_SHARED_LINKER_FLAGS="${pgo_link_flags}"
+            -DCMAKE_MODULE_LINKER_FLAGS="${pgo_link_flags}"
+        )
+        ;;
+    use)
+        if [ ! -s "${ATLANTIC_PGO_PROFILE}" ]; then
+            echo "ERROR: ATLANTIC_PGO=use but there is no profile at ${ATLANTIC_PGO_PROFILE}" >&2
+            echo "       (run the \"PGO\" workflow, or build with ATLANTIC_PGO=off)" >&2
+            exit 1
+        fi
+        _pgo_profile_hash="$(sha256sum "${ATLANTIC_PGO_PROFILE}" | awk '{print $1}')"
+        _pgo_stamp_input="use ${_pgo_profile_hash}"
+        echo "  PGO: optimising with ${ATLANTIC_PGO_PROFILE} (${_pgo_profile_hash:0:12})"
+        # A profile outlives the sources it was recorded from: after a patch or
+        # a version bump some functions no longer match (they are then built as
+        # if unprofiled) and new ones have no data. Both are expected and are
+        # reported per function, so silence them instead of drowning the log.
+        pgo_compile_flags="-fprofile-use=${ATLANTIC_PGO_PROFILE} -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date -Wno-backend-plugin"
+        # Keep .text.hot / .text.unlikely / .text.startup apart in the output
+        # instead of letting lld fold them back into one .text: the hot code
+        # then shares pages, and the cold bulk of the library stays untouched
+        # on disk.
+        pgo_link_flags="-Wl,-z,keep-text-section-prefix"
+        pgo_cmake_args=(
+            -DCMAKE_C_FLAGS="${pgo_compile_flags}"
+            -DCMAKE_CXX_FLAGS="${pgo_compile_flags}"
+            -DCMAKE_EXE_LINKER_FLAGS="${pgo_link_flags}"
+            -DCMAKE_SHARED_LINKER_FLAGS="${pgo_link_flags}"
+            -DCMAKE_MODULE_LINKER_FLAGS="${pgo_link_flags}"
+        )
+        ;;
+    *)
+        echo "ERROR: ATLANTIC_PGO must be off, generate or use (got '${ATLANTIC_PGO}')" >&2
+        exit 1
+        ;;
+esac
+
 # ── Toolchain cache-busting ──────────────────────────────────────────────────
 # When the compiler flags change (e.g. adding/removing -fvisibility=hidden,
 # changing -mtune from cortex-a73 to cortex-a73.cortex-a53 for Kryo 260),
@@ -115,10 +187,10 @@ fi
 # toolchain or version stamps, so a change like flipping ENABLE_BUBBLEWRAP_SANDBOX
 # or adding/removing a source patch would otherwise keep the stale .so forever.
 # Hash the feature file + bwrap/dbus-proxy paths + patches.sh + every applied
-# webkit patch, and force a rebuild on mismatch.  (Patch changes silently NOT
+# webkit patch + the PGO mode and profile, and force a rebuild on mismatch.  (Patch changes silently NOT
 # rebuilding WebKit is exactly how the GPU-process-DOM-rendering regression
 # shipped — see scripts/patches.sh.)
-_features_hash="$( { sha256sum "${BUILD_TOOLS}/cmake/atlantic-wpe-features.cmake" "${BUILD_TOOLS}/scripts/patches.sh" "${BUILD_TOOLS}"/patches/webkit/*.patch 2>/dev/null; printf '%s\n%s\n' "${BWRAP_EXECUTABLE:-/usr/bin/bwrap}" "${DBUS_PROXY_EXECUTABLE:-/usr/bin/xdg-dbus-proxy}"; } | sha256sum | awk '{print $1}')"
+_features_hash="$( { sha256sum "${BUILD_TOOLS}/cmake/atlantic-wpe-features.cmake" "${BUILD_TOOLS}/scripts/patches.sh" "${BUILD_TOOLS}"/patches/webkit/*.patch 2>/dev/null; printf '%s\n%s\n%s\n' "${BWRAP_EXECUTABLE:-/usr/bin/bwrap}" "${DBUS_PROXY_EXECUTABLE:-/usr/bin/xdg-dbus-proxy}" "pgo=${_pgo_stamp_input}"; } | sha256sum | awk '{print $1}')"
 _features_stamp="${WPE_PREFIX}/lib/.webkit-features-hash"
 if [ -n "${_features_hash}" ] && [ -f "${_features_stamp}" ] && [ -f "${WPE_PREFIX}/lib/libWPEWebKit-2.0.so" ]; then
     _saved_features_hash="$(cat "${_features_stamp}" 2>/dev/null)"
@@ -185,7 +257,8 @@ if [ ! -f "${WPE_PREFIX}/lib/libWPEWebKit-2.0.so" ]; then
         -DDBUS_PROXY_EXECUTABLE="${DBUS_PROXY_EXECUTABLE:-/usr/bin/xdg-dbus-proxy}" \
         -DUSE_JPEGXL=OFF \
         -DUSE_THIN_ARCHIVES=ON \
-        -DLTO_MODE=thin
+        -DLTO_MODE=thin \
+        "${pgo_cmake_args[@]}"
 
     ninja -C WebKitBuild/Release -j"${NPROC:-$(nproc)}"
     cmake --install WebKitBuild/Release --prefix "${WPE_PREFIX}"

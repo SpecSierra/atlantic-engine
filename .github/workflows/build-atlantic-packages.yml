@@ -63,6 +63,10 @@ jobs:
       # Clang 18 + lld: enables ThinLTO via WebKit's COMPILER_IS_CLANG guard.
       # Set to "gcc" to fall back to GCC without LTO.
       WEBKIT_COMPILER: clang
+      # Profile-guided optimisation (docs/BUILD.md, "PGO"). "use" builds with
+      # the profile the PGO workflow left on this host; keep "off" until the
+      # on-device A/B of a PGO test build clears the noise floor.
+      ATLANTIC_PGO: "off"
       RPM_ITERATION: ${{ github.run_number }}.${{ github.run_attempt }}
       WPE_PREFIX: /opt/github-runner/cache/atlantic-build/wpe-sfos-prefix
       SYSROOT: /opt/github-runner/cache/sfos-sysroot-5.1.0.11
@@ -110,7 +114,7 @@ jobs:
       - name: Build Atlantic packages
         run: |
           set -euo pipefail
-          sudo --preserve-env=CI_ROOT,CI_CACHE_ROOT,WORK,BUILD_TOOLS,BROWSER_SRC,PUBLIC_SFOS_BASE_VERSION,LOCAL_SFOS_SOURCE_SYSROOT,WPE_PREFIX,SYSROOT,OUT,STAGING,ARTIFACT_ROOT,NPROC,CCACHE_DIR,CCACHE_MAXSIZE,CCACHE_BASEDIR,CCACHE_NOHASHDIR,RPM_ITERATION,WEBKIT_COMPILER \
+          sudo --preserve-env=CI_ROOT,CI_CACHE_ROOT,WORK,BUILD_TOOLS,BROWSER_SRC,PUBLIC_SFOS_BASE_VERSION,LOCAL_SFOS_SOURCE_SYSROOT,WPE_PREFIX,SYSROOT,OUT,STAGING,ARTIFACT_ROOT,NPROC,CCACHE_DIR,CCACHE_MAXSIZE,CCACHE_BASEDIR,CCACHE_NOHASHDIR,RPM_ITERATION,WEBKIT_COMPILER,ATLANTIC_PGO \
             bash "${GITHUB_WORKSPACE}/scripts/ci-build.sh"
 
       - name: Mirror sfos-qcom-boost into the repo

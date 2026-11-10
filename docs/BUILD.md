@@ -36,6 +36,7 @@ filter-list URLs and hashes.
 | `scripts/verify-patch-stack.sh` | applies the stack to a pristine tree and hashes the result — the cheap bump/consolidation guard, no compiler needed |
 | `scripts/package-rpms.sh` → `build-rpms-native.sh` | RPM staging and packaging |
 | `scripts/ci-build.sh` | the CI wrapper around all of it |
+| `scripts/pgo/` | profile-guided optimisation: instrumented build, headless training, host A/B ([PGO](#pgo-profile-guided-optimisation)) |
 
 ## Repo layout
 
@@ -84,6 +85,79 @@ Signing secrets: `ATLANTIC_RPM_SIGNING_KEY`, `ATLANTIC_RPM_SIGNING_KEY_ID`,
 Successful `master` builds publish the same rpm-md tree to the `gh-pages` branch →
 `https://specsierra.github.io/atlantic-engine/aarch64/`. That is how the phone gets
 updates ([DEVICE.md](DEVICE.md)).
+
+## PGO (profile-guided optimisation)
+
+The release engine is Clang 18 + ThinLTO at `-O3`. PGO adds what the compiler
+cannot guess: which code actually runs. Hot paths get inlined and laid out
+together; code that never ran in training is built for size and moved aside.
+
+**Status: opt-in, default OFF.** `Build Atlantic packages` sets `ATLANTIC_PGO=off`.
+Flip it to `use` only after the on-device A/B ([BENCHMARKING.md](BENCHMARKING.md)).
+
+| `ATLANTIC_PGO` | Build |
+|---|---|
+| `off` | no profile involved |
+| `generate` | instrumented engine — training on the build host only, never packaged |
+| `use` | release build optimised with `ATLANTIC_PGO_PROFILE`; fails if the profile is missing |
+
+The **PGO** workflow (`.github/workflows/pgo.yml`, manual) does the whole loop and
+publishes nothing:
+
+| Step | Script | Result |
+|---|---|---|
+| 1. instrumented build | `scripts/pgo/build-instrumented.sh` | own cache root, `-fprofile-generate` |
+| 2. training | `scripts/pgo/train.sh` | `/opt/github-runner/cache/atlantic-pgo/profiles/atlantic.profdata` (+ `.info`) |
+| 3. optimised build | `scripts/ci-build.sh` with `ATLANTIC_PGO=use` | unsigned test RPMs in the run's artifact |
+| 4. host A/B | `scripts/pgo/bench.sh` | Speedometer 3.1, last published build vs PGO, in the run summary |
+
+```bash
+gh workflow run PGO                       # full loop, a few hours cold
+gh workflow run PGO -f reuse_profile=true # steps 3-4 only
+```
+
+Test RPMs carry release `0.pgo<run>`, below every published build: install with
+`zypper in --oldpackage ./*.rpm`; the next `zypper up` returns to the channel.
+
+How training works:
+
+- `scripts/pgo/atl-headless.c` drives the engine with **no display**: WPEBackend-fdo
+  in SHM mode, Mesa llvmpipe for GL. It loads each URL of a workload file, scrolls
+  it, and moves on. It runs any engine build, so it doubles as the host benchmark.
+- `scripts/pgo/workloads/*.txt` is the workload: Speedometer, text pages, news
+  front pages, canvas/SVG/WebGL. Each file is one browser session and runs twice,
+  with CPU tile painting (Adreno path) and with Skia GPU painting (Mali path).
+- `scripts/pgo/pgo-exit-hook.c` is linked into the instrumented binaries and
+  flushes the counters every 15 s and on `_exit()`. WebKit helper processes rarely
+  reach the `atexit()` handler the LLVM runtime relies on.
+
+Traps:
+
+- **Untrained code gets slower, not just "not faster".** A feature absent from the
+  workload (video, WebRTC, a site-specific path) is compiled as cold. Widen the
+  workload before blaming PGO for a regression there.
+- **The profile describes the build host**, not the phone: llvmpipe instead of
+  hybris GL, no gst-droid, a 16-core CPU. DOM/style/layout/JS transfer well;
+  compositing and media are the least represented.
+- **A profile is tied to the sources.** After a patch or a WebKit bump, functions
+  that changed fall back to unprofiled (silently — the warnings are disabled).
+  Re-run the PGO workflow after every WebKit bump and after large patches.
+- `train.sh` refuses a profile in which too few functions ran (no network, a
+  crash at startup): using it would mark the whole engine cold.
+- The profile lives only on the build host (and in the workflow artifact for 30
+  days). If the host is rebuilt, `ATLANTIC_PGO=use` fails until PGO is re-run.
+- **Static functions are keyed by source path** as the compiler sees it. ccache's
+  `CCACHE_BASEDIR` turns that into a path relative to the build directory, which
+  is why the three trees (release, generate, use) can live under different cache
+  roots. Keep `CCACHE_BASEDIR` = the cache root and the layout below it identical,
+  or ~10% of the functions silently lose their profile.
+- **Known gap:** on the build host, script-heavy front pages (BBC, Guardian, Le
+  Monde) intermittently stop producing frames a few seconds in — the WebProcess
+  main thread was caught parked in `JSC::Heap::runEndPhase`. Seen on the plain
+  release engine too, with either GC increment setting and with the phone's JSC
+  thread counts; cause open. Those sites still train their load phase, not their
+  scrolling. Check the `left after N frames` lines in `train.log`.
+- armv7hl builds with GCC and stays without PGO.
 
 ## armv7hl (32-bit) build
 
