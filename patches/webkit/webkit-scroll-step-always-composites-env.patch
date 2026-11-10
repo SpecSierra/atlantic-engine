@@ -1,0 +1,44 @@
+# webkit-scroll-step-always-composites-env.patch: a scroll step on the
+# scrolling thread could be applied to the layers without any frame showing it.
+#
+# LayerTreeHost::requestComposition() on the scrolling thread flushes the
+# layers' pending scroll positions and only asks for a composite when that
+# flush raised m_compositionRequiredInScrollingThread. The flag is raised by
+# CoordinatedPlatformLayer::flushPendingState() via notifyCompositionRequired(),
+# which picks the flag by the CALLING thread. The main thread runs the same
+# flush (CoordinatedSceneState::flush()); when it wins the race it consumes the
+# pending position and raises m_compositionRequired — the main-thread flag,
+# acted on only at the next rendering update. The scrolling thread then finds
+# nothing pending and returns: the step waits for some unrelated composite.
+# On a busy page that shows as a fling running at the page's update rate.
+#
+# WEBKIT_SCROLL_STEP_ALWAYS_COMPOSITES=1 (default off = upstream) requests a
+# composite for every scrolling-thread step. Cost: a composite for a step that
+# moved nothing; the compositor coalesces requests per frame.
+#
+# From code reading, not yet reproduced: measure fling fps and "frames that did
+# not move" (ATLANTIC_FRAME_TRACE=1) on a script-heavy page, flag off vs on.
+#
+# ---
+diff --git a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
+@@ -532,7 +532,17 @@ void LayerTreeHost::requestComposition(CompositionReason reason)
+ #if ENABLE(SCROLLING_THREAD)
+     if (ScrollingThread::isCurrentThread()) {
+         m_sceneState->flushPendingState();
+-        if (!m_compositionRequiredInScrollingThread)
++        // WEBKIT_SCROLL_STEP_ALWAYS_COMPOSITES=1: composite for every scroll
++        // step. The flag below is only set when THIS thread's flush is the one
++        // that applied the new scroll position. If the main thread's layer
++        // flush gets there first, it consumes the pending position and raises
++        // the main thread's flag instead, which nothing acts on until the next
++        // rendering update: the step is on the layers but no frame shows it.
++        static const bool alwaysComposite = [] {
++            const char* env = getenv("WEBKIT_SCROLL_STEP_ALWAYS_COMPOSITES");
++            return env && env[0] == '1';
++        }();
++        if (!m_compositionRequiredInScrollingThread && !alwaysComposite)
+             return;
+         m_compositionRequiredInScrollingThread = false;
+     }

@@ -156,6 +156,9 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # WEBKIT_EGL_BLOB_CACHE_DIR: on-disk cache for the GPU driver's compiled
     # shaders (EGL_ANDROID_blob_cache). Default off.
     "patches/webkit/webkit-egl-blob-cache-env.patch"
+    # WEBKIT_SCROLL_STEP_ALWAYS_COMPOSITES=1: every scrolling-thread step
+    # requests a composite. Default off.
+    "patches/webkit/webkit-scroll-step-always-composites-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(
