@@ -28,6 +28,11 @@ atl_headless_setup() {
             wpe-webkit-2.0 wpebackend-fdo-1.0 glib-2.0 libsoup-3.0) \
         -Wl,--allow-shlib-undefined
 
+    # See host-condvar-shim.c: the host's glibc loses condition-variable
+    # wake-ups under this engine, which hangs sessions mid-workload.
+    gcc -O2 -fPIC -shared -o "${workdir}/host-condvar-shim.so" "${here}/host-condvar-shim.c"
+    ATL_HEADLESS_PRELOAD="${workdir}/host-condvar-shim.so"
+
     ATL_HEADLESS="${workdir}/atl-headless"
     ATL_HEADLESS_ICU_DIR="${workdir}/icu"
     export HOME="${workdir}/home"
@@ -42,7 +47,8 @@ atl_headless_setup() {
 }
 
 # Run a workload with:
-#   LD_LIBRARY_PATH="${prefix}/lib:${ATL_HEADLESS_ICU_DIR}" "${ATL_HEADLESS}" WORKLOAD
+#   LD_PRELOAD="${ATL_HEADLESS_PRELOAD}" LD_LIBRARY_PATH="${prefix}/lib:${ATL_HEADLESS_ICU_DIR}" \
+#       "${ATL_HEADLESS}" WORKLOAD
 # The helper processes are started from the path baked into that engine, so
 # the prefix has to be where the engine was installed, not a copy of it.
 

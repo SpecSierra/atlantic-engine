@@ -41,7 +41,7 @@ for painting in cpu gpu; do
         fi
         # A session that crashes or hangs loses only its own data.
         timeout --signal=TERM --kill-after=30 "${PGO_SESSION_TIMEOUT:-3600}" \
-            env LD_LIBRARY_PATH="${prefix}/lib:${ATL_HEADLESS_ICU_DIR}" "${ATL_HEADLESS}" "${workload}" \
+            env LD_PRELOAD="${ATL_HEADLESS_PRELOAD}" LD_LIBRARY_PATH="${prefix}/lib:${ATL_HEADLESS_ICU_DIR}" "${ATL_HEADLESS}" "${workload}" \
             || echo "  session ended abnormally (status $?), continuing" >&2
         atl_headless_wait_helpers "${prefix}"
     done
@@ -62,7 +62,11 @@ llvm-profdata-18 show "${output}.tmp" | tee "${output}.txt"
 # A profile in which almost nothing ran means the engine never got to load a
 # page (no network, a crash at startup...). Using it would mark the whole
 # engine cold and ship a SLOWER build, so refuse it.
-executed="$(llvm-profdata-18 show --all-functions "${output}.tmp" 2>/dev/null | grep -c 'Function count: [1-9]' || true)"
+# IR profiles have no per-function "Function count" line; --value-cutoff=1
+# prints how many functions have any counter that ran at least once.
+executed="$(llvm-profdata-18 show --value-cutoff=1 "${output}.tmp" 2>/dev/null \
+    | sed -n 's/^Number of functions with maximum count (>= 1): //p')"
+executed="${executed:-0}"
 echo "Functions executed during training: ${executed}"
 echo "functions_executed=${executed}" >> "${output}.txt"
 if [ "${executed}" -lt "${PGO_MIN_EXECUTED_FUNCTIONS:-30000}" ]; then

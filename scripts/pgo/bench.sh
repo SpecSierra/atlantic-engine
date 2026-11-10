@@ -28,7 +28,7 @@ for round in $(seq 1 "${rounds}"); do
         prefix="${arm#*=}"
         log="${workdir}/${label}-${round}.log"
         timeout --kill-after=30 1500 \
-            env LD_LIBRARY_PATH="${prefix}/lib:${ATL_HEADLESS_ICU_DIR}" "${ATL_HEADLESS}" \
+            env LD_PRELOAD="${ATL_HEADLESS_PRELOAD}" LD_LIBRARY_PATH="${prefix}/lib:${ATL_HEADLESS_ICU_DIR}" "${ATL_HEADLESS}" \
             "${here}/workloads/10-speedometer.txt" > "${log}" 2>&1 || true
         atl_headless_wait_helpers "${prefix}"
         score="$(sed -n 's/^\[atl-headless\]   result: //p' "${log}" | head -1)"
