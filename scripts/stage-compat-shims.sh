@@ -69,11 +69,12 @@ ln -sfn libgssapi_krb5.so.2 "${COMPAT_BUILD}/libgssapi_krb5.so"
 # and libicuuc, so both are linked by path from the sysroot (their SONAMEs
 # become its DT_NEEDED entries).
 # Note: must NOT use -fvisibility=hidden here — symbols must be globally visible
+_hb_icu_sysroot="${SFOS_SYSROOT:-${SYSROOT:-/opt/sfos-sysroot}}"
 _hb_icu_deps=()
 for _stem in libharfbuzz.so libicuuc.so; do
-    _dep="$(ls "${SFOS_SYSROOT}/usr/${ATL_LIBDIR}/${_stem}".[0-9]* 2>/dev/null | head -1)"
+    _dep="$(ls "${_hb_icu_sysroot}/usr/${ATL_LIBDIR}/${_stem}".[0-9]* 2>/dev/null | head -1)"
     if [ -z "${_dep}" ]; then
-        echo "ERROR: ${_stem} not found in ${SFOS_SYSROOT}/usr/${ATL_LIBDIR} (needed by the libharfbuzz-icu shim)" >&2
+        echo "ERROR: ${_stem} not found in ${_hb_icu_sysroot}/usr/${ATL_LIBDIR} (needed by the libharfbuzz-icu shim)" >&2
         exit 1
     fi
     _hb_icu_deps+=("${_dep}")
