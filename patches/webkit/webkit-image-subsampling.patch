@@ -821,11 +821,11 @@ diff --git a/Source/WebCore/platform/image-decoders/webp/WEBPImageDecoder.cpp b/
  
 -    WebPIDecoder* decoder = WebPINewDecoder(&decoderBuffer);
 +    WebPIDecoder* decoder;
++    // Function scope on purpose: WebPIDecode() keeps POINTERS to config.options
++    // and config.output, so the config has to outlive the decoder.
++    WebPDecoderConfig config;
 +    if (useScaling) {
-+        // WebPINewDecoder() takes no options, so the scaled path goes through a
-+        // full WebPDecoderConfig. config.output is copied by value but keeps our
-+        // is_external_memory pointer, so pixels still land in decoderBuffer.
-+        WebPDecoderConfig config;
++        // WebPINewDecoder() takes no options; pixels still land in decoderBuffer.
 +        if (!WebPInitDecoderConfig(&config)) {
 +            setFailed();
 +            return;

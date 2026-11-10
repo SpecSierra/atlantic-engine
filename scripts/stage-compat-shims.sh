@@ -64,11 +64,24 @@ $CC -O2 ${ATL_ARCH_FLAGS} -fPIC $SHARED \
     -o "${COMPAT_BUILD}/libgssapi_krb5.so.2" "${COMPAT_SRC}/libgssapi_krb5_stub.c"
 ln -sfn libgssapi_krb5.so.2 "${COMPAT_BUILD}/libgssapi_krb5.so"
 
-# Stub: libharfbuzz-icu.so.0 (avoids pulling in libicuuc.so.74 which SFOS doesn't have)
+# libharfbuzz-icu.so.0: SFOS has none, and the host's is tied to ICU 74.
+# The shim does the real script conversion with the phone's own libharfbuzz
+# and libicuuc, so both are linked by path from the sysroot (their SONAMEs
+# become its DT_NEEDED entries).
 # Note: must NOT use -fvisibility=hidden here — symbols must be globally visible
+_hb_icu_deps=()
+for _stem in libharfbuzz.so libicuuc.so; do
+    _dep="$(ls "${SFOS_SYSROOT}/usr/${ATL_LIBDIR}/${_stem}".[0-9]* 2>/dev/null | head -1)"
+    if [ -z "${_dep}" ]; then
+        echo "ERROR: ${_stem} not found in ${SFOS_SYSROOT}/usr/${ATL_LIBDIR} (needed by the libharfbuzz-icu shim)" >&2
+        exit 1
+    fi
+    _hb_icu_deps+=("${_dep}")
+done
 $CC -O2 ${ATL_ARCH_FLAGS} -fPIC $SHARED \
-    -Wl,-soname,libharfbuzz-icu.so.0 \
-    -o "${COMPAT_BUILD}/libharfbuzz-icu.so.0" "${COMPAT_SRC}/libharfbuzz_icu_stub.c"
+    -Wl,-soname,libharfbuzz-icu.so.0 -Wl,--no-undefined -Wl,--allow-shlib-undefined \
+    -o "${COMPAT_BUILD}/libharfbuzz-icu.so.0" "${COMPAT_SRC}/libharfbuzz_icu_stub.c" \
+    "${_hb_icu_deps[@]}"
 ln -sfn libharfbuzz-icu.so.0 "${COMPAT_BUILD}/libharfbuzz-icu.so"
 
 # GStreamer device provider exposing gst-droid cameras (droidcamsrc) to

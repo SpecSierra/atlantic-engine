@@ -159,9 +159,27 @@ fpm_rpm() {
         echo "    glibc floor for ${name}: ${glibc_floor}"
     fi
 
+    # fpm writes "License: unknown" unless told. These are what the packaged
+    # binaries are under (rpm/*.spec carries the same tags); a package that
+    # bundles several components lists them all.
+    local license
+    case "$name" in
+        libwpe|wpebackend-fdo) license="BSD-2-Clause" ;;
+        libepoxy)              license="MIT" ;;
+        bubblewrap)            license="LGPL-2.0-or-later" ;;
+        wpewebkit2)            license="LGPL-2.1-or-later AND BSD-2-Clause AND MPL-2.0" ;;
+        wpewebkit2-qt5)        license="LGPL-2.1-or-later" ;;
+        wpe-sfos-compat)       license="MPL-2.0 AND LGPL-2.1-or-later AND BSD-2-Clause AND BSD-3-Clause AND MIT AND IJG" ;;
+        atlantic-browser)      license="MPL-2.0 AND LGPL-2.1-or-later AND BSD-2-Clause AND BSD-3-Clause AND MIT AND IJG" ;;
+        *)                     license="MPL-2.0" ;;
+    esac
+
     echo "==> Building RPM: ${name}-${version}-${iteration}"
     fpm -s dir -t rpm \
         -n "$name" \
+        --license "$license" \
+        --url "https://github.com/SpecSierra/atlantic-engine" \
+        --vendor "Atlantic Browser" \
         -v "$version" \
         --iteration "${iteration}" \
         --architecture "${ATL_RPM_ARCH}" \

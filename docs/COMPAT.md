@@ -11,7 +11,8 @@ runtime closure, so every entry here needs a live reason to stay.
 | `USE_SIGILL_SKIP=1` | `libsigill_skip.c` | the rebuilt 5.1 line still trips unsupported CPU-feature probes |
 | `USE_SYNC_FENCE_SKIP=1` | `libsyncskip.c` | EGL native fences exist in the driver but libhybris-libEGL does not export them |
 | — | `patches/engine/libepoxy-rtld-default-fallback.patch` | coupled to `libegl-stubs.so`; re-check together |
-| — | `libgssapi_krb5_stub.c`, `libharfbuzz_icu_stub.c` | link-time stubs for libraries absent from the sysroot |
+| — | `libgssapi_krb5_stub.c` | link-time stub for a library absent from the sysroot |
+| — | `libharfbuzz_icu_stub.c` | the one `libharfbuzz-icu` function WebKit needs (ICU script → HarfBuzz script), on the phone's own HarfBuzz and ICU. Not a stub any more: returning "no script" broke Arabic joining and Indic shaping |
 
 ## Retired with SFOS 5.1
 
