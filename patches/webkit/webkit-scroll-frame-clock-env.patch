@@ -1,0 +1,186 @@
+# webkit-scroll-frame-clock-env.patch: one scroll step per displayed frame.
+#
+# webkit-independent-scroll gave the scrolling thread its own tick: a repeating
+# timer at the panel's nominal period (WEBKIT_INDEPENDENT_SCROLL_TICK_MS). It is
+# neither in phase with the display nor free of drift, while the compositor
+# only starts a frame after the previous one has been shown. The two clocks
+# beat: some frames are composed before the step meant for them and show the
+# same scroll position as the frame before, the next one carries two steps. A
+# fling is evaluated against real time, so the distance is right on average
+# and the motion on screen is uneven.
+#
+# WEBKIT_SCROLL_FRAME_CLOCK=1: ThreadedCompositor::frameComplete() tells the
+# scrolling tree that a frame has been shown; if a scroll is live the tree
+# takes its step then, on the scrolling thread, and the composite that step
+# requests is the next frame. The loop clocks itself off the display through
+# the compositor's existing frameComplete throttle. The timer remains as the
+# fallback at twice its period: it fires only when no frame was shown for that
+# long, which keeps a fling alive across a stall and restarts the loop.
+# Unset = the timer alone, as before. Nothing runs while no scroll is live
+# (one atomic load per frame).
+#
+# NOT verified on a device. Check with ATLANTIC_FRAME_TRACE: share of frames
+# that did not move during a fling, and step unevenness, off vs on; and that a
+# fling at the top/bottom edge and one over a stalled main thread still end.
+#
+# ---
+diff --git a/Source/WebCore/page/scrolling/ScrollingTree.h b/Source/WebCore/page/scrolling/ScrollingTree.h
+index 20639283..4a327092 100644
+--- a/Source/WebCore/page/scrolling/ScrollingTree.h
++++ b/Source/WebCore/page/scrolling/ScrollingTree.h
+@@ -240,6 +240,10 @@ public:
+ 
+     WEBCORE_EXPORT bool hasRecentActivity();
+ 
++    // Called by the compositor, on its own thread, each time a frame it rendered
++    // has been shown (WEBKIT_SCROLL_FRAME_CLOCK, see ThreadedScrollingTree).
++    virtual void compositorFrameCompleted() { }
++
+     void scrollBySimulatingWheelEventForTesting(ScrollingNodeID, FloatSize);
+ 
+     virtual void lockLayersForHitTesting() { }
+diff --git a/Source/WebCore/page/scrolling/ThreadedScrollingTree.cpp b/Source/WebCore/page/scrolling/ThreadedScrollingTree.cpp
+index 07ccacc7..213f44d6 100644
+--- a/Source/WebCore/page/scrolling/ThreadedScrollingTree.cpp
++++ b/Source/WebCore/page/scrolling/ThreadedScrollingTree.cpp
+@@ -151,6 +151,7 @@ void ThreadedScrollingTree::invalidate()
+     removeAllNodes();
+     m_delayedRenderingUpdateDetectionTimer = nullptr;
+     m_independentTickTimer = nullptr;
++    m_independentTickArmed = false;
+ 
+     // Since this can potentially be the last reference to the scrolling coordinator,
+     // we need to release it on the main thread since it has member variables (such as timers)
+@@ -667,8 +668,64 @@ void ThreadedScrollingTree::ensureIndependentTick()
+         m_independentTickTimer = makeUnique<RunLoop::Timer>(RunLoop::currentSingleton(), "ThreadedScrollingTree::IndependentTickTimer"_s, this, &ThreadedScrollingTree::independentTickFired);
+     }
+ 
+-    if (!m_independentTickTimer->isActive())
++    if (!m_independentTickTimer->isActive()) {
+         m_independentTickTimer->startRepeating(independentTickInterval());
++        m_independentTickArmed = true;
++    }
++}
++
++// WEBKIT_SCROLL_FRAME_CLOCK=1: one scroll step per displayed frame.
++//
++// The tick above runs at the panel's nominal period but is not in phase with
++// it and drifts against it. The compositor only starts a frame once the
++// previous one has been shown, so the two clocks beat: some frames are composed
++// before the step that was meant for them (the frame shows the same scroll
++// position as the last one: "a frame that did not move") and the next one
++// carries two steps. A kinetic scroll is evaluated against real time, so the
++// distance comes out right on average while the motion on screen is uneven.
++//
++// With the switch on, the compositor tells the tree whenever a frame of its
++// own has been shown, and the scroll step is taken then: the position is
++// computed once per frame, as late as possible before that frame is composed,
++// and the composite it requests is the next frame. The loop clocks itself off
++// the display through the compositor's existing frameComplete throttle.
++//
++// The timer stays as the fallback, at twice its period: it only fires when no
++// frame was shown for that long (nothing moved, so nothing was composed, or
++// the surface is not being presented), which keeps a fling alive across a
++// stall and restarts the loop. Nothing changes while no scroll is live.
++static bool scrollFrameClockEnabled()
++{
++    static bool enabled = [] {
++        const char* env = getenv("WEBKIT_SCROLL_FRAME_CLOCK");
++        return env && env[0] == '1';
++    }();
++    return enabled;
++}
++
++void ThreadedScrollingTree::compositorFrameCompleted()
++{
++    // Any thread (the compositor's). Cheap when idle: one atomic load.
++    if (!scrollFrameClockEnabled() || !independentScrollEnabled() || !m_independentTickArmed.load())
++        return;
++
++    ScrollingThread::dispatch([protectedThis = Ref { *this }] {
++        protectedThis->frameClockTick();
++    });
++}
++
++void ThreadedScrollingTree::frameClockTick()
++{
++    ASSERT(ScrollingThread::isCurrentThread());
++
++    // The scroll may have ended, or the tree been invalidated, while this hop
++    // was queued.
++    if (!m_independentTickTimer || !m_independentTickTimer->isActive())
++        return;
++
++    // Push the free-running tick out of the way; it is the fallback now.
++    m_independentTickTimer->startRepeating(independentTickInterval() * 2);
++    independentTickFired();
+ }
+ 
+ void ThreadedScrollingTree::independentTickFired()
+@@ -680,6 +737,7 @@ void ThreadedScrollingTree::independentTickFired()
+     // restart it on the next scroll.
+     if (!hasRecentActivity()) {
+         m_independentTickTimer->stop();
++        m_independentTickArmed = false;
+         return;
+     }
+ 
+diff --git a/Source/WebCore/page/scrolling/ThreadedScrollingTree.h b/Source/WebCore/page/scrolling/ThreadedScrollingTree.h
+index 0af7401e..e30c45f3 100644
+--- a/Source/WebCore/page/scrolling/ThreadedScrollingTree.h
++++ b/Source/WebCore/page/scrolling/ThreadedScrollingTree.h
+@@ -31,6 +31,7 @@
+ #include <WebCore/ScrollingStateScrollingNode.h>
+ #include <WebCore/ScrollingStateTree.h>
+ #include <WebCore/ScrollingTree.h>
++#include <atomic>
+ #include <wtf/Condition.h>
+ #include <wtf/RefPtr.h>
+ #include <wtf/RunLoop.h>
+@@ -120,6 +121,10 @@ private:
+     // ensureIndependentTick() in the implementation.
+     void ensureIndependentTick();
+     void independentTickFired();
++    // WEBKIT_SCROLL_FRAME_CLOCK: step the scroll when the compositor reports a
++    // displayed frame instead of on the free-running tick.
++    void compositorFrameCompleted() final;
++    void frameClockTick();
+     void waitForRenderingUpdateCompletionOrTimeout() WTF_REQUIRES_LOCK(m_treeLock);
+ 
+     bool NODELETE canUpdateLayersOnScrollingThread() const WTF_REQUIRES_LOCK(m_treeLock);
+@@ -162,6 +167,10 @@ private:
+     // WEBKIT_INDEPENDENT_SCROLL: created, started, stopped and fired only on the
+     // scrolling thread (its own run loop), so it needs no lock.
+     std::unique_ptr<RunLoop::Timer> m_independentTickTimer;
++    // True while that timer is armed, i.e. while a scroll is live. Read from the
++    // compositor thread to decide whether a displayed frame is worth a hop to
++    // the scrolling thread.
++    std::atomic<bool> m_independentTickArmed { false };
+ 
+     HashMap<ScrollingNodeID, RequestedScrollData> m_nodesWithPendingScrollAnimations WTF_GUARDED_BY_LOCK(m_treeLock);
+     HashMap<ScrollingNodeID, RequestedKeyboardScrollData> m_nodesWithPendingKeyboardScrollAnimations WTF_GUARDED_BY_LOCK(m_treeLock);
+diff --git a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
+index d2628ef7..cb87031a 100644
+--- a/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
++++ b/Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp
+@@ -847,6 +847,20 @@ void ThreadedCompositor::frameComplete()
+ {
+     ASSERT(m_workQueue->runLoop().isCurrent());
+ 
++#if ENABLE(SCROLLING_THREAD)
++    // WEBKIT_SCROLL_FRAME_CLOCK: a frame has been shown, so this is the moment
++    // to take the next scroll step (a no-op unless a scroll is live).
++    {
++        RefPtr<WebCore::ScrollingTree> scrollingTree;
++        {
++            Locker scrollingTreeLocker { m_scrollingTreeLock };
++            scrollingTree = m_scrollingTree;
++        }
++        if (scrollingTree)
++            scrollingTree->compositorFrameCompleted();
++    }
++#endif
++
+     Locker locker { m_state.lock };
+     WTFEmitSignpost(this, FrameComplete, "reasons: %s, state: %s, waiting for tiles: %s", reasonsToString(m_state.reasons).ascii().data(), stateToString(m_state.state).characters(), m_state.isWaitingForTiles ? "yes" : "no");
+ 

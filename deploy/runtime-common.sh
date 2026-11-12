@@ -569,6 +569,9 @@ atlantic_export_browser_env() {
     # webkit-visible-tiles-first-env: tiles on screen are painted before the
     # prepaint cushion (same work, different order).   [0]
     export WEBKIT_VISIBLE_TILES_FIRST="${WEBKIT_VISIBLE_TILES_FIRST:-1}"
+    # webkit-scroll-frame-clock-env (WEBKIT_SCROLL_FRAME_CLOCK=1: one scroll
+    # step per displayed frame) is compiled in but NOT set: it changes the
+    # pacing of every scroll and has never run on a phone.
     # webkit-scroll-position-scale-env (WEBKIT_SCROLL_POSITION_SCALE=<device
     # px per CSS px>) is compiled in but NOT set: it changes where every
     # scrolled layer lands and has never run on a phone.

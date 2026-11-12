@@ -10,11 +10,11 @@ Each patch carries its own rationale as a header comment at the top of the patch
 
 | | Count |
 |---|---|
-| Patches | 67 |
+| Patches | 68 |
 | …portability / build fixes | 4 |
-| …behaviour | 63 |
+| …behaviour | 64 |
 | Distinct source files touched | 1309 |
-| Env flags introduced | 119 |
+| Env flags introduced | 120 |
 
 ## Hot files
 
@@ -23,11 +23,11 @@ Files edited by more than one patch — every one is an ordering constraint.
 | Source file | Patches |
 |---|---|
 | `Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp` | 7 |
+| `Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp` | 7 |
 | `Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp` | 6 |
-| `Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp` | 6 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp` | 5 |
+| `Source/WebCore/page/scrolling/ScrollingTree.h` | 4 |
 | `Source/WebCore/page/scrolling/ScrollingTree.cpp` | 3 |
-| `Source/WebCore/page/scrolling/ScrollingTree.h` | 3 |
 | `Source/WebCore/platform/graphics/gstreamer/WebKitWebSourceGStreamer.cpp` | 3 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStore.cpp` | 3 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.cpp` | 3 |
@@ -39,6 +39,8 @@ Files edited by more than one patch — every one is an ordering constraint.
 | `Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.cpp` | 3 |
 | `Source/WebCore/dom/Document.cpp` | 2 |
 | `Source/WebCore/page/EventHandler.cpp` | 2 |
+| `Source/WebCore/page/scrolling/ThreadedScrollingTree.cpp` | 2 |
+| `Source/WebCore/page/scrolling/ThreadedScrollingTree.h` | 2 |
 | `Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp` | 2 |
 | `Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.h` | 2 |
 | `Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h` | 2 |
@@ -115,6 +117,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | 61 | `webkit-scroll-position-scale-env.patch` | 1 | `WEBKIT_SCROLL_POSITION_SCALE` | scroll in screen pixels, not whole CSS pixels. |
 | 62 | `webkit-touch-prediction-env.patch` | 2 | `WEBKIT_TOUCH_PREDICTION_MS` | the page follows the finger more closely. |
 | 63 | `webkit-visible-tiles-first-env.patch` | 1 | `ATLANTIC_FRAME_TRACE`<br>`WEBKIT_VISIBLE_TILES_FIRST` | paint the tiles on screen before the prepaint cushion. |
+| 64 | `webkit-scroll-frame-clock-env.patch` | 4 | `ATLANTIC_FRAME_TRACE`<br>`WEBKIT_INDEPENDENT_SCROLL`<br>`WEBKIT_INDEPENDENT_SCROLL_TICK_MS`<br>`WEBKIT_SCROLL_FRAME_CLOCK` | one scroll step per displayed frame. |
 
 ## Portability / build fixes
 

@@ -177,6 +177,10 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # WEBKIT_VISIBLE_TILES_FIRST=1: dirty tiles under the viewport are queued
     # for painting before the prepaint cushion. Default off.
     "patches/webkit/webkit-visible-tiles-first-env.patch"
+    # WEBKIT_SCROLL_FRAME_CLOCK=1: scroll steps are taken when the compositor
+    # reports a displayed frame; the tick timer becomes the fallback.
+    # Default off, unverified.
+    "patches/webkit/webkit-scroll-frame-clock-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(
