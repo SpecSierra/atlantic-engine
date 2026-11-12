@@ -574,15 +574,18 @@ atlantic_export_browser_env() {
     # being filtered on the main thread. Host-compared off/on in CPU and GPU
     # painting: same picture except edge antialiasing of a rotated shadow. [0]
     export WEBKIT_SKIA_GRAPHICS_CONTEXT_FILTERS="${WEBKIT_SKIA_GRAPHICS_CONTEXT_FILTERS:-1}"
-    # webkit-web-process-cache-capacity-env (WEBKIT_WEB_PROCESS_CACHE_CAPACITY=
-    # <n>: keep n page-less WebProcesses for reuse whatever the cache model)
-    # is compiled in but NOT set: every cached process is resident memory.
-    # webkit-scroll-frame-clock-env (WEBKIT_SCROLL_FRAME_CLOCK=1: one scroll
-    # step per displayed frame) is compiled in but NOT set: it changes the
-    # pacing of every scroll and has never run on a phone.
-    # webkit-scroll-position-scale-env (WEBKIT_SCROLL_POSITION_SCALE=<device
-    # px per CSS px>) is compiled in but NOT set: it changes where every
-    # scrolled layer lands and has never run on a phone.
+    # webkit-web-process-cache-capacity-env: the browser sets
+    # WEBKIT_WEB_PROCESS_CACHE_CAPACITY=1 on low-RAM phones (apps/browser/
+    # main.cpp, memory tier); high-RAM phones keep WebKit's own capacity.
+    # webkit-scroll-frame-clock-env: one scroll step per displayed frame; the
+    # tick timer is the fallback. Never run on a phone before 1.7.0: if
+    # scrolling feels uneven or flings stall, this is the first to turn off. [0]
+    export WEBKIT_SCROLL_FRAME_CLOCK="${WEBKIT_SCROLL_FRAME_CLOCK:-1}"
+    # webkit-scroll-position-scale-env (WEBKIT_SCROLL_POSITION_SCALE) must stay
+    # UNSET here: the view applies the device scale as page zoom (no
+    # ATLANTIC_TRUE_DEVICE_SCALE), so one scroll unit already is one screen
+    # pixel, and a scale > 1 would park layers BETWEEN screen pixels (blurred
+    # text). It only makes sense together with ATLANTIC_TRUE_DEVICE_SCALE=1.
     # webkit-egl-blob-cache-env: the GPU driver's compiled shaders are kept
     # on disk in the app's cache.   [set to an empty string]
     if [ -z "${WEBKIT_EGL_BLOB_CACHE_DIR+x}" ]; then
