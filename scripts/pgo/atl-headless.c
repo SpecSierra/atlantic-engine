@@ -244,11 +244,30 @@ int main(int argc, char** argv)
         "user-agent", g_getenv("ATL_HEADLESS_USER_AGENT") ? g_getenv("ATL_HEADLESS_USER_AGENT")
             : "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile Safari/605.1.15",
         "enable-webgl", TRUE,
+        /* ATL_HEADLESS_CONSOLE=1: page console messages go to stdout. */
+        "enable-write-console-messages-to-stdout", g_getenv("ATL_HEADLESS_CONSOLE") != NULL,
         "media-playback-requires-user-gesture", TRUE,
         NULL);
 
+    /* ATL_HEADLESS_USER_CSS / ATL_HEADLESS_USER_JS=<file>: a user style sheet
+     * and a document-start user script for every page, to reproduce what a
+     * browser front end injects (cosmetic filters, site scripts). */
+    WebKitUserContentManager* content_manager = webkit_user_content_manager_new();
+    char* injected = NULL;
+    if (g_getenv("ATL_HEADLESS_USER_CSS") && g_file_get_contents(g_getenv("ATL_HEADLESS_USER_CSS"), &injected, NULL, NULL)) {
+        webkit_user_content_manager_add_style_sheet(content_manager, webkit_user_style_sheet_new(injected,
+            WEBKIT_USER_CONTENT_INJECT_ALL_FRAMES, WEBKIT_USER_STYLE_LEVEL_USER, NULL, NULL));
+        g_free(injected);
+    }
+    if (g_getenv("ATL_HEADLESS_USER_JS") && g_file_get_contents(g_getenv("ATL_HEADLESS_USER_JS"), &injected, NULL, NULL)) {
+        webkit_user_content_manager_add_script(content_manager, webkit_user_script_new(injected,
+            WEBKIT_USER_CONTENT_INJECT_ALL_FRAMES, WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START, NULL, NULL));
+        g_free(injected);
+    }
+
     view = WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW,
         "backend", webkit_web_view_backend_new(backend, NULL, NULL),
+        "user-content-manager", content_manager,
         "network-session", session,
         "settings", settings,
         NULL));
