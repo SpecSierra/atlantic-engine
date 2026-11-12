@@ -171,6 +171,9 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # WEBKIT_SCROLL_POSITION_SCALE=<scale>: scrolling-thread positions snap to
     # screen pixels instead of whole CSS pixels. Default off, unverified.
     "patches/webkit/webkit-scroll-position-scale-env.patch"
+    # WEBKIT_TOUCH_PREDICTION_MS=<ms>: a drag scrolls to where the finger
+    # will be, extrapolated from its speed. Default off, unverified.
+    "patches/webkit/webkit-touch-prediction-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

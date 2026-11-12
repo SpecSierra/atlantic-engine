@@ -1,0 +1,113 @@
+# webkit-touch-prediction-env.patch: the page follows the finger more closely.
+#
+# During a drag WPE scrolls to the last point the touchscreen reported. That
+# report is a few ms old on arrival and the frame it lands in is displayed
+# later still, so the page trails the finger by a distance proportional to its
+# speed, most visibly at lift-off.
+#
+# WEBKIT_TOUCH_PREDICTION_MS=<1..32>: TouchGestureController scrolls to where
+# the finger will be that many ms ahead, extrapolating each axis at the speed
+# measured between the last two reports (ignored if they are less than 2 ms or
+# more than 40 ms apart). Every event is measured from the previous predicted
+# point, so guesses are corrected, not accumulated. Unset/0 = upstream.
+#
+# NOT verified on a device. Too large a value shows as the page running ahead
+# of the finger and stepping back when it stops; start at 8 (about one 90-120 Hz
+# report) and compare the lag at lift-off.
+#
+# ---
+diff --git a/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.cpp b/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.cpp
+index 9836d3d3..f5489456 100644
+--- a/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.cpp
++++ b/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.cpp
+@@ -76,6 +76,24 @@ static bool touchSlopSubtract()
+     return enabled;
+ }
+ 
++// WEBKIT_TOUCH_PREDICTION_MS=<1..32>: while dragging, scroll to where the
++// finger will be that many ms from now (its last measured speed, per axis),
++// not to where the touchscreen last reported it. The report is already a few
++// ms old when it arrives and the frame it lands in is shown later still, so
++// the page otherwise trails the finger by a constant distance that grows with
++// speed. Each event corrects the previous guess, so the error does not add up;
++// when the finger stops, the page settles on it with the next report.
++// Unset/0 = upstream.
++static int touchPredictionMs()
++{
++    static const int value = [] {
++        const char* env = getenv("WEBKIT_TOUCH_PREDICTION_MS");
++        int parsed = env ? atoi(env) : 0;
++        return parsed >= 1 && parsed <= 32 ? parsed : 0;
++    }();
++    return value;
++}
++
+ TouchGestureController::EventVariant TouchGestureController::handleEvent(const struct wpe_input_touch_event_raw* touchPoint)
+ {
+     switch (touchPoint->type) {
+@@ -86,6 +104,7 @@ TouchGestureController::EventVariant TouchGestureController::handleEvent(const s
+         m_offset = { touchPoint->x, touchPoint->y };
+         m_xAxisLockBroken = m_yAxisLockBroken = false;
+         m_axisGestureStarted = false;
++        m_lastSample = { };
+         break;
+     case wpe_input_touch_event_type_motion:
+     {
+@@ -151,17 +170,35 @@ TouchGestureController::EventVariant TouchGestureController::handleEvent(const s
+                 m_yAxisLockBroken = true;
+             }
+ 
+-            generatedEvent.event.x_axis = (m_xAxisLockBroken || yOffset < axisLockActivationThreshold) ?  -(m_offset.x - touchPoint->x) : 0;
+-            generatedEvent.event.y_axis = (m_yAxisLockBroken || xOffset < axisLockActivationThreshold) ?  -(m_offset.y - touchPoint->y) : 0;
++            // Where the scroll is taken to: the reported point, or (with
++            // WEBKIT_TOUCH_PREDICTION_MS) that point carried forward at the
++            // speed measured since the previous report.
++            int32_t targetX = touchPoint->x;
++            int32_t targetY = touchPoint->y;
++            if (int predictionMs = touchPredictionMs()) {
++                uint32_t elapsed = touchPoint->time - m_lastSample.time;
++                // Reports come every 8-9 ms; outside 2..40 ms the speed is noise
++                // (duplicate timestamp) or stale (the finger paused).
++                if (m_lastSample.valid && elapsed >= 2 && elapsed <= 40) {
++                    targetX += (touchPoint->x - m_lastSample.x) * predictionMs / static_cast<int32_t>(elapsed);
++                    targetY += (touchPoint->y - m_lastSample.y) * predictionMs / static_cast<int32_t>(elapsed);
++                }
++                m_lastSample = { true, touchPoint->time, touchPoint->x, touchPoint->y };
++            }
++
++            generatedEvent.event.x_axis = (m_xAxisLockBroken || yOffset < axisLockActivationThreshold) ?  -(m_offset.x - targetX) : 0;
++            generatedEvent.event.y_axis = (m_yAxisLockBroken || xOffset < axisLockActivationThreshold) ?  -(m_offset.y - targetY) : 0;
++            m_offset.x = targetX;
++            m_offset.y = targetY;
+ #else
+             generatedEvent.event = {
+                 wpe_input_axis_event_type_motion,
+                 touchPoint->time, m_start.x, m_start.y,
+                 2, (touchPoint->y - m_offset.y), 0
+             };
+-#endif
+             m_offset.x = touchPoint->x;
+             m_offset.y = touchPoint->y;
++#endif
+             return generatedEvent;
+         }
+         }
+diff --git a/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.h b/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.h
+index 22ff8d01..6e6d99ef 100644
+--- a/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.h
++++ b/Source/WebKit/UIProcess/API/libwpe/TouchGestureController.h
+@@ -84,6 +84,14 @@ private:
+         int32_t y { 0 };
+     } m_offset;
+ 
++    // Previous touch report of the current drag (WEBKIT_TOUCH_PREDICTION_MS).
++    struct {
++        bool valid { false };
++        uint32_t time { 0 };
++        int32_t x { 0 };
++        int32_t y { 0 };
++    } m_lastSample;
++
+     bool m_xAxisLockBroken { false };
+     bool m_yAxisLockBroken { false };
+     // True once this gesture has emitted its first axis (scroll) event. The first is

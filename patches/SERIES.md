@@ -10,11 +10,11 @@ Each patch carries its own rationale as a header comment at the top of the patch
 
 | | Count |
 |---|---|
-| Patches | 65 |
+| Patches | 66 |
 | …portability / build fixes | 4 |
-| …behaviour | 61 |
+| …behaviour | 62 |
 | Distinct source files touched | 1309 |
-| Env flags introduced | 117 |
+| Env flags introduced | 118 |
 
 ## Hot files
 
@@ -35,6 +35,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp` | 3 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp` | 3 |
 | `Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp` | 3 |
+| `Source/WebKit/UIProcess/API/libwpe/TouchGestureController.cpp` | 3 |
 | `Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.cpp` | 3 |
 | `Source/WebCore/dom/Document.cpp` | 2 |
 | `Source/WebCore/page/EventHandler.cpp` | 2 |
@@ -43,7 +44,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | `Source/WebCore/platform/graphics/texmap/BitmapTexturePool.h` | 2 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h` | 2 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp` | 2 |
-| `Source/WebKit/UIProcess/API/libwpe/TouchGestureController.cpp` | 2 |
+| `Source/WebKit/UIProcess/API/libwpe/TouchGestureController.h` | 2 |
 | `Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.h` | 2 |
 | `Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.h` | 2 |
 
@@ -112,6 +113,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | 59 | `webkit-paint-thread-nice-env.patch` | 1 | `WEBKIT_PAINT_THREAD_NICE`<br>`WEBKIT_RASTER_ON_COMPOSITOR_THREAD` | tile-painting threads give way to the scrolling and compositor threads. |
 | 60 | `webkit-touch-down-stops-fling-env.patch` | 2 | `WEBKIT_TOUCH_DOWN_STOPS_FLING` | a finger landing on a coasting page stops it at once. |
 | 61 | `webkit-scroll-position-scale-env.patch` | 1 | `WEBKIT_SCROLL_POSITION_SCALE` | scroll in screen pixels, not whole CSS pixels. |
+| 62 | `webkit-touch-prediction-env.patch` | 2 | `WEBKIT_TOUCH_PREDICTION_MS` | the page follows the finger more closely. |
 
 ## Portability / build fixes
 
