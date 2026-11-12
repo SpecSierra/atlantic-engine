@@ -569,6 +569,14 @@ atlantic_export_browser_env() {
     # webkit-visible-tiles-first-env: tiles on screen are painted before the
     # prepaint cushion (same work, different order).   [0]
     export WEBKIT_VISIBLE_TILES_FIRST="${WEBKIT_VISIBLE_TILES_FIRST:-1}"
+    # webkit-skia-graphics-context-filters-env: CSS blur()/drop-shadow() are
+    # Skia image filters on a layer, rasterised with the tiles, instead of
+    # being filtered on the main thread. Host-compared off/on in CPU and GPU
+    # painting: same picture except edge antialiasing of a rotated shadow. [0]
+    export WEBKIT_SKIA_GRAPHICS_CONTEXT_FILTERS="${WEBKIT_SKIA_GRAPHICS_CONTEXT_FILTERS:-1}"
+    # webkit-web-process-cache-capacity-env (WEBKIT_WEB_PROCESS_CACHE_CAPACITY=
+    # <n>: keep n page-less WebProcesses for reuse whatever the cache model)
+    # is compiled in but NOT set: every cached process is resident memory.
     # webkit-scroll-frame-clock-env (WEBKIT_SCROLL_FRAME_CLOCK=1: one scroll
     # step per displayed frame) is compiled in but NOT set: it changes the
     # pacing of every scroll and has never run on a phone.
