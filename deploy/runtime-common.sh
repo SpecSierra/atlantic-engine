@@ -531,6 +531,45 @@ atlantic_export_browser_env() {
     # device before flipping this on. Set to 1 to enable.
     export WEBKIT_DROP_TILES_WHEN_HIDDEN="${WEBKIT_DROP_TILES_WHEN_HIDDEN:-0}"
 
+    # ── Switches from the 2026-11 pass ───────────────────────────────────────
+    # ON BY DEFAULT at the user's request (2026-11-12), BEFORE any on-device
+    # A/B: each compiles and is host-tested at most. Every one is an env
+    # switch: set it to the value in brackets before launch to get upstream
+    # behaviour back, and bisect with them if scrolling or Back misbehaves.
+    #
+    # webkit-touch-slop-env: a touch becomes a scroll after 20 device px
+    # (~8 dp, Android's slop) instead of 40, and the first step is measured
+    # from where the slop was crossed, not from touch-down.   [40 / 0]
+    export WEBKIT_TOUCH_SLOP_PX="${WEBKIT_TOUCH_SLOP_PX:-20}"
+    export WEBKIT_TOUCH_SLOP_SUBTRACT="${WEBKIT_TOUCH_SLOP_SUBTRACT:-1}"
+    # webkit-scrollbar-no-hit-test-env: overlay scrollbars do not take
+    # touches meant for the page.   [0]
+    export WEBKIT_SCROLLBAR_NO_HIT_TEST="${WEBKIT_SCROLLBAR_NO_HIT_TEST:-1}"
+    # webkit-offscreen-animation-throttle-env: animations scrolled out of
+    # view composite at 10 Hz.   [0]
+    # Keep WEBKIT_SCROLL_STEP_ALWAYS_COMPOSITES on with it: without that, a
+    # fling over such a page can drop to the throttled rate.
+    export WEBKIT_OFFSCREEN_ANIMATION_INTERVAL_MS="${WEBKIT_OFFSCREEN_ANIMATION_INTERVAL_MS:-100}"
+    # webkit-scroll-step-always-composites-env: every scrolling-thread step
+    # requests a composite.   [0]
+    export WEBKIT_SCROLL_STEP_ALWAYS_COMPOSITES="${WEBKIT_SCROLL_STEP_ALWAYS_COMPOSITES:-1}"
+    # webkit-bfcache-no-store-env: "Cache-Control: no-store" pages may come
+    # back from the back/forward cache within 3 min if their HttpOnly cookies
+    # are unchanged.   [0]
+    export WEBKIT_BFCACHE_NO_STORE="${WEBKIT_BFCACHE_NO_STORE:-1}"
+    # webkit-egl-blob-cache-env: the GPU driver's compiled shaders are kept
+    # on disk in the app's cache.   [set to an empty string]
+    if [ -z "${WEBKIT_EGL_BLOB_CACHE_DIR+x}" ]; then
+        _atl_blob_dir="${XDG_CACHE_HOME:-${HOME}/.cache}/org.atlantic/atlanticbrowser/egl-blob-cache"
+        if mkdir -p "${_atl_blob_dir}" 2>/dev/null; then
+            chmod 700 "${_atl_blob_dir}" 2>/dev/null || true
+            export WEBKIT_EGL_BLOB_CACHE_DIR="${_atl_blob_dir}"
+        fi
+        unset _atl_blob_dir
+    elif [ -z "${WEBKIT_EGL_BLOB_CACHE_DIR}" ]; then
+        unset WEBKIT_EGL_BLOB_CACHE_DIR
+    fi
+
     # ── Fling throttle: starve page work during fast scroll ──────────────────
     # Honoured by webkit-fling-throttle-env.patch. On main-thread-bound pages
     # (franceinfo/radiofrance: scroll <1fps, style resolution dominates) scroll-
