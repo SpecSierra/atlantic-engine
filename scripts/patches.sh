@@ -162,6 +162,15 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # WEBKIT_BFCACHE_NO_STORE=1: no-store pages enter the back/forward cache
     # (3 minutes, HttpOnly cookies unchanged). Default off.
     "patches/webkit/webkit-bfcache-no-store-env.patch"
+    # WEBKIT_PAINT_THREAD_NICE=<n>: tile-painting threads run at that nice
+    # level so scrolling/compositing win the CPU. Default off.
+    "patches/webkit/webkit-paint-thread-nice-env.patch"
+    # WEBKIT_TOUCH_DOWN_STOPS_FLING=1: touch-down stops a coasting page at
+    # once instead of after the touch slop. Default off.
+    "patches/webkit/webkit-touch-down-stops-fling-env.patch"
+    # WEBKIT_SCROLL_POSITION_SCALE=<scale>: scrolling-thread positions snap to
+    # screen pixels instead of whole CSS pixels. Default off, unverified.
+    "patches/webkit/webkit-scroll-position-scale-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

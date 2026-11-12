@@ -1,0 +1,61 @@
+# webkit-scroll-position-scale-env.patch: scroll in screen pixels, not whole
+# CSS pixels.
+#
+# The scrolling thread rounds every scroll position to a whole CSS pixel. On a
+# 2.5x-3x phone that is 2.5-3 screen pixels: a slow drag and the tail of a
+# fling move in visible steps.
+#
+# WEBKIT_SCROLL_POSITION_SCALE=<device px per CSS px, 1..8> snaps positions to
+# that grid instead, so the page moves one screen pixel at a time and still
+# lands on the pixel grid (text stays sharp). Unset = upstream. The main thread
+# keeps integer positions.
+#
+# NOT verified on a device. Check: no shimmer of text while dragging slowly, no
+# one-pixel jump of the page when a scroll ends and the main thread commits
+# its (integer) position, sticky/fixed elements stay put.
+#
+# ---
+diff --git a/Source/WebCore/page/scrolling/ThreadedScrollingTreeScrollingNodeDelegate.cpp b/Source/WebCore/page/scrolling/ThreadedScrollingTreeScrollingNodeDelegate.cpp
+index af936b00..4b65722c 100644
+--- a/Source/WebCore/page/scrolling/ThreadedScrollingTreeScrollingNodeDelegate.cpp
++++ b/Source/WebCore/page/scrolling/ThreadedScrollingTreeScrollingNodeDelegate.cpp
+@@ -26,6 +26,8 @@
+ #include "config.h"
+ #include "ThreadedScrollingTreeScrollingNodeDelegate.h"
+ 
++#include <cstdlib>
++
+ #if ENABLE(ASYNC_SCROLLING) && ENABLE(SCROLLING_THREAD)
+ 
+ #include "ScrollExtents.h"
+@@ -219,9 +221,29 @@ void ThreadedScrollingTreeScrollingNodeDelegate::removeWheelEventTestCompletionD
+     scrollingTree()->removeWheelEventTestCompletionDeferralForReason(scrollingNode()->scrollingNodeID(), reason);
+ }
+ 
++// WEBKIT_SCROLL_POSITION_SCALE=<device px per CSS px, 1..8>: snap scrolling-
++// thread scroll positions to that grid instead of to whole CSS pixels. On a
++// 2.5x-3x phone a whole CSS pixel is 2.5-3 screen pixels, so a slow drag or
++// the tail of a fling moves in visible steps; with the scale set the page
++// moves one screen pixel at a time and still lands on the pixel grid, so text
++// stays sharp. Unset = upstream rounding. The main thread keeps integer scroll
++// positions (it rounds what the scrolling thread reports).
++static float scrollPositionSnapScale()
++{
++    static const float scale = [] {
++        const char* env = getenv("WEBKIT_SCROLL_POSITION_SCALE");
++        float value = env ? strtof(env, nullptr) : 0;
++        return value >= 1 && value <= 8 ? value : 1;
++    }();
++    return scale;
++}
++
+ FloatPoint ThreadedScrollingTreeScrollingNodeDelegate::adjustedScrollPosition(const FloatPoint& position) const
+ {
+-    return { roundf(position.x()), roundf(position.y()) };
++    float scale = scrollPositionSnapScale();
++    if (scale == 1)
++        return { roundf(position.x()), roundf(position.y()) };
++    return { roundf(position.x() * scale) / scale, roundf(position.y() * scale) / scale };
+ }
+ 
+ void ThreadedScrollingTreeScrollingNodeDelegate::handleKeyboardScrollRequest(const RequestedKeyboardScrollData& scrollData)

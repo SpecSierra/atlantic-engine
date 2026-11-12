@@ -1,0 +1,90 @@
+# webkit-touch-down-stops-fling-env.patch: a finger landing on a coasting page
+# stops it at once.
+#
+# Upstream WPE stops a kinetic scroll only when the next wheel event arrives:
+# after the finger has also travelled the touch slop, or never for a tap (the
+# page keeps coasting under the finger and the tap clicks whatever passes).
+#
+# WEBKIT_TOUCH_DOWN_STOPS_FLING=1: on touch-down, within 3 s of this view's
+# last touch scroll, the view sends a zero-delta MayBegin wheel event at the
+# touch point. It is hit-tested to the scroller under the finger, whose
+# ScrollingEffectsController stops the kinetic animation and keeps its
+# velocity for flick accumulation, exactly as the first event of a drag does.
+# Unset = upstream. Taps outside that window are untouched; the tap that stops
+# a fling still produces its click (as before).
+#
+# Verify on device: fling, touch and hold -> the page stops under the finger
+# without moving it; flick twice quickly -> speeds still add up.
+#
+# ---
+diff --git a/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.cpp b/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.cpp
+index fd89bd4e..f7707871 100644
+--- a/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.cpp
++++ b/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.cpp
+@@ -254,6 +254,35 @@ ViewLegacy::ViewLegacy(struct wpe_view_backend* backend, const API::PageConfigur
+                     view.m_touchSequenceGeneration++;
+                     view.m_touchSequenceHandledLocally = false;
+                     view.m_touchDownEvent = *touchPoint;
++#if WPE_CHECK_VERSION(1, 5, 0)
++                    // WEBKIT_TOUCH_DOWN_STOPS_FLING=1: a finger landing on a
++                    // coasting page stops it at once. Upstream only stops a
++                    // kinetic scroll when the next wheel event arrives, i.e.
++                    // after the finger has also travelled the touch slop (or
++                    // never, for a tap). A zero-delta MayBegin wheel event is
++                    // the smallest thing that takes that path: it is hit-tested
++                    // to the scroller under the finger, whose
++                    // ScrollingEffectsController stops its kinetic animation
++                    // and keeps the velocity for flick accumulation. Only sent
++                    // within 3 s of this view's last scroll gesture, the longest
++                    // a fling plausibly lasts, so ordinary taps are untouched.
++                    static const bool touchDownStopsFling = [] {
++                        const char* env = getenv("WEBKIT_TOUCH_DOWN_STOPS_FLING");
++                        return env && env[0] == '1';
++                    }();
++                    if (touchDownStopsFling && view.m_lastAxisGestureEnd
++                        && MonotonicTime::now() - view.m_lastAxisGestureEnd < Seconds(3)) {
++                        struct wpe_input_axis_2d_event stopEvent { };
++                        stopEvent.base = {
++                            static_cast<enum wpe_input_axis_event_type>(wpe_input_axis_event_type_mask_2d | wpe_input_axis_event_type_motion_smooth),
++                            touchPoint->time, touchPoint->x, touchPoint->y,
++                            0, 0, 0,
++                        };
++                        page.handleNativeWheelEvent(WebKit::NativeWebWheelEvent(&stopEvent.base, page.deviceScaleFactor(),
++                            WebWheelEvent::Phase::MayBegin, WebWheelEvent::Phase::None));
++                        view.m_lastAxisGestureEnd = { };
++                    }
++#endif
+                 } else if (touchAckTimeoutMs && !view.m_touchSequenceHandledLocally
+                     && touchGestureController.gesturedEvent() != TouchGestureController::GesturedEvent::Axis
+                     && !view.m_pendingTouchEventAcks.isEmpty()
+@@ -286,6 +315,8 @@ ViewLegacy::ViewLegacy(struct wpe_view_backend* backend, const API::PageConfigur
+                         if (event->type != wpe_input_axis_event_type_null) {
+                             page.handleNativeWheelEvent(WebKit::NativeWebWheelEvent(event, page.deviceScaleFactor(),
+                                 axisEvent.phase, WebWheelEvent::Phase::None));
++                            if (axisEvent.phase == WebWheelEvent::Phase::Ended)
++                                view.m_lastAxisGestureEnd = MonotonicTime::now();
+                             handledThroughGestureController = true;
+                         }
+                     });
+@@ -333,6 +364,8 @@ ViewLegacy::ViewLegacy(struct wpe_view_backend* backend, const API::PageConfigur
+                         if (event->type != wpe_input_axis_event_type_null) {
+                             page.handleNativeWheelEvent(WebKit::NativeWebWheelEvent(event, page.deviceScaleFactor(),
+                                 axisEvent.phase, WebWheelEvent::Phase::None));
++                            if (axisEvent.phase == WebWheelEvent::Phase::Ended)
++                                view.m_lastAxisGestureEnd = MonotonicTime::now();
+                         }
+                     });
+             }
+diff --git a/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.h b/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.h
+index cdbf7cdb..23bb0c0e 100644
+--- a/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.h
++++ b/Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.h
+@@ -91,6 +91,8 @@ private:
+     uint64_t m_touchSequenceGeneration { 1 };
+     bool m_touchSequenceHandledLocally { false };
+     struct wpe_input_touch_event_raw m_touchDownEvent { };
++    // When this view last finished a touch scroll gesture (WEBKIT_TOUCH_DOWN_STOPS_FLING).
++    MonotonicTime m_lastAxisGestureEnd;
+     Deque<std::pair<uint64_t, MonotonicTime>> m_pendingTouchEventAcks;
+     HashSet<uint64_t> m_locallyHandledTouchGenerations;
+ #endif

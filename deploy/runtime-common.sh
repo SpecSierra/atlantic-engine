@@ -557,6 +557,15 @@ atlantic_export_browser_env() {
     # back from the back/forward cache within 3 min if their HttpOnly cookies
     # are unchanged.   [0]
     export WEBKIT_BFCACHE_NO_STORE="${WEBKIT_BFCACHE_NO_STORE:-1}"
+    # webkit-touch-down-stops-fling-env: a finger landing on a coasting page
+    # stops it at once, not after the touch slop.   [0]
+    export WEBKIT_TOUCH_DOWN_STOPS_FLING="${WEBKIT_TOUCH_DOWN_STOPS_FLING:-1}"
+    # webkit-paint-thread-nice-env: tile-painting worker threads run at nice 5
+    # so the scrolling and compositor threads get the CPU first.   [0]
+    export WEBKIT_PAINT_THREAD_NICE="${WEBKIT_PAINT_THREAD_NICE:-5}"
+    # webkit-scroll-position-scale-env (WEBKIT_SCROLL_POSITION_SCALE=<device
+    # px per CSS px>) is compiled in but NOT set: it changes where every
+    # scrolled layer lands and has never run on a phone.
     # webkit-egl-blob-cache-env: the GPU driver's compiled shaders are kept
     # on disk in the app's cache.   [set to an empty string]
     if [ -z "${WEBKIT_EGL_BLOB_CACHE_DIR+x}" ]; then

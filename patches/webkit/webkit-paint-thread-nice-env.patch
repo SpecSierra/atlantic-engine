@@ -1,0 +1,76 @@
+# webkit-paint-thread-nice-env.patch: tile-painting threads give way to the
+# scrolling and compositor threads.
+#
+# WEBKIT_PAINT_THREAD_NICE=<1..19> runs the SkiaCPUWorker/SkiaGPUWorker threads
+# at that nice level (set once per thread, on its first tile). A burst of tile
+# replays in the middle of a fling then no longer competes on equal terms with
+# the threads that put the next frame on screen. Raising a thread's own nice
+# value needs no privilege; lowering the compositor's would, and Sailfish has
+# no rtkit to ask. Unset/0 = upstream. The compositor thread is never touched,
+# including when it paints tiles itself (WEBKIT_RASTER_ON_COMPOSITOR_THREAD).
+#
+# Verify on device: top -H shows the workers at the chosen NI; compare
+# 'frames that did not move' while flinging a heavy page, off vs on.
+#
+# ---
+diff --git a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
+index e72c449e..19a97662 100644
+--- a/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
++++ b/Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp
+@@ -32,6 +32,11 @@
+ #include <cstdlib>
+ #include <cstring>
+ #include <ctime>
++#if OS(LINUX)
++#include <sys/resource.h>
++#include <sys/syscall.h>
++#include <unistd.h>
++#endif
+ 
+ #if USE(COORDINATED_GRAPHICS) && USE(SKIA)
+ #include "BitmapTexturePool.h"
+@@ -391,6 +396,32 @@ private:
+ // fences off, and flushing the allocating context all failed. Costs one GPU
+ // round trip per whole-tile paint. See
+ // docs/investigations/jolla-gpu-black-tiles.md in atlantic-engine.
++// WEBKIT_PAINT_THREAD_NICE=<1..19>: run the tile-painting worker threads at
++// that nice level, so the scrolling and compositor threads win the CPU when a
++// burst of tile replays lands in the middle of a fling. Raising a thread's own
++// nice value needs no privilege (lowering one does, and rtkit is not there on
++// Sailfish to do it), which is why the painters step down instead of the
++// compositor stepping up. Unset/0 = upstream. Never applied to the compositor
++// thread, which paints tiles itself in WEBKIT_RASTER_ON_COMPOSITOR_THREAD mode.
++static void applyPaintingThreadNiceLevel()
++{
++#if OS(LINUX)
++    static const int niceLevel = [] {
++        const char* env = getenv("WEBKIT_PAINT_THREAD_NICE");
++        int value = env ? atoi(env) : 0;
++        return value >= 1 && value <= 19 ? value : 0;
++    }();
++    if (!niceLevel)
++        return;
++    static thread_local bool applied = false;
++    if (applied)
++        return;
++    applied = true;
++    // On Linux setpriority(PRIO_PROCESS) with a thread id affects that thread only.
++    setpriority(PRIO_PROCESS, static_cast<id_t>(syscall(SYS_gettid)), niceLevel);
++#endif
++}
++
+ static bool tileGpuReadbackSync()
+ {
+     static const bool enabled = [] {
+@@ -677,7 +708,10 @@ Ref<CoordinatedTileBuffer> SkiaPaintingEngine::replay(const GraphicsLayerCoordin
+     if (rasterOnCompositorThread() && m_compositorRunLoop)
+         m_compositorRunLoop->dispatch(WTF::move(rasterTask));
+     else
+-        m_paintingWorkerPool->postTask(WTF::move(rasterTask));
++        m_paintingWorkerPool->postTask([rasterTask = WTF::move(rasterTask)]() mutable {
++            applyPaintingThreadNiceLevel();
++            rasterTask();
++        });
+ 
+     return buffer;
+ }

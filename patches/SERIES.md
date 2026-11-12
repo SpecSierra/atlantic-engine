@@ -10,11 +10,11 @@ Each patch carries its own rationale as a header comment at the top of the patch
 
 | | Count |
 |---|---|
-| Patches | 62 |
+| Patches | 65 |
 | …portability / build fixes | 4 |
-| …behaviour | 58 |
-| Distinct source files touched | 1308 |
-| Env flags introduced | 114 |
+| …behaviour | 61 |
+| Distinct source files touched | 1309 |
+| Env flags introduced | 117 |
 
 ## Hot files
 
@@ -22,7 +22,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 
 | Source file | Patches |
 |---|---|
-| `Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp` | 6 |
+| `Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp` | 7 |
 | `Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp` | 6 |
 | `Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp` | 6 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp` | 4 |
@@ -35,6 +35,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedTileBuffer.cpp` | 3 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/GraphicsLayerCoordinated.cpp` | 3 |
 | `Source/WebKit/UIProcess/API/glib/WebKitWebView.cpp` | 3 |
+| `Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.cpp` | 3 |
 | `Source/WebCore/dom/Document.cpp` | 2 |
 | `Source/WebCore/page/EventHandler.cpp` | 2 |
 | `Source/WebCore/platform/graphics/gstreamer/MediaPlayerPrivateGStreamer.cpp` | 2 |
@@ -43,7 +44,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h` | 2 |
 | `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedPlatformLayer.cpp` | 2 |
 | `Source/WebKit/UIProcess/API/libwpe/TouchGestureController.cpp` | 2 |
-| `Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.cpp` | 2 |
+| `Source/WebKit/UIProcess/API/wpe/WPEWebViewLegacy.h` | 2 |
 | `Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.h` | 2 |
 
 ## Behaviour patches
@@ -108,6 +109,9 @@ Files edited by more than one patch — every one is an ordering constraint.
 | 56 | `webkit-egl-blob-cache-env.patch` | 1 | `WEBKIT_EGL_BLOB_CACHE_DIR`<br>`WEBKIT_EGL_BLOB_CACHE_LOG` | keep the GPU driver's compiled shaders on disk (EGL_ANDROID_blob_cache). |
 | 57 | `webkit-scroll-step-always-composites-env.patch` | 1 | `ATLANTIC_FRAME_TRACE`<br>`WEBKIT_SCROLL_STEP_ALWAYS_COMPOSITES` | a scroll step on the scrolling thread could be applied to the layers without any frame showing it. |
 | 58 | `webkit-bfcache-no-store-env.patch` | 3 | `WEBKIT_BFCACHE_NO_STORE` | let "Cache-Control: no-store" pages into the back/forward cache, safely. |
+| 59 | `webkit-paint-thread-nice-env.patch` | 1 | `WEBKIT_PAINT_THREAD_NICE`<br>`WEBKIT_RASTER_ON_COMPOSITOR_THREAD` | tile-painting threads give way to the scrolling and compositor threads. |
+| 60 | `webkit-touch-down-stops-fling-env.patch` | 2 | `WEBKIT_TOUCH_DOWN_STOPS_FLING` | a finger landing on a coasting page stops it at once. |
+| 61 | `webkit-scroll-position-scale-env.patch` | 1 | `WEBKIT_SCROLL_POSITION_SCALE` | scroll in screen pixels, not whole CSS pixels. |
 
 ## Portability / build fixes
 
