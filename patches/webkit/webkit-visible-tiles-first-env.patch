@@ -1,0 +1,84 @@
+# webkit-visible-tiles-first-env.patch: paint the tiles on screen before the
+# prepaint cushion.
+#
+# CoordinatedBackingStoreProxy keeps its tiles in a hash map and handed the
+# dirty ones to the painting threads in hash order, so with a handful of
+# painters a cushion tile nobody is looking at could be painted and uploaded
+# before a tile under the viewport: the frame shows an unpainted area for
+# longer than the work required.
+#
+# WEBKIT_VISIBLE_TILES_FIRST=1 queues dirty tiles that intersect the visible
+# rect first, then the others by distance from its centre. Same tiles, same
+# work, only the order changes. Unset = upstream order.
+#
+# Verify on device: share of frames with unpainted areas while flinging a long
+# page (ATLANTIC_FRAME_TRACE), off vs on.
+#
+# ---
+diff --git a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
+index b556dd44..b2638e72 100644
+--- a/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
++++ b/Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp
+@@ -30,6 +30,7 @@
+ #include <wtf/CheckedArithmetic.h>
+ #include <wtf/MathExtras.h>
+ 
++#include <algorithm>
+ #include <cmath>
+ #include <cstdlib>
+ #include <cstring>
+@@ -101,6 +102,15 @@ static float coverAreaMultiplierFromEnvironment()
+     return multiplier;
+ }
+ 
++static bool visibleTilesFirstEnabled()
++{
++    static bool enabled = [] {
++        const char* env = getenv("WEBKIT_VISIBLE_TILES_FIRST");
++        return env && env[0] == '1';
++    }();
++    return enabled;
++}
++
+ static bool directionalCoverageEnabled()
+ {
+     static bool enabled = [] {
+@@ -788,10 +798,35 @@ OptionSet<CoordinatedBackingStoreProxy::UpdateResult> CoordinatedBackingStorePro
+         auto recording = paintingEngine.record(*layer.owner(), tileDirtyRectUnion, contentsOpaque, contentsScale, dirtyTilesCount);
+ #endif
+ 
+-        unsigned dirtyTileIndex = 0;
++        // The tiles live in a hash map, so this loop used to hand them to the
++        // painting threads in hash order: a tile of the prepaint cushion could
++        // be painted (and uploaded) before one the user is looking at.
++        // WEBKIT_VISIBLE_TILES_FIRST=1 queues the tiles under the viewport
++        // first, then the rest nearest-first.
++        Vector<Tile*> dirtyTiles;
++        dirtyTiles.reserveInitialCapacity(dirtyTilesCount);
+         for (auto& tile : m_tiles.values()) {
+-            if (!tile.isDirty())
+-                continue;
++            if (tile.isDirty())
++                dirtyTiles.append(&tile);
++        }
++        if (visibleTilesFirstEnabled() && dirtyTiles.size() > 1) {
++            auto visibleCenter = m_visibleRect.center();
++            auto rank = [&](const Tile* tile) -> int64_t {
++                if (tile->rect.intersects(m_visibleRect))
++                    return -1;
++                auto center = tile->rect.center();
++                int64_t dx = center.x() - visibleCenter.x();
++                int64_t dy = center.y() - visibleCenter.y();
++                return dx * dx + dy * dy;
++            };
++            std::stable_sort(dirtyTiles.begin(), dirtyTiles.end(), [&](const Tile* a, const Tile* b) {
++                return rank(a) < rank(b);
++            });
++        }
++
++        unsigned dirtyTileIndex = 0;
++        for (auto* tilePointer : dirtyTiles) {
++            auto& tile = *tilePointer;
+ 
+             WTFBeginSignpost(this, UpdateTile, "%u/%u, id: %d, rect: %ix%i+%i+%i, dirty: %ix%i+%i+%i", ++dirtyTileIndex, dirtyTilesCount, tile.id,
+                 tile.rect.x(), tile.rect.y(), tile.rect.width(), tile.rect.height(), tile.dirtyRect.x(), tile.dirtyRect.y(), tile.dirtyRect.width(), tile.dirtyRect.height());

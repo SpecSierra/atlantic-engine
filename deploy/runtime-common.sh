@@ -566,6 +566,9 @@ atlantic_export_browser_env() {
     # webkit-touch-prediction-env: a drag scrolls to where the finger will be
     # 8 ms ahead (about one touch report), from its measured speed.   [0]
     export WEBKIT_TOUCH_PREDICTION_MS="${WEBKIT_TOUCH_PREDICTION_MS:-8}"
+    # webkit-visible-tiles-first-env: tiles on screen are painted before the
+    # prepaint cushion (same work, different order).   [0]
+    export WEBKIT_VISIBLE_TILES_FIRST="${WEBKIT_VISIBLE_TILES_FIRST:-1}"
     # webkit-scroll-position-scale-env (WEBKIT_SCROLL_POSITION_SCALE=<device
     # px per CSS px>) is compiled in but NOT set: it changes where every
     # scrolled layer lands and has never run on a phone.

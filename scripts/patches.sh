@@ -174,6 +174,9 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # WEBKIT_TOUCH_PREDICTION_MS=<ms>: a drag scrolls to where the finger
     # will be, extrapolated from its speed. Default off, unverified.
     "patches/webkit/webkit-touch-prediction-env.patch"
+    # WEBKIT_VISIBLE_TILES_FIRST=1: dirty tiles under the viewport are queued
+    # for painting before the prepaint cushion. Default off.
+    "patches/webkit/webkit-visible-tiles-first-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

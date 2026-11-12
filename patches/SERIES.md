@@ -10,11 +10,11 @@ Each patch carries its own rationale as a header comment at the top of the patch
 
 | | Count |
 |---|---|
-| Patches | 66 |
+| Patches | 67 |
 | …portability / build fixes | 4 |
-| …behaviour | 62 |
+| …behaviour | 63 |
 | Distinct source files touched | 1309 |
-| Env flags introduced | 118 |
+| Env flags introduced | 119 |
 
 ## Hot files
 
@@ -25,7 +25,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | `Source/WebCore/platform/graphics/skia/SkiaPaintingEngine.cpp` | 7 |
 | `Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp` | 6 |
 | `Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp` | 6 |
-| `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp` | 4 |
+| `Source/WebCore/platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.cpp` | 5 |
 | `Source/WebCore/page/scrolling/ScrollingTree.cpp` | 3 |
 | `Source/WebCore/page/scrolling/ScrollingTree.h` | 3 |
 | `Source/WebCore/platform/graphics/gstreamer/WebKitWebSourceGStreamer.cpp` | 3 |
@@ -114,6 +114,7 @@ Files edited by more than one patch — every one is an ordering constraint.
 | 60 | `webkit-touch-down-stops-fling-env.patch` | 2 | `WEBKIT_TOUCH_DOWN_STOPS_FLING` | a finger landing on a coasting page stops it at once. |
 | 61 | `webkit-scroll-position-scale-env.patch` | 1 | `WEBKIT_SCROLL_POSITION_SCALE` | scroll in screen pixels, not whole CSS pixels. |
 | 62 | `webkit-touch-prediction-env.patch` | 2 | `WEBKIT_TOUCH_PREDICTION_MS` | the page follows the finger more closely. |
+| 63 | `webkit-visible-tiles-first-env.patch` | 1 | `ATLANTIC_FRAME_TRACE`<br>`WEBKIT_VISIBLE_TILES_FIRST` | paint the tiles on screen before the prepaint cushion. |
 
 ## Portability / build fixes
 
