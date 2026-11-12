@@ -1,0 +1,205 @@
+# webkit-skia-graphics-context-filters-env.patch: CSS blur() and drop-shadow()
+# applied by Skia on the painting threads instead of in software on the main
+# thread.
+#
+# On this port (legacy WPE API) the only filter rendering mode is Software: a
+# filtered element is painted into an image buffer and the filter primitives
+# run on the CPU, on the main thread, inside painting, every time the element
+# repaints.
+#
+# WebKit has a third mode, FilterRenderingMode::GraphicsContext, used on Apple
+# platforms: the filter is handed to the graphics context as a GraphicsStyle
+# on a transparency layer and the platform applies it. This implements that
+# mode for Skia, for the two primitives the README names (shadows and blurs):
+#
+#  - GraphicsContextSkia::beginTransparencyLayer() turns the pending style into
+#    an SkImageFilter on the layer's paint (Blur / DropShadow). On the
+#    recording canvas used for threaded tile painting the layer and its filter
+#    are recorded, and the filtering runs where the picture is replayed.
+#  - FEGaussianBlur (edge mode none) and FEDropShadow (equal deviations) offer
+#    the mode on Skia and pass the standard deviation in user space.
+#  - WEBKIT_SKIA_GRAPHICS_CONTEXT_FILTERS=1 adds the mode to the page's
+#    preferred set. A filter chain uses it only if every function in it
+#    supports it; anything else (brightness, contrast, SVG graphs with other
+#    primitives...) keeps the software path. Unset = upstream.
+#
+# NOT verified on a device. Check: a page with filter: blur() / drop-shadow()
+# looks the same off vs on (blur extent, shadow offset and colour, no seams
+# at tile edges, correct under page zoom), and main-thread time while
+# scrolling it drops.
+#
+# ---
+diff --git a/Source/WebCore/page/Page.cpp b/Source/WebCore/page/Page.cpp
+index 00eb128c..06c156ed 100644
+--- a/Source/WebCore/page/Page.cpp
++++ b/Source/WebCore/page/Page.cpp
+@@ -223,6 +223,7 @@
+ #include <ranges>
+ #include <wtf/Borrow.h>
+ #include <wtf/FileSystem.h>
++#include <cstdlib>
+ #include <wtf/StdLibExtras.h>
+ #include <wtf/SystemTracing.h>
+ #include <wtf/TZoneMallocInlines.h>
+@@ -4916,6 +4917,21 @@ OptionSet<FilterRenderingMode> Page::preferredFilterRenderingModes(const Graphic
+ 
+     UNUSED_PARAM(context);
+ 
++#if USE(SKIA)
++    // WEBKIT_SKIA_GRAPHICS_CONTEXT_FILTERS=1: let CSS/SVG filters made only of
++    // blur() and drop-shadow() be applied by the graphics context (a Skia image
++    // filter on a layer) instead of being rendered into an image buffer and
++    // filtered in software here, on the main thread, during painting. With
++    // threaded tile painting the layer and its filter are recorded and the
++    // filtering happens on the painting threads.
++    static const bool skiaGraphicsContextFilters = [] {
++        const char* env = getenv("WEBKIT_SKIA_GRAPHICS_CONTEXT_FILTERS");
++        return env && env[0] == '1';
++    }();
++    if (skiaGraphicsContextFilters && !context.hasDropShadow())
++        modes.add(FilterRenderingMode::GraphicsContext);
++#endif
++
+ #if USE(GRAPHICS_CONTEXT_FILTERS)
+ #if !HAVE(FIX_FOR_RADAR_104392017)
+     if (context.renderingMode() == RenderingMode::Accelerated || !context.knownToHaveFloatBasedBacking()) {
+diff --git a/Source/WebCore/platform/graphics/filters/FEDropShadow.cpp b/Source/WebCore/platform/graphics/filters/FEDropShadow.cpp
+index b596fafd..7294f984 100644
+--- a/Source/WebCore/platform/graphics/filters/FEDropShadow.cpp
++++ b/Source/WebCore/platform/graphics/filters/FEDropShadow.cpp
+@@ -146,7 +146,7 @@ OptionSet<FilterRenderingMode> FEDropShadow::supportedFilterRenderingModes(Optio
+ #if (USE(CORE_IMAGE)) || (USE(SKIA))
+     modes.add(FilterRenderingMode::Accelerated);
+ #endif
+-#if USE(CG) && HAVE(CGSTYLE_FIXES_DROP_SHADOW_BLUR)
++#if (USE(CG) && HAVE(CGSTYLE_FIXES_DROP_SHADOW_BLUR)) || USE(SKIA)
+     if (m_stdX == m_stdY)
+         modes.add(FilterRenderingMode::GraphicsContext);
+ #endif
+@@ -158,7 +158,13 @@ std::optional<GraphicsStyle> FEDropShadow::createGraphicsStyle(GraphicsContext&
+     ASSERT(m_stdX == m_stdY);
+ 
+     auto offset = filter.resolvedSize(context.platformShadowOffset({ m_dx, m_dy }));
++#if USE(SKIA)
++    // Skia's image filters take the standard deviation, in user space; the
++    // graphics context hands it over unchanged (GraphicsContextSkia::beginTransparencyLayer).
++    auto radius = filter.resolvedSize({ m_stdX, m_stdY });
++#else
+     auto radius = FEGaussianBlur::calculateUnscaledKernelSize(filter.resolvedSize({ m_stdX, m_stdY }));
++#endif
+ 
+     return GraphicsDropShadow { offset, static_cast<float>(radius.width()), m_shadowColor, ShadowRadiusMode::Default, m_shadowOpacity };
+ }
+diff --git a/Source/WebCore/platform/graphics/filters/FEGaussianBlur.cpp b/Source/WebCore/platform/graphics/filters/FEGaussianBlur.cpp
+index 79b5db41..061eb558 100644
+--- a/Source/WebCore/platform/graphics/filters/FEGaussianBlur.cpp
++++ b/Source/WebCore/platform/graphics/filters/FEGaussianBlur.cpp
+@@ -178,6 +178,9 @@ OptionSet<FilterRenderingMode> FEGaussianBlur::supportedFilterRenderingModes(Opt
+ #if HAVE(CGSTYLE_COLORMATRIX_BLUR) && HAVE(CGSTYLE_FIXES_DROP_SHADOW_BLUR)
+     if (m_stdX == m_stdY)
+         modes.add(FilterRenderingMode::GraphicsContext);
++#elif USE(SKIA)
++    if (m_edgeMode == EdgeModeType::None)
++        modes.add(FilterRenderingMode::GraphicsContext);
+ #endif
+     return modes & preferredFilterRenderingModes;
+ }
+@@ -205,8 +208,13 @@ std::unique_ptr<FilterEffectApplier> FEGaussianBlur::createSoftwareApplier() con
+ std::optional<GraphicsStyle> FEGaussianBlur::createGraphicsStyle(GraphicsContext&, const Filter& filter) const
+ {
+     auto stdDeviation = effectiveStdDeviation(filter.renderingOptions());
++#if USE(SKIA)
++    // Skia's image filters take the standard deviation, in user space.
++    return GraphicsGaussianBlur { filter.resolvedSize(stdDeviation) };
++#else
+     auto radius = calculateUnscaledKernelSize(filter.resolvedSize(stdDeviation));
+     return GraphicsGaussianBlur { radius };
++#endif
+ }
+ 
+ TextStream& FEGaussianBlur::externalRepresentation(TextStream& ts, FilterRepresentation representation) const
+diff --git a/Source/WebCore/platform/graphics/filters/SourceGraphic.cpp b/Source/WebCore/platform/graphics/filters/SourceGraphic.cpp
+index 28452659..f06e2d62 100644
+--- a/Source/WebCore/platform/graphics/filters/SourceGraphic.cpp
++++ b/Source/WebCore/platform/graphics/filters/SourceGraphic.cpp
+@@ -51,7 +51,9 @@ OptionSet<FilterRenderingMode> SourceGraphic::supportedFilterRenderingModes(Opti
+ #if USE(CORE_IMAGE) || USE(SKIA)
+     modes.add(FilterRenderingMode::Accelerated);
+ #endif
+-#if USE(GRAPHICS_CONTEXT_FILTERS)
++#if USE(GRAPHICS_CONTEXT_FILTERS) || USE(SKIA)
++    // Skia: only ever in the preferred set when WEBKIT_SKIA_GRAPHICS_CONTEXT_FILTERS
++    // is on (Page::preferredFilterRenderingModes).
+     modes.add(FilterRenderingMode::GraphicsContext);
+ #endif
+     return modes & preferredFilterRenderingModes;
+diff --git a/Source/WebCore/platform/graphics/skia/GraphicsContextSkia.cpp b/Source/WebCore/platform/graphics/skia/GraphicsContextSkia.cpp
+index e4ba2366..081af264 100644
+--- a/Source/WebCore/platform/graphics/skia/GraphicsContextSkia.cpp
++++ b/Source/WebCore/platform/graphics/skia/GraphicsContextSkia.cpp
+@@ -839,7 +839,7 @@ void GraphicsContextSkia::setCTM(const AffineTransform& ctm)
+     m_canvas.setMatrix(ctm);
+ }
+ 
+-void GraphicsContextSkia::saveLayer(float opacity, CompositeMode compositeMode)
++void GraphicsContextSkia::saveLayer(float opacity, CompositeMode compositeMode, sk_sp<SkImageFilter>&& imageFilter)
+ {
+     pushSkiaState();
+     auto& currentState = m_skiaStateStack.last();
+@@ -850,6 +850,8 @@ void GraphicsContextSkia::saveLayer(float opacity, CompositeMode compositeMode)
+     SkPaint paint;
+     paint.setAlphaf(opacity);
+     paint.setBlendMode(SkiaUtilities::toSkiaBlendMode(compositeMode.blendMode, compositeMode.operation));
++    if (imageFilter)
++        paint.setImageFilter(WTF::move(imageFilter));
+     if (m_enableStateReplayTracking) [[unlikely]]
+         currentState.layerPaint = paint;
+ 
+@@ -879,7 +881,33 @@ void GraphicsContextSkia::beginTransparencyLayer(float opacity)
+         return;
+ 
+     GraphicsContext::beginTransparencyLayer(opacity);
+-    saveLayer(opacity, m_state.compositeMode());
++
++    // A GraphicsStyle set on the context (FilterRenderingMode::GraphicsContext,
++    // see Page::preferredFilterRenderingModes) applies to the layer that is
++    // being begun: its contents are filtered as a whole when the layer ends.
++    // The filter is part of the layer's paint, so on a recording canvas it is
++    // recorded and runs wherever the picture is replayed.
++    sk_sp<SkImageFilter> imageFilter;
++    if (auto style = m_state.style()) {
++        imageFilter = WTF::switchOn(*style,
++            [](const GraphicsDropShadow& shadow) -> sk_sp<SkImageFilter> {
++                // radius carries the standard deviation here (FEDropShadow::createGraphicsStyle).
++                SkColor color = shadow.color.colorWithAlphaMultipliedBy(shadow.opacity);
++                return SkImageFilters::DropShadow(shadow.offset.width(), shadow.offset.height(), shadow.radius, shadow.radius, color, nullptr);
++            },
++            [](const GraphicsGaussianBlur& blur) -> sk_sp<SkImageFilter> {
++                // radius carries the standard deviation here (FEGaussianBlur::createGraphicsStyle).
++                return SkImageFilters::Blur(blur.radius.width(), blur.radius.height(), SkTileMode::kDecal, nullptr);
++            },
++            [](const GraphicsColorMatrix&) -> sk_sp<SkImageFilter> {
++                // Never offered for Skia (FEColorMatrix::supportedFilterRenderingModes).
++                return nullptr;
++            });
++        // The style belongs to the layer, not to what is drawn inside it.
++        setStyle(std::nullopt);
++    }
++
++    saveLayer(opacity, m_state.compositeMode(), WTF::move(imageFilter));
+ }
+ 
+ void GraphicsContextSkia::beginTransparencyLayer(CompositeOperator operation, BlendMode blendMode)
+diff --git a/Source/WebCore/platform/graphics/skia/GraphicsContextSkia.h b/Source/WebCore/platform/graphics/skia/GraphicsContextSkia.h
+index dcb8bc39..87a93a37 100644
+--- a/Source/WebCore/platform/graphics/skia/GraphicsContextSkia.h
++++ b/Source/WebCore/platform/graphics/skia/GraphicsContextSkia.h
+@@ -139,7 +139,7 @@ private:
+     void setupFillSource(SkPaint&);
+     void setupStrokeSource(SkPaint&);
+ 
+-    void saveLayer(float, CompositeMode);
++    void saveLayer(float, CompositeMode, sk_sp<SkImageFilter>&& = nullptr);
+     void restoreLayer();
+ 
+     enum class ShadowStyle : uint8_t { Outset, Inset };

@@ -22,6 +22,7 @@
 #include <wpe/webkit.h>
 #include <wpe/fdo.h>
 #include <wpe/unstable/fdo-shm.h>
+#include <wayland-server.h>
 
 #define VIEW_W 432
 #define VIEW_H 936
@@ -44,10 +45,42 @@ static gboolean step_reported;
 static gboolean finished;
 static struct wpe_fdo_shm_exported_buffer* pending_buffer;
 
+/* ATL_HEADLESS_DUMP_DIR=<dir>: keep the last frame of every step as
+ * <dir>/step-<n>.ppm, to compare renderings (e.g. an engine switch off/on). */
+static void dump_frame(struct wpe_fdo_shm_exported_buffer* buffer)
+{
+    const char* dir = g_getenv("ATL_HEADLESS_DUMP_DIR");
+    if (!dir || step_deadline - g_get_monotonic_time() > 1500000)
+        return;
+    struct wl_shm_buffer* shm = wpe_fdo_shm_exported_buffer_get_shm_buffer(buffer);
+    int width = wl_shm_buffer_get_width(shm);
+    int height = wl_shm_buffer_get_height(shm);
+    int stride = wl_shm_buffer_get_stride(shm);
+    char* path = g_strdup_printf("%s/step-%u.ppm", dir, step_index + 1);
+    FILE* file = fopen(path, "wb");
+    g_free(path);
+    if (!file)
+        return;
+    fprintf(file, "P6\n%d %d\n255\n", width, height);
+    wl_shm_buffer_begin_access(shm);
+    const unsigned char* pixels = wl_shm_buffer_get_data(shm);
+    for (int y = 0; y < height; y++) {
+        const unsigned char* row = pixels + (size_t)y * stride;
+        for (int x = 0; x < width; x++) {
+            /* ARGB8888, little endian: B G R A in memory. */
+            unsigned char rgb[3] = { row[x * 4 + 2], row[x * 4 + 1], row[x * 4] };
+            fwrite(rgb, 1, 3, file);
+        }
+    }
+    wl_shm_buffer_end_access(shm);
+    fclose(file);
+}
+
 /* One frame per 16 ms, like a 60 Hz panel: release the buffer and ack. */
 static gboolean frame_tick(gpointer data)
 {
     if (pending_buffer) {
+        dump_frame(pending_buffer);
         wpe_view_backend_exportable_fdo_dispatch_release_shm_exported_buffer(exportable, pending_buffer);
         pending_buffer = NULL;
         wpe_view_backend_exportable_fdo_dispatch_frame_complete(exportable);

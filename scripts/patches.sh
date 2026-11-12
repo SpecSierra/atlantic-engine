@@ -181,6 +181,13 @@ readonly WEBKIT_SOURCE_PATCHES=(
     # reports a displayed frame; the tick timer becomes the fallback.
     # Default off, unverified.
     "patches/webkit/webkit-scroll-frame-clock-env.patch"
+    # WEBKIT_SKIA_GRAPHICS_CONTEXT_FILTERS=1: CSS blur()/drop-shadow() become
+    # Skia image filters on a layer, rasterised on the painting threads.
+    # Default off, unverified.
+    "patches/webkit/webkit-skia-graphics-context-filters-env.patch"
+    # WEBKIT_WEB_PROCESS_CACHE_CAPACITY=<n>: WebProcess cache capacity,
+    # whatever the cache model and RAM. Default off, unverified.
+    "patches/webkit/webkit-web-process-cache-capacity-env.patch"
 )
 
 readonly QT5_PLUGIN_PATCHES=(

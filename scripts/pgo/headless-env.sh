@@ -25,7 +25,7 @@ atl_headless_setup() {
     # shellcheck disable=SC2046
     gcc -O2 -o "${workdir}/atl-headless" "${here}/atl-headless.c" \
         $(PKG_CONFIG_PATH="${prefix}/lib/pkgconfig" pkg-config --cflags --libs \
-            wpe-webkit-2.0 wpebackend-fdo-1.0 glib-2.0 libsoup-3.0) \
+            wpe-webkit-2.0 wpebackend-fdo-1.0 glib-2.0 libsoup-3.0 wayland-server) \
         -Wl,--allow-shlib-undefined
 
     # See host-condvar-shim.c: the host's glibc loses condition-variable

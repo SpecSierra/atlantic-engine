@@ -10,11 +10,11 @@ Each patch carries its own rationale as a header comment at the top of the patch
 
 | | Count |
 |---|---|
-| Patches | 68 |
+| Patches | 70 |
 | …portability / build fixes | 4 |
-| …behaviour | 64 |
-| Distinct source files touched | 1309 |
-| Env flags introduced | 120 |
+| …behaviour | 66 |
+| Distinct source files touched | 1316 |
+| Env flags introduced | 122 |
 
 ## Hot files
 
@@ -118,6 +118,8 @@ Files edited by more than one patch — every one is an ordering constraint.
 | 62 | `webkit-touch-prediction-env.patch` | 2 | `WEBKIT_TOUCH_PREDICTION_MS` | the page follows the finger more closely. |
 | 63 | `webkit-visible-tiles-first-env.patch` | 1 | `ATLANTIC_FRAME_TRACE`<br>`WEBKIT_VISIBLE_TILES_FIRST` | paint the tiles on screen before the prepaint cushion. |
 | 64 | `webkit-scroll-frame-clock-env.patch` | 4 | `ATLANTIC_FRAME_TRACE`<br>`WEBKIT_INDEPENDENT_SCROLL`<br>`WEBKIT_INDEPENDENT_SCROLL_TICK_MS`<br>`WEBKIT_SCROLL_FRAME_CLOCK` | one scroll step per displayed frame. |
+| 65 | `webkit-skia-graphics-context-filters-env.patch` | 6 | `WEBKIT_SKIA_GRAPHICS_CONTEXT_FILTERS` | CSS blur() and drop-shadow() applied by Skia on the painting threads instead of in software on the main thread. |
+| 66 | `webkit-web-process-cache-capacity-env.patch` | 1 | `WEBKIT_WEB_PROCESS_CACHE_CAPACITY` | keep page-less WebProcesses for reuse on phones where upstream turns that off. |
 
 ## Portability / build fixes
 

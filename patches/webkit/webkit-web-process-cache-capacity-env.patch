@@ -1,0 +1,65 @@
+# webkit-web-process-cache-capacity-env.patch: keep page-less WebProcesses for
+# reuse on phones where upstream turns that off.
+#
+# WebKit keeps a WebProcess whose last page navigated away (WebProcessCache,
+# compiled in on this port, suspended after 30 s, dropped after 5 min) and
+# hands it to the next navigation to the same site, which then skips a process
+# launch. It also reuses the process of a page parked in the back/forward
+# cache (SuspendedPageProxy::findReusableSuspendedPageProcess). Both exist
+# upstream; what stops the first on a phone is the capacity rule: 0 unless the
+# cache model is "web browser" (this browser selects it only on high-RAM
+# devices) and RAM is at least 2 GB.
+#
+# WEBKIT_WEB_PROCESS_CACHE_CAPACITY=<0..32> sets the capacity regardless of
+# cache model and RAM; 0 disables the cache; unset = upstream.
+#
+# Each cached process is resident memory until it is evicted, so on a 3-4 GB
+# phone start with 1 or 2. NOT verified on a device. Check: A -> B -> A (new
+# navigations, not Back) reuses A's process (WebProcessCache log channel, or
+# the pid), and the memory-pressure handler still empties the cache.
+#
+# ---
+diff --git a/Source/WebKit/UIProcess/WebProcessCache.cpp b/Source/WebKit/UIProcess/WebProcessCache.cpp
+index 81a690dd..ac912535 100644
+--- a/Source/WebKit/UIProcess/WebProcessCache.cpp
++++ b/Source/WebKit/UIProcess/WebProcessCache.cpp
+@@ -26,6 +26,8 @@
+ #include "config.h"
+ #include "WebProcessCache.h"
+ 
++#include <cstdlib>
++
+ #include "APIPageConfiguration.h"
+ #include "EnhancedSecurity.h"
+ #include "LegacyGlobalSettings.h"
+@@ -321,6 +323,30 @@ RefPtr<WebProcessProxy> WebProcessCache::takeSharedProcess(const WebCore::Site&
+ void WebProcessCache::updateCapacity(WebProcessPool& processPool)
+ {
+ #if ENABLE(WEBPROCESS_CACHE)
++    // WEBKIT_WEB_PROCESS_CACHE_CAPACITY=<0..32>: how many page-less WebProcesses
++    // are kept (suspended after a while) to be reused by the next navigation
++    // to their site. Upstream derives this from RAM (4 per GB, nothing under
++    // 2 GB) and turns the cache off entirely unless the cache model is the
++    // "web browser" one, which this browser only selects on high-RAM phones:
++    // on the others every return to a site starts a new process. The variable
++    // sets the capacity whatever the cache model and RAM size; 0 turns the
++    // cache off; unset = upstream. Process-swap-on-navigation is still needed.
++    static const int environmentCapacity = [] {
++        const char* env = getenv("WEBKIT_WEB_PROCESS_CACHE_CAPACITY");
++        if (!env || !*env)
++            return -1;
++        int value = atoi(env);
++        return value >= 0 && value <= 32 ? value : -1;
++    }();
++    if (environmentCapacity >= 0 && processPool.configuration().processSwapsOnNavigation()
++        && processPool.configuration().usesWebProcessCache() && !processPool.configuration().usesSingleWebProcess()) {
++        m_capacity = environmentCapacity;
++        WEBPROCESSCACHE_RELEASE_LOG("updateCapacity: Cache capacity set to %u processes by WEBKIT_WEB_PROCESS_CACHE_CAPACITY", 0, capacity());
++        if (!m_capacity)
++            clear();
++        return;
++    }
++
+     if (!processPool.configuration().processSwapsOnNavigation() || !processPool.configuration().usesWebProcessCache() || LegacyGlobalSettings::singleton().cacheModel() != CacheModel::PrimaryWebBrowser || processPool.configuration().usesSingleWebProcess()) {
+         if (!processPool.configuration().processSwapsOnNavigation())
+             WEBPROCESSCACHE_RELEASE_LOG("updateCapacity: Cache is disabled because process swap on navigation is disabled", 0);
