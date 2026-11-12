@@ -64,9 +64,11 @@ jobs:
       # Set to "gcc" to fall back to GCC without LTO.
       WEBKIT_COMPILER: clang
       # Profile-guided optimisation (docs/BUILD.md, "PGO"). "use" builds with
-      # the profile the PGO workflow left on this host; keep "off" until the
-      # on-device A/B of a PGO test build clears the noise floor.
-      ATLANTIC_PGO: "off"
+      # the profile the PGO workflow left on this host (+25.9 % Speedometer 3.1
+      # on the build host, run 42909346698; turned on at the user's request
+      # before an on-device A/B). Re-run the "PGO" workflow after a WebKit
+      # bump or a large patch change. "off" builds without it.
+      ATLANTIC_PGO: "use"
       RPM_ITERATION: ${{ github.run_number }}.${{ github.run_attempt }}
       WPE_PREFIX: /opt/github-runner/cache/atlantic-build/wpe-sfos-prefix
       SYSROOT: /opt/github-runner/cache/sfos-sysroot-5.1.0.11
